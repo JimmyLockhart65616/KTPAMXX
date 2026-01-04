@@ -251,4 +251,26 @@ native dodx_set_team_score(team, score);
  */
 native dodx_get_team_score(team);
 
+/**
+ * Broadcast TeamScore message to all clients and update gamerules.
+ * This properly updates client scoreboards after modifying scores.
+ * Use this instead of trying to send TeamScore via AMX message natives.
+ *
+ * @param team      Team index (1=Allies, 2=Axis)
+ * @param score     Score value to broadcast
+ * @return          1 on success, 0 on failure
+ */
+native dodx_broadcast_team_score(team, score);
+
+/**
+ * Set custom team name on scoreboard for all players on a team.
+ * Sends TeamInfo message to all clients - may override "Allies"/"Axis" display.
+ * Call this after players join teams to show custom names on scoreboard.
+ *
+ * @param team      Team index (1=Allies, 2=Axis)
+ * @param name      Custom team name string (e.g., "Team Alpha")
+ * @return          Number of players updated
+ */
+native dodx_set_scoreboard_team_name(team, const name[]);
+
 // ==================================================================

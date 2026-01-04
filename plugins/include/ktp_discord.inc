@@ -101,7 +101,6 @@ new g_ktpDiscordAuditChannels[KTP_DISCORD_MAX_AUDIT_CHANNELS][64];
 new g_ktpDiscordAuditChannelCount = 0;
 
 // Config state
-new bool:g_ktpDiscordConfigLoaded = false;
 new bool:g_ktpDiscordEnabled = false;
 
 // Temp file for curl responses (no longer used, kept for compatibility)
@@ -136,7 +135,6 @@ stock bool:ktp_discord_load_config()
     g_ktpDiscordChannelAdmin[0] = EOS;
     g_ktpDiscordAuditChannelCount = 0;
     g_ktpDiscordEnabled = false;
-    g_ktpDiscordConfigLoaded = false;
 
     for (new i = 0; i < KTP_DISCORD_MAX_AUDIT_CHANNELS; i++) {
         g_ktpDiscordAuditChannels[i][0] = EOS;
@@ -231,7 +229,6 @@ stock bool:ktp_discord_load_config()
     if (g_ktpDiscordRelayUrl[0] && g_ktpDiscordAuthSecret[0] &&
         (g_ktpDiscordChannelDefault[0] || g_ktpDiscordAuditChannelCount > 0)) {
         g_ktpDiscordEnabled = true;
-        g_ktpDiscordConfigLoaded = true;
         log_amx("[KTP Discord] Loaded %d keys, %d audit channels from %s",
                 loadedCount, g_ktpDiscordAuditChannelCount, path);
         return true;
@@ -513,7 +510,6 @@ stock bool:ktp_discord_send_embed_to(channelType, const title[], const descripti
  */
 stock ktp_discord_send_embed_audit(const title[], const description[], color = KTP_DISCORD_COLOR_BLUE)
 {
-    log_amx("[KTP Discord] send_embed_audit called, title='%s', enabled=%d, audit_channels=%d", title, g_ktpDiscordEnabled, g_ktpDiscordAuditChannelCount);
     if (!g_ktpDiscordEnabled || g_ktpDiscordAuditChannelCount == 0) return 0;
 
     // Escape strings once
@@ -538,8 +534,6 @@ stock ktp_discord_send_embed_audit(const title[], const description[], color = K
             "{^"channelId^":^"%s^",^"embeds^":[{^"title^":^"%s^",^"description^":^"%s^",^"color^":%d,^"footer^":{^"text^":^"%s - %s^"}}]}",
             g_ktpDiscordAuditChannels[i], escapedTitle, escapedDesc, color, escapedServer, mapName);
 
-        log_amx("[KTP Discord] Sending to audit channel[%d]='%s'", i, g_ktpDiscordAuditChannels[i]);
-        log_amx("[KTP Discord] Payload: %s", g_ktpDiscordPayloadBuf);
         ktp_discord_send_raw(g_ktpDiscordPayloadBuf);
         sent++;
     }
@@ -587,8 +581,6 @@ stock ktp_discord_send_raw_to(const endpoint[], const payload[])
  */
 stock ktp_discord_curl_post(const url[], const payload[])
 {
-    log_amx("[KTP Discord] curl_post called, url=%s", url);
-
     new CURL:curl = curl_easy_init();
     if (!curl) {
         log_amx("[KTP Discord] Failed to initialize curl");
@@ -621,7 +613,6 @@ stock ktp_discord_curl_post(const url[], const payload[])
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5);
 
     // Perform request asynchronously
-    log_amx("[KTP Discord] Performing curl request...");
     curl_easy_perform(curl, "ktp_discord_curl_callback");
 }
 
@@ -634,8 +625,6 @@ public ktp_discord_curl_callback(CURL:curl, CURLcode:code)
         new error[128];
         curl_easy_strerror(code, error, charsmax(error));
         log_amx("[KTP Discord] curl error: %s (code %d)", error, code);
-    } else {
-        log_amx("[KTP Discord] curl request successful");
     }
 
     // Cleanup curl handle

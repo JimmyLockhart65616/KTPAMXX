@@ -712,6 +712,106 @@ static cell AMX_NATIVE_CALL dodx_has_gamerules(AMX *amx, cell *params)
 	return DODX_HasGameRules() ? 1 : 0;
 }
 
+// KTP: Broadcast TeamScore message to all clients
+// This properly updates client scoreboards after modifying gamerules scores
+// native dodx_broadcast_team_score(team, score);
+static cell AMX_NATIVE_CALL dodx_broadcast_team_score(AMX *amx, cell *params)
+{
+	int team = params[1];   // 1=Allies, 2=Axis
+	int score = params[2];
+
+	if (team < 1 || team > 2)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_team_score: invalid team %d (must be 1 or 2)", team);
+		return 0;
+	}
+
+	// First, set the gamerules score if available
+	if (DODX_HasGameRules())
+	{
+		int *pScores = (int*)((char*)*g_pGameRulesAddress + g_iTeamScoreOffset);
+		pScores[team] = score;
+	}
+
+	// Update DODX tracked score
+	if (team == 1)
+		AlliesScore = score;
+	else
+		AxisScore = score;
+
+	// Check if we have the TeamScore message ID
+	if (gmsgTeamScore <= 0)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_team_score: TeamScore message not registered");
+		return 0;
+	}
+
+	// Send TeamScore message to all clients
+	// DoD TeamScore format: BYTE(team) + SHORT(score)
+	MESSAGE_BEGIN(MSG_ALL, gmsgTeamScore, NULL);
+	WRITE_BYTE(team);
+	WRITE_SHORT(score);
+	MESSAGE_END();
+
+	return 1;
+}
+
+// KTP: Set custom team name on scoreboard for all players on a team
+// Sends TeamInfo message to all clients for each player on the team
+// native dodx_set_scoreboard_team_name(team, const name[]);
+static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params)
+{
+	int team = params[1];   // 1=Allies, 2=Axis
+
+	if (team < 1 || team > 2)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: invalid team %d (must be 1 or 2)", team);
+		return 0;
+	}
+
+	// Check if we have the TeamInfo message ID
+	if (gmsgTeamInfo <= 0)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: TeamInfo message not registered");
+		return 0;
+	}
+
+	// Get team name string from params
+	int len;
+	char *teamName = MF_GetAmxString(amx, params[2], 0, &len);
+	if (!teamName || len == 0)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: empty team name");
+		return 0;
+	}
+
+	int count = 0;
+
+	// Iterate through all players
+	for (int i = 1; i <= gpGlobals->maxClients; i++)
+	{
+		CPlayer *pPlayer = GET_PLAYER_POINTER_I(i);
+		if (!pPlayer || !pPlayer->pEdict || pPlayer->pEdict->free)
+			continue;
+
+		// Get player's team from edict
+		int playerTeam = pPlayer->pEdict->v.team;
+		if (playerTeam != team)
+			continue;
+
+		// Send TeamInfo message to ALL clients for this player
+		// TeamInfo format: BYTE(player index) + STRING(team name)
+		MESSAGE_BEGIN(MSG_ALL, gmsgTeamInfo, NULL);
+		WRITE_BYTE(i);
+		WRITE_STRING(teamName);
+		MESSAGE_END();
+
+		count++;
+	}
+
+	return count;
+}
+
 AMX_NATIVE_INFO base_Natives[] = 
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -765,6 +865,10 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_set_team_score", dodx_set_team_score},
 	{"dodx_get_team_score", dodx_get_team_score},
 	{"dodx_has_gamerules", dodx_has_gamerules},
+	{"dodx_broadcast_team_score", dodx_broadcast_team_score},
+
+	// KTP: Custom scoreboard team names
+	{"dodx_set_scoreboard_team_name", dodx_set_scoreboard_team_name},
 
 	///*******************
 	{ NULL, NULL }

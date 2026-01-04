@@ -8,7 +8,20 @@ Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
 
 ---
 
-## What's New in v2.6.1
+## What's New in v2.6.2
+
+### DODX Module - Score Broadcasting Natives
+
+Two new natives for scoreboard manipulation:
+- **`dodx_broadcast_team_score(team, score)`** - Broadcast TeamScore message to all clients
+- **`dodx_set_scoreboard_team_name(team, const name[])`** - Set custom team name on scoreboard
+
+### ktp_discord.inc Cleanup
+- Removed unused `g_ktpDiscordConfigLoaded` variable
+
+---
+
+## v2.6.1 - ktp_discord.inc + RH_SV_Rcon
 
 ### ktp_discord.inc v1.1.0
 

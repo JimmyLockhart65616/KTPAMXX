@@ -5,6 +5,30 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2025-12-31
+
+### Added
+
+#### DODX Module - New Natives for Score Broadcasting
+
+Two new natives for scoreboard manipulation:
+
+- **`dodx_broadcast_team_score(team, score)`** - Broadcast TeamScore message to all clients
+  - Sets gamerules score AND sends TeamScore message in one operation
+  - Avoids server crashes that occurred with AMX message natives
+  - Used by KTPMatchHandler for 2nd half score restoration
+  - Returns 1 on success, 0 on failure
+
+- **`dodx_set_scoreboard_team_name(team, const name[])`** - Set custom team name on scoreboard
+  - Sends TeamInfo message to all clients for players on specified team
+  - May override hardcoded "Allies"/"Axis" display on client scoreboard
+  - Returns number of players updated
+
+#### ktp_discord.inc Cleanup
+- Removed unused `g_ktpDiscordConfigLoaded` variable
+
+---
+
 ## [2.6.1] - 2025-12-26
 
 ### Changed
@@ -490,6 +514,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.2 | 2025-12-31 | DODX score broadcasting natives, ktp_discord.inc cleanup |
 | 2.6.1 | 2025-12-26 | ktp_discord.inc v1.1.0 (curl module), RH_SV_Rcon hook constant |
 | 2.6.0 | 2025-12-21 | ktp_drop_client native, ktp_discord.inc shared include |
 | 2.5.1 | 2025-12-20 | DODX dodx_set_pl_teamname native for player team names |
@@ -501,6 +526,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.2]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.2
 [2.6.1]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.1
 [2.6.0]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.0
 [2.5.1]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.5.1
