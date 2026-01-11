@@ -5,11 +5,15 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.1.0
- * DATE: 2025-12-21
+ * VERSION: 1.2.0
+ * DATE: 2026-01-06
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.2.0 (2026-01-06)
+ *   + ADDED: KTP_DISCORD_CHANNEL_DRAFT channel type for draft matches
+ *   + ADDED: discord_channel_id_draft config key
+ *
  * v1.1.0 (2025-12-21)
  *   * FIXED: Use AMXX curl module instead of server_cmd() which can't execute shell commands
  *   * REQUIRES: curl module (curl_amxx.so / curl_amxx.dll)
@@ -40,6 +44,7 @@
  *   discord_channel_id_audit_scrim=scrim_audit_channel
  *   discord_channel_id_12man=12man_channel
  *   discord_channel_id_scrim=scrim_channel
+ *   discord_channel_id_draft=draft_channel
  *   discord_channel_id_admin=admin_channel
  */
 
@@ -73,6 +78,7 @@
 #define KTP_DISCORD_CHANNEL_12MAN       2   // 12-man match channel
 #define KTP_DISCORD_CHANNEL_SCRIM       3   // Scrim channel
 #define KTP_DISCORD_CHANNEL_ADMIN       4   // Admin channel
+#define KTP_DISCORD_CHANNEL_DRAFT       5   // Draft match channel
 
 // Maximum audit channels (for multi-channel audit support)
 #define KTP_DISCORD_MAX_AUDIT_CHANNELS  10
@@ -95,6 +101,7 @@ new g_ktpDiscordChannelDefault[64];
 new g_ktpDiscordChannel12man[64];
 new g_ktpDiscordChannelScrim[64];
 new g_ktpDiscordChannelAdmin[64];
+new g_ktpDiscordChannelDraft[64];
 
 // Audit channels array (supports multiple)
 new g_ktpDiscordAuditChannels[KTP_DISCORD_MAX_AUDIT_CHANNELS][64];
@@ -133,6 +140,7 @@ stock bool:ktp_discord_load_config()
     g_ktpDiscordChannel12man[0] = EOS;
     g_ktpDiscordChannelScrim[0] = EOS;
     g_ktpDiscordChannelAdmin[0] = EOS;
+    g_ktpDiscordChannelDraft[0] = EOS;
     g_ktpDiscordAuditChannelCount = 0;
     g_ktpDiscordEnabled = false;
 
@@ -203,6 +211,10 @@ stock bool:ktp_discord_load_config()
         }
         else if (equal(key, "discord_channel_id_scrim")) {
             copy(g_ktpDiscordChannelScrim, charsmax(g_ktpDiscordChannelScrim), val);
+            loadedCount++;
+        }
+        else if (equal(key, "discord_channel_id_draft")) {
+            copy(g_ktpDiscordChannelDraft, charsmax(g_ktpDiscordChannelDraft), val);
             loadedCount++;
         }
         else if (equal(key, "discord_channel_id_admin")) {
@@ -285,6 +297,14 @@ stock bool:ktp_discord_get_channel(channelType, output[], maxlen)
                 copy(output, maxlen, g_ktpDiscordChannelDefault);
                 return true;
             }
+        }
+        case KTP_DISCORD_CHANNEL_DRAFT: {
+            if (g_ktpDiscordChannelDraft[0]) {
+                copy(output, maxlen, g_ktpDiscordChannelDraft);
+                return true;
+            }
+            // No fallback - draft requires explicit channel
+            return false;
         }
         case KTP_DISCORD_CHANNEL_ADMIN: {
             if (g_ktpDiscordChannelAdmin[0]) {
