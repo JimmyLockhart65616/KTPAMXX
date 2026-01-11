@@ -5,6 +5,19 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2026-01-06
+
+### Added
+
+#### ktp_discord.inc v1.2.0 - Draft Channel Support
+
+- **`KTP_DISCORD_CHANNEL_DRAFT`** - New channel type constant (value 5) for draft match Discord posts
+- **`discord_channel_id_draft`** - New config key in discord.ini for draft channel ID
+- **`g_ktpDiscordChannelDraft`** - Storage variable for draft channel
+- **Draft channel getter** - `ktp_discord_get_channel(KTP_DISCORD_CHANNEL_DRAFT, ...)` returns draft channel (no fallback)
+
+---
+
 ## [2.6.2] - 2025-12-31
 
 ### Added
@@ -514,6 +527,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.3 | 2026-01-06 | ktp_discord.inc v1.2.0: Draft channel support |
 | 2.6.2 | 2025-12-31 | DODX score broadcasting natives, ktp_discord.inc cleanup |
 | 2.6.1 | 2025-12-26 | ktp_discord.inc v1.1.0 (curl module), RH_SV_Rcon hook constant |
 | 2.6.0 | 2025-12-21 | ktp_drop_client native, ktp_discord.inc shared include |
@@ -526,6 +540,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.3]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.3
 [2.6.2]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.2
 [2.6.1]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.1
 [2.6.0]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.0

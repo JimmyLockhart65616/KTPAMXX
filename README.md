@@ -8,7 +8,17 @@ Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
 
 ---
 
-## What's New in v2.6.2
+## What's New in v2.6.3
+
+### ktp_discord.inc v1.2.0 - Draft Channel Support
+
+New channel type for draft match Discord integration:
+- **`KTP_DISCORD_CHANNEL_DRAFT`** - Channel type constant (value 5)
+- **`discord_channel_id_draft`** - New config key in discord.ini
+
+---
+
+## v2.6.2 - DODX Score Broadcasting
 
 ### DODX Module - Score Broadcasting Natives
 
@@ -257,7 +267,7 @@ public client_cvar_changed(id, const cvar[], const value[]) {
 
 Check server console on startup:
 ```
-KTP AMX v2.6.0 loaded
+KTP AMX v2.6.3 loaded
 Core mode: JIT+ASM32
 Running as: ReHLDS Extension (or: Metamod Plugin)
 ```
