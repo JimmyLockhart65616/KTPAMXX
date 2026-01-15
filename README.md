@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection**
+**Version 2.6.3** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
