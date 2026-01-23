@@ -900,6 +900,39 @@ static cell AMX_NATIVE_CALL dodx_set_user_noclip(AMX *amx, cell *params)
 	return 1;
 }
 
+// KTP: Send AmmoX message to update client HUD
+// dodx_send_ammox(id, ammo_slot, count)
+// ammo_slot: 9 = hand grenade/mills bomb, 11 = stick grenade
+static cell AMX_NATIVE_CALL dodx_send_ammox(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict)
+		return 0;
+
+	if (gmsgAmmoX <= 0)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_send_ammox: AmmoX message not registered");
+		return 0;
+	}
+
+	int ammoSlot = params[2];
+	int count = params[3];
+
+	// Clamp count to byte range
+	if (count < 0) count = 0;
+	if (count > 254) count = 254;
+
+	MESSAGE_BEGIN(MSG_ONE, gmsgAmmoX, NULL, pPlayer->pEdict);
+	WRITE_BYTE(ammoSlot);
+	WRITE_BYTE(count);
+	MESSAGE_END();
+
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -964,6 +997,7 @@ AMX_NATIVE_INFO base_Natives[] =
 
 	// KTP: Noclip control (extension mode compatible)
 	{"dodx_set_user_noclip", dodx_set_user_noclip},
+	{"dodx_send_ammox", dodx_send_ammox},
 
 	///*******************
 	{ NULL, NULL }

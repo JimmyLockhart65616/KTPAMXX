@@ -5,6 +5,29 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.6] - 2026-01-23
+
+### Added
+
+#### DODX Module - AmmoX HUD Sync Native
+New native for updating client HUD ammo display after modifying grenade ammo:
+
+- **`dodx_send_ammox(id, ammo_slot, count)`** - Send AmmoX message to update client HUD
+  - `ammo_slot=9` for hand grenade / Mills bomb
+  - `ammo_slot=11` for stick grenade
+  - `count` clamped to 0-254 range
+  - Returns 1 on success, 0 on failure
+
+**Use Case:** After calling `dodx_set_grenade_ammo()`, the server-side ammo is updated but the client HUD still shows the old value. Call `dodx_send_ammox()` to sync the client's ammo display.
+
+**Why a native?** AMX Mod X `message_begin()` / `emessage_begin()` crash in extension mode for certain message types. This native uses the engine's `MESSAGE_BEGIN` directly from C++ which works correctly.
+
+**Plugins using this native:**
+- KTPGrenadeLoadout - HUD sync after setting spawn grenades
+- KTPPracticeMode - HUD sync after refilling grenades
+
+---
+
 ## [2.6.5] - 2026-01-23
 
 ### Added
@@ -597,6 +620,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.6 | 2026-01-23 | DODX dodx_send_ammox native for HUD ammo sync |
+| 2.6.5 | 2026-01-23 | DODX dodx_set_user_noclip native |
 | 2.6.4 | 2026-01-22 | DODX grenade ammo natives, consistency hook fix, precache timing fix |
 | 2.6.3 | 2026-01-06 | ktp_discord.inc v1.2.0: Draft channel support |
 | 2.6.2 | 2025-12-31 | DODX score broadcasting natives, ktp_discord.inc cleanup |
@@ -611,6 +636,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.6]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.6
+[2.6.5]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.5
 [2.6.4]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.4
 [2.6.3]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.3
 [2.6.2]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.2

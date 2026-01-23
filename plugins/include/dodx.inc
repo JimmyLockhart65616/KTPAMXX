@@ -310,4 +310,15 @@ native dodx_get_grenade_ammo(id, grenade_type);
  */
 native dodx_set_user_noclip(id, noclip);
 
+/**
+ * Send AmmoX message to update client HUD ammo display.
+ * Use this after modifying grenade ammo to sync the client HUD.
+ *
+ * @param id         Player index
+ * @param ammo_slot  Ammo slot ID: 9 = hand grenade/mills bomb, 11 = stick grenade
+ * @param count      Ammo count to display (0-254)
+ * @return           1 on success, 0 on failure
+ */
+native dodx_send_ammox(id, ammo_slot, count);
+
 // ==================================================================

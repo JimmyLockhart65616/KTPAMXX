@@ -1,10 +1,26 @@
 # KTP AMX
 
-**Version 2.6.5** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.6** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
 Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
+
+---
+
+## What's New in v2.6.6
+
+### DODX Module - AmmoX HUD Sync Native
+
+New native for updating client HUD ammo display after modifying grenade ammo:
+
+- **`dodx_send_ammox(id, ammo_slot, count)`** - Send AmmoX message to update client HUD
+  - `ammo_slot=9` for hand grenade / Mills bomb
+  - `ammo_slot=11` for stick grenade
+
+**Use Case:** After calling `dodx_set_grenade_ammo()`, the server-side ammo is updated but the client HUD shows the old value. This native syncs the client display.
+
+**Why a native?** AMX Mod X `message_begin()` crashes in extension mode for certain messages. This native uses engine functions directly.
 
 ---
 
