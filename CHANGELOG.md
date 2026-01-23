@@ -5,6 +5,22 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.5] - 2026-01-23
+
+### Added
+
+#### DODX Module - Noclip Native
+New native for player noclip control (ported from fun module for extension mode compatibility):
+
+- **`dodx_set_user_noclip(id, noclip)`** - Set player noclip mode
+  - `noclip=0` disables noclip (MOVETYPE_WALK)
+  - `noclip=1` enables noclip (MOVETYPE_NOCLIP)
+  - Returns 1 on success, 0 on failure
+
+**Use Case:** KTPPracticeMode uses this for the `.noclip` command without requiring the fun module (which needs Metamod).
+
+---
+
 ## [2.6.4] - 2026-01-22
 
 ### Added

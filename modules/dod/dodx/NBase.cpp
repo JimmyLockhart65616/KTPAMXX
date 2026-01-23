@@ -882,6 +882,24 @@ static cell AMX_NATIVE_CALL dodx_get_grenade_ammo(AMX *amx, cell *params)
 	}
 }
 
+// KTP: Noclip control (ported from fun module for extension mode)
+// dodx_set_user_noclip(id, noclip)
+// noclip: 0 = disable, 1 = enable
+static cell AMX_NATIVE_CALL dodx_set_user_noclip(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
+		return 0;
+
+	// MOVETYPE_WALK = 3, MOVETYPE_NOCLIP = 8
+	pPlayer->pEdict->v.movetype = params[2] ? 8 : 3;
+
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -943,6 +961,9 @@ AMX_NATIVE_INFO base_Natives[] =
 	// KTP: Grenade ammo manipulation (extension mode compatible)
 	{"dodx_set_grenade_ammo", dodx_set_grenade_ammo},
 	{"dodx_get_grenade_ammo", dodx_get_grenade_ammo},
+
+	// KTP: Noclip control (extension mode compatible)
+	{"dodx_set_user_noclip", dodx_set_user_noclip},
 
 	///*******************
 	{ NULL, NULL }

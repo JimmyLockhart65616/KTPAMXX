@@ -1,10 +1,22 @@
 # KTP AMX
 
-**Version 2.6.4** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.5** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
 Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
+
+---
+
+## What's New in v2.6.5
+
+### DODX Module - Noclip Native
+
+New native for player noclip control (ported from fun module for extension mode compatibility):
+
+- **`dodx_set_user_noclip(id, noclip)`** - Set player noclip mode (0=disable, 1=enable)
+
+**Use Case:** KTPPracticeMode uses this for the `.noclip` command without requiring the fun module.
 
 ---
 

@@ -300,4 +300,14 @@ native dodx_set_grenade_ammo(id, grenade_type, count);
  */
 native dodx_get_grenade_ammo(id, grenade_type);
 
+/**
+ * Set player noclip mode.
+ * Ported from fun module for extension mode compatibility.
+ *
+ * @param id       Player index
+ * @param noclip   0 = disable noclip (normal walk), 1 = enable noclip
+ * @return         1 on success, 0 on failure
+ */
+native dodx_set_user_noclip(id, noclip);
+
 // ==================================================================
