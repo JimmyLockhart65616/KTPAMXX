@@ -76,6 +76,28 @@ enum
 	#define STEAM_PDOFFSET_DEATHS   477         // Player deaths
 #endif
 
+// KTP: Grenade ammo offsets (ported from dodfun for extension mode)
+// Each grenade type has 3 offsets that need to be set together
+#if defined(__linux__) || defined(__APPLE__)
+	// Hand grenade / Mills bomb (Allies)
+	#define PDOFFSET_AMMO_HANDGRENADE_1  (59 + 5)
+	#define PDOFFSET_AMMO_HANDGRENADE_2  (289 + 5)
+	#define PDOFFSET_AMMO_HANDGRENADE_3  (321 + 5)
+	// Stick grenade (Axis)
+	#define PDOFFSET_AMMO_STICKGRENADE_1 (61 + 5)
+	#define PDOFFSET_AMMO_STICKGRENADE_2 (291 + 5)
+	#define PDOFFSET_AMMO_STICKGRENADE_3 (323 + 5)
+#else
+	// Hand grenade / Mills bomb (Allies)
+	#define PDOFFSET_AMMO_HANDGRENADE_1  59
+	#define PDOFFSET_AMMO_HANDGRENADE_2  289
+	#define PDOFFSET_AMMO_HANDGRENADE_3  321
+	// Stick grenade (Axis)
+	#define PDOFFSET_AMMO_STICKGRENADE_1 61
+	#define PDOFFSET_AMMO_STICKGRENADE_2 291
+	#define PDOFFSET_AMMO_STICKGRENADE_3 323
+#endif
+
 // Weapons Structure
 struct weapon_t 
 {

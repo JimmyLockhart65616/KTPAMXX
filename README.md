@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Version 2.6.3** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.4** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
@@ -8,7 +8,33 @@ Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
 
 ---
 
-## What's New in v2.6.3
+## What's New in v2.6.4
+
+### DODX Module - Grenade Ammo Natives
+
+New natives for grenade ammo manipulation (extension mode compatible, no Metamod/dodfun required):
+
+- **`dodx_set_grenade_ammo(id, grenade_type, count)`** - Set grenade count for a player
+- **`dodx_get_grenade_ammo(id, grenade_type)`** - Get current grenade count
+
+**Grenade Types:**
+- `DODW_HANDGRENADE` (13) - US hand grenade
+- `DODW_STICKGRENADE` (14) - German stick grenade
+- `DODW_MILLS_BOMB` (36) - British Mills bomb (shares ammo pool with hand grenade)
+
+**Use Case:** KTPGrenadeLoadout plugin uses these for per-class grenade configuration.
+
+### Extension Mode Fixes
+
+- **Consistency hook fix** - `SV_CheckConsistencyResponse_RH` had inverted logic that kicked players with CONSISTENT files
+- **Precache timing fix** - `force_unmodified()` now works correctly via `PF_precache_model_I` hook
+  - Calls full AMXX init during precache phase with deferred `plugin_init`/`plugin_cfg`
+  - Processes force lists with `ENGINE_FORCE_UNMODIFIED` during actual precache
+- **Map change fix** - Properly resets precache flag and force lists on map change
+
+---
+
+## v2.6.3 - ktp_discord.inc Draft Channel
 
 ### ktp_discord.inc v1.2.0 - Draft Channel Support
 
@@ -267,7 +293,7 @@ public client_cvar_changed(id, const cvar[], const value[]) {
 
 Check server console on startup:
 ```
-KTP AMX v2.6.3 loaded
+KTP AMX v2.6.4 loaded
 Core mode: JIT+ASM32
 Running as: ReHLDS Extension (or: Metamod Plugin)
 ```

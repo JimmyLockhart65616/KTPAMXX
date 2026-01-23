@@ -147,6 +147,16 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain);
 // KTP: Track map changes in extension mode - prevents processing during transitions
 static bool g_bMapChangeInProgress = false;
 
+// KTP: Track if precache hooks have processed force_unmodified lists this map
+static bool g_bExtPrecacheProcessed = false;
+
+// KTP: Track if AMXX init was called during precache phase
+// When true, plugin_init/plugin_cfg are deferred to SV_ActivateServer
+static bool g_bInitDuringPrecache = false;
+
+// KTP: PF_precache_model_I hook - processes force_unmodified during precache phase
+static int PF_precache_model_I_RH(IRehldsHook_PF_precache_model_I *chain, const char *s);
+
 // KTP: PF_changelevel_I hook - sets map change flag BEFORE any processing happens
 static void PF_changelevel_I_RH(IRehldsHook_PF_changelevel_I *chain, const char *s1, const char *s2);
 
@@ -816,6 +826,8 @@ void C_ServerDeactivate_Post()
 	g_forcemodels.clear();
 	g_forcesounds.clear();
 	g_forcegeneric.clear();
+	g_bExtPrecacheProcessed = false;  // KTP: Reset for next map
+	g_bInitDuringPrecache = false;  // KTP: Reset for next map
 	g_grenades.clear();
 	g_tasksMngr.clear();
 	g_frameActionMngr.clear();
@@ -1352,13 +1364,15 @@ void InstallMessageHook(int msg_id)
 
 // KTP: SV_CheckConsistencyResponse hook for inconsistent_file forward in extension mode
 // This is called when the server receives a consistency response from a client
+// Hook return value: TRUE = file is inconsistent (kick player), FALSE = file is OK (allow)
 bool SV_CheckConsistencyResponse_RH(IRehldsHook_SV_CheckConsistencyResponse *chain, IGameClient *cl, resource_t *resource, uint32 hash)
 {
 	// Call the original first to see if it's inconsistent
+	// result = TRUE means hashes don't match (inconsistent), FALSE means they match (consistent)
 	bool result = chain->callNext(cl, resource, hash);
 
-	// If the file is inconsistent, trigger the forward
-	if (!result && resource && cl)
+	// Only trigger the forward if the file IS inconsistent (result = true)
+	if (result && resource && cl)
 	{
 		edict_t *pEntity = cl->GetEdict();
 		if (pEntity)
@@ -1369,21 +1383,71 @@ bool SV_CheckConsistencyResponse_RH(IRehldsHook_SV_CheckConsistencyResponse *cha
 				char disconnect_message[256] = "";
 
 				// Execute the forward: inconsistent_file(id, const filename[], disconnect_message[64])
-				// Return 1 to allow the player to stay, 0 to kick
+				// Forward return: 1 (PLUGIN_HANDLED) = allow player to stay, 0 = kick
+				// Hook return: FALSE = file OK (allow), TRUE = file bad (kick)
 				if (executeForwards(FF_InconsistentFile, static_cast<cell>(pPlayer->index),
 					resource->szFileName, disconnect_message) == 1)
 				{
-					// Plugin wants to allow the player to stay - don't disconnect
-					return true;
+					// Plugin wants to allow the player to stay - return FALSE (consistent/OK)
+					return false;
 				}
 
 				// Plugin returns 0 or forward doesn't exist - kick the player
-				// The disconnect will happen naturally via the engine
+				// Return TRUE (inconsistent) so engine kicks them
 			}
 		}
 	}
 
 	return result;
+}
+
+// Forward declaration for init function
+static void KTPAMX_InitAsRehldsExtension();
+
+// KTP: PF_precache_model_I hook - processes force_unmodified during precache phase in extension mode
+// This hook fires when the engine precaches any model. On first call, we:
+// 1. Initialize AMXX fully (modules, plugins, hooks) with deferred plugin_init/plugin_cfg
+// 2. Execute plugin_precache forward (so plugins can call force_unmodified)
+// 3. Process all force lists with ENGINE_FORCE_UNMODIFIED
+// This ensures force_unmodified works because we're still in the spawn/precache phase.
+static int PF_precache_model_I_RH(IRehldsHook_PF_precache_model_I *chain, const char *s)
+{
+	// Only process once per map
+	if (!g_bExtPrecacheProcessed)
+	{
+		g_bExtPrecacheProcessed = true;
+
+		// KTP: Initialize AMXX during precache phase if not already done
+		// This loads modules, plugins, and sets up all infrastructure.
+		// plugin_init/plugin_cfg are deferred to SV_ActivateServer when g_bInitDuringPrecache is set.
+		if (!g_bRehldsExtensionInit)
+		{
+			g_bInitDuringPrecache = true;
+			KTPAMX_InitAsRehldsExtension();
+		}
+
+		// Execute plugin_precache forward - plugins will call force_unmodified() here
+		g_dontprecache = false;
+		executeForwards(FF_PluginPrecache);
+		g_dontprecache = true;
+
+		// Now process all force lists with ENGINE_FORCE_UNMODIFIED
+		// We're still in the precache phase so this is allowed
+		for (auto &model : g_forcemodels)
+		{
+			ENGINE_FORCE_UNMODIFIED(model->getForceType(), model->getMin(), model->getMax(), model->getFilename());
+		}
+		for (auto &sound : g_forcesounds)
+		{
+			ENGINE_FORCE_UNMODIFIED(sound->getForceType(), sound->getMin(), sound->getMax(), sound->getFilename());
+		}
+		for (auto &generic : g_forcegeneric)
+		{
+			ENGINE_FORCE_UNMODIFIED(generic->getForceType(), generic->getMin(), generic->getMax(), generic->getFilename());
+		}
+	}
+
+	return chain->callNext(s);
 }
 
 // KTP: ClientConnected hook for client_connect and client_connectex forwards in extension mode
@@ -2359,6 +2423,8 @@ C_DLLEXPORT	int	Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON	reason)
 	g_forcemodels.clear();
 	g_forcesounds.clear();
 	g_forcegeneric.clear();
+	g_bExtPrecacheProcessed = false;  // KTP: Reset for next map
+	g_bInitDuringPrecache = false;  // KTP: Reset for next map
 	g_grenades.clear();
 	g_tasksMngr.clear();
 	g_logevents.clearLogEvents();
@@ -2483,6 +2549,11 @@ C_DLLEXPORT void WINAPI GiveFnptrsToDll(enginefuncs_t* pengfuncsFromEngine, glob
 			// This prevents crashes from hooks running with stale data during the transition
 			if (RehldsHookchains->PF_changelevel_I())
 				RehldsHookchains->PF_changelevel_I()->registerHook(PF_changelevel_I_RH);
+
+			// KTP: Hook PF_precache_model_I to process force_unmodified during precache phase
+			// This is CRITICAL - force_unmodified only works during spawn/precache
+			if (RehldsHookchains->PF_precache_model_I())
+				RehldsHookchains->PF_precache_model_I()->registerHook(PF_precache_model_I_RH);
 
 			print_srvconsole("[KTP AMX] ReHLDS extension mode detected, will initialize on server activate.\n");
 		}
@@ -2698,6 +2769,8 @@ static void KTPAMX_ServerDeactivatePost()
 	g_forcemodels.clear();
 	g_forcesounds.clear();
 	g_forcegeneric.clear();
+	g_bExtPrecacheProcessed = false;  // KTP: Reset for next map
+	g_bInitDuringPrecache = false;  // KTP: Reset for next map
 	g_grenades.clear();
 	g_tasksMngr.clear();
 	g_logevents.clearLogEvents();
@@ -2759,6 +2832,42 @@ static void SV_ActivateServer_RH(IRehldsHook_SV_ActivateServer *chain, int runPh
 		ke::SafeSprintf(g_szPreviousMap, sizeof(g_szPreviousMap), "%s", STRING(gpGlobals->mapname));
 		// KTP: Clear the map change flag - on first init this is NOT a map change
 		// SV_InactivateClients_RH may have set it, but we're just starting up
+		g_bMapChangeInProgress = false;
+		g_bInitDuringPrecache = false;  // Clear flag for next map
+		return;
+	}
+
+	// KTP: If init was done during precache, finish initialization now
+	// plugin_init/plugin_cfg were deferred because game state wasn't ready during precache
+	if (g_bInitDuringPrecache)
+	{
+		g_bInitDuringPrecache = false;  // Clear flag
+
+		// Execute amxx.cfg before plugin_init/plugin_cfg (matching Metamod mode)
+		CoreCfg.ExecuteMainConfig();
+
+		// Execute plugin_init forwards
+		executeForwards(FF_PluginInit);
+
+		// Execute plugin_cfg
+		executeForwards(FF_PluginCfg);
+		CoreCfg.ExecuteAutoConfigs();
+		CoreCfg.SetMapConfigTimer(6.1);
+
+		// Reset task time to enable task execution
+		g_task_time = gpGlobals->time;
+		g_auth_time = gpGlobals->time;
+
+		// Correct time in Counter-Strike and other mods (except DOD)
+		if (!g_bmod_dod)
+			g_game_timeleft = 0;
+
+		g_activated = true;
+
+		print_srvconsole("[KTP AMX] Completed initialization (plugin_init/plugin_cfg executed).\n");
+		AMXXLOG_Log("KTP AMX initialization completed - SV_ActivateServer phase");
+
+		ke::SafeSprintf(g_szPreviousMap, sizeof(g_szPreviousMap), "%s", STRING(gpGlobals->mapname));
 		g_bMapChangeInProgress = false;
 		return;
 	}
@@ -2827,6 +2936,15 @@ static void SV_InactivateClients_RH(IRehldsHook_SV_InactivateClients *chain)
 		g_players_num = 0;
 
 		// KTP: Skip plugin_end forward - plugins don't need notification in extension mode
+
+		// KTP: Reset precache flag and clear force lists for next map
+		// In Metamod mode this happens in C_ServerDeactivate_Post, but that doesn't
+		// get called in extension mode. Without this, plugin_precache won't fire on
+		// map changes and force_unmodified() won't work after the first map.
+		g_bExtPrecacheProcessed = false;
+		g_forcemodels.clear();
+		g_forcesounds.clear();
+		g_forcegeneric.clear();
 	}
 
 	// Continue with client inactivation
@@ -3142,7 +3260,7 @@ static void KTPAMX_InitAsRehldsExtension()
 	g_plugins.Finalize();
 	g_plugins.InvalidateCache();
 
-	// Register forwards
+	// Register forwards (FF_PluginPrecache may already be registered from early load)
 	FF_PluginInit = registerForward("plugin_init", ET_IGNORE, FP_DONE);
 	FF_ClientCommand = registerForward("client_command", ET_STOP, FP_CELL, FP_DONE);
 	FF_ClientConnect = registerForward("client_connect", ET_IGNORE, FP_CELL, FP_DONE);
@@ -3153,7 +3271,8 @@ static void KTPAMX_InitAsRehldsExtension()
 	FF_ClientCvarChanged = registerForward("client_cvar_changed", ET_IGNORE, FP_CELL, FP_STRING, FP_STRING, FP_DONE);
 	FF_ClientPutInServer = registerForward("client_putinserver", ET_IGNORE, FP_CELL, FP_DONE);
 	FF_PluginCfg = registerForward("plugin_cfg", ET_IGNORE, FP_DONE);
-	FF_PluginPrecache = registerForward("plugin_precache", ET_IGNORE, FP_DONE);
+	if (FF_PluginPrecache < 0)  // Only register if not already done during early load
+		FF_PluginPrecache = registerForward("plugin_precache", ET_IGNORE, FP_DONE);
 	FF_PluginLog = registerForward("plugin_log", ET_STOP, FP_DONE);
 	FF_PluginEnd = registerForward("plugin_end", ET_IGNORE, FP_DONE);
 	FF_InconsistentFile = registerForward("inconsistent_file", ET_STOP, FP_CELL, FP_STRING, FP_STRINGEX, FP_DONE);
@@ -3211,10 +3330,25 @@ static void KTPAMX_InitAsRehldsExtension()
 	g_activated = true;
 	g_initialized = true;
 
-	// Execute precache forward (note: may be too late for precaching, but still call for compatibility)
-	g_dontprecache = false;
-	executeForwards(FF_PluginPrecache);
-	g_dontprecache = true;
+	// KTP: plugin_precache and force_unmodified processing now happens in PF_precache_model_I_RH
+	// which fires during the actual precache phase. Only run it here as fallback if the hook didn't fire.
+	if (!g_bExtPrecacheProcessed)
+	{
+		g_dontprecache = false;
+		executeForwards(FF_PluginPrecache);
+		g_dontprecache = true;
+		// Note: force_unmodified won't work here - too late for ENGINE_FORCE_UNMODIFIED
+	}
+
+	// KTP: If init was called during precache phase, defer plugin_init/plugin_cfg to SV_ActivateServer
+	// These forwards need game state that isn't fully ready during precache.
+	if (g_bInitDuringPrecache)
+	{
+		print_srvconsole("[KTP AMX] Loaded %d plugin(s) during precache (plugin_init deferred).\n", g_plugins.getPluginsNum());
+		// Don't set g_activated yet - SV_ActivateServer will finish init
+		AMXXLOG_Log("KTP AMX initialized as ReHLDS extension (no Metamod) - precache phase");
+		return;
+	}
 
 	// KTP: Execute amxx.cfg before plugin_init/plugin_cfg (matching Metamod mode)
 	CoreCfg.ExecuteMainConfig();

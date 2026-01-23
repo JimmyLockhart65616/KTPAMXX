@@ -812,7 +812,77 @@ static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params
 	return count;
 }
 
-AMX_NATIVE_INFO base_Natives[] = 
+// KTP: Grenade ammo manipulation (ported from dodfun for extension mode)
+// dodx_set_grenade_ammo(id, grenade_type, count)
+// grenade_type: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+static cell AMX_NATIVE_CALL dodx_set_grenade_ammo(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+
+	if (!pPlayer->ingame || !pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
+		return 0;
+
+	int grenadeType = params[2];
+	int count = params[3];
+
+	// Clamp count to reasonable range
+	if (count < 0) count = 0;
+	if (count > 10) count = 10;
+
+	switch (grenadeType)
+	{
+		case 13: // DODW_HANDGRENADE
+		case 36: // DODW_MILLS_BOMB (shares ammo pool with hand grenade)
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_1) = count;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_2) = count;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_3) = count;
+			break;
+
+		case 14: // DODW_STICKGRENADE
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_1) = count;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_2) = count;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_3) = count;
+			break;
+
+		default:
+			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_grenade_ammo: invalid grenade type %d", grenadeType);
+			return 0;
+	}
+
+	return 1;
+}
+
+// dodx_get_grenade_ammo(id, grenade_type)
+// Returns current grenade count for the specified type
+static cell AMX_NATIVE_CALL dodx_get_grenade_ammo(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+
+	if (!pPlayer->ingame || !pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
+		return 0;
+
+	int grenadeType = params[2];
+
+	switch (grenadeType)
+	{
+		case 13: // DODW_HANDGRENADE
+		case 36: // DODW_MILLS_BOMB
+			return *((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_1);
+
+		case 14: // DODW_STICKGRENADE
+			return *((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_1);
+
+		default:
+			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_get_grenade_ammo: invalid grenade type %d", grenadeType);
+			return 0;
+	}
+}
+
+AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
 	{ "dod_wpnlog_to_id", wpnlog_to_id },
@@ -869,6 +939,10 @@ AMX_NATIVE_INFO base_Natives[] =
 
 	// KTP: Custom scoreboard team names
 	{"dodx_set_scoreboard_team_name", dodx_set_scoreboard_team_name},
+
+	// KTP: Grenade ammo manipulation (extension mode compatible)
+	{"dodx_set_grenade_ammo", dodx_set_grenade_ammo},
+	{"dodx_get_grenade_ammo", dodx_get_grenade_ammo},
 
 	///*******************
 	{ NULL, NULL }

@@ -5,6 +5,60 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.4] - 2026-01-22
+
+### Added
+
+#### DODX Module - Grenade Ammo Natives
+New natives for grenade ammo manipulation (extension mode compatible, no Metamod/dodfun required):
+
+- **`dodx_set_grenade_ammo(id, grenade_type, count)`** - Set grenade count for a player
+  - Grenade types: `DODW_HANDGRENADE` (13), `DODW_STICKGRENADE` (14), `DODW_MILLS_BOMB` (36)
+  - Count clamped to 0-10 range
+  - Hand grenade and Mills bomb share the same ammo pool
+- **`dodx_get_grenade_ammo(id, grenade_type)`** - Get current grenade count
+  - Returns current count or 0 on failure
+
+**New Defines (dodx.h):**
+- `PDOFFSET_AMMO_HANDGRENADE_1/2/3` - Private data offsets for hand grenade/Mills bomb ammo
+- `PDOFFSET_AMMO_STICKGRENADE_1/2/3` - Private data offsets for stick grenade ammo
+- Linux offsets have +5 adjustment per DoD convention
+
+**Use Case:** KTPGrenadeLoadout and KTPPracticeMode plugins use these for grenade customization.
+
+### Fixed
+
+#### SV_CheckConsistencyResponse Hook (Extension Mode)
+- **Inverted condition bug** - Hook was triggering forward for CONSISTENT files instead of INCONSISTENT
+  - Bug: `if (!result && ...)` fired when `result=false` (file matched)
+  - Fix: `if (result && ...)` fires when `result=true` (file mismatched)
+- **Return value semantics** - Clarified and fixed return values
+  - Hook returns `FALSE` = file OK (allow player)
+  - Hook returns `TRUE` = file bad (kick player)
+  - Forward returns `1` (PLUGIN_HANDLED) = allow player to stay
+- **Model checking now works** - `fc_checkmodels 1` correctly kicks players with modified models
+
+#### force_unmodified() Timing (Extension Mode)
+- **Root cause** - `ENGINE_FORCE_UNMODIFIED` only works during spawn/precache phase
+- **Solution** - Added `PF_precache_model_I` hook to initialize AMXX during precache
+  - Full AMXX init (modules, plugins, hooks) runs on first precache call
+  - `plugin_precache` forward executes so plugins can call `force_unmodified()`
+  - Force lists processed with `ENGINE_FORCE_UNMODIFIED` while still in precache phase
+  - `plugin_init`/`plugin_cfg` deferred to `SV_ActivateServer` (game state not ready during precache)
+- **Map change fix** - Reset `g_bExtPrecacheProcessed` and clear force lists in `SV_InactivateClients`
+  - Without this, `plugin_precache` wouldn't fire on subsequent maps
+
+### Technical
+
+**New Global Variables:**
+- `g_bExtPrecacheProcessed` - Tracks if precache hooks processed force lists this map
+- `g_bInitDuringPrecache` - Tracks if AMXX init was called during precache phase
+
+**New Hook:**
+- `PF_precache_model_I` - Fires during engine precache, triggers early AMXX initialization
+
+---
+
 ## [2.6.3] - 2026-01-06
 
 ### Added
@@ -527,6 +581,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.4 | 2026-01-22 | DODX grenade ammo natives, consistency hook fix, precache timing fix |
 | 2.6.3 | 2026-01-06 | ktp_discord.inc v1.2.0: Draft channel support |
 | 2.6.2 | 2025-12-31 | DODX score broadcasting natives, ktp_discord.inc cleanup |
 | 2.6.1 | 2025-12-26 | ktp_discord.inc v1.1.0 (curl module), RH_SV_Rcon hook constant |
@@ -540,6 +595,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.4]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.4
 [2.6.3]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.3
 [2.6.2]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.2
 [2.6.1]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.1

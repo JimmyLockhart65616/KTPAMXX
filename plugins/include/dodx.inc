@@ -273,4 +273,31 @@ native dodx_broadcast_team_score(team, score);
  */
 native dodx_set_scoreboard_team_name(team, const name[]);
 
+// =============== KTP: Grenade Ammo Manipulation ===============
+
+/**
+ * Set grenade ammo count for a player.
+ * Use this to customize grenade loadouts per class on spawn.
+ * Works in extension mode (no Metamod/dodfun required).
+ *
+ * @param id            Player index
+ * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+ * @param count         Number of grenades to set (0-10)
+ * @return              1 on success, 0 on failure
+ *
+ * @note DODW_HANDGRENADE and DODW_MILLS_BOMB share the same ammo pool (Allies grenades)
+ * @note DODW_STICKGRENADE is the Axis grenade type
+ * @note Call this in dod_client_spawn forward with a short delay for best results
+ */
+native dodx_set_grenade_ammo(id, grenade_type, count);
+
+/**
+ * Get current grenade ammo count for a player.
+ *
+ * @param id            Player index
+ * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+ * @return              Current grenade count, or 0 on failure
+ */
+native dodx_get_grenade_ammo(id, grenade_type);
+
 // ==================================================================
