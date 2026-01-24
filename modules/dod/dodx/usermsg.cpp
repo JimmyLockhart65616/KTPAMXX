@@ -191,8 +191,11 @@ void Client_Health_End(void* mValue)
 	edict_t *enemy = mPlayer->pEdict->v.dmg_inflictor;
 	int damage = (int)mPlayer->pEdict->v.dmg_take;
 
-	// KTP: Check enemy is valid (not null and not a freed edict)
-	if (!damage || !enemy || enemy->free)
+	// KTP: Check if we have valid damage and enemy pointer
+	// NOTE: We do NOT check enemy->free here because grenade entities can be freed
+	// after damaging the first victim but before processing subsequent victims.
+	// We'll handle freed entities by falling back to self-damage below.
+	if (!damage || !enemy)
 		return;
 
 	int weapon = 0;
@@ -202,8 +205,15 @@ void Client_Health_End(void* mValue)
 
 	CPlayer* pAttacker = NULL;
 
+	// KTP: If enemy entity is freed, skip directly to grenade lookup
+	// This happens when a grenade damages multiple victims - the entity
+	// may be freed after the first victim but before subsequent ones
+	if (enemy->free)
+	{
+		g_grenades.find(enemy, &pAttacker, weapon);
+	}
 	// KTP: Extra safety check for enemy edict validity before accessing flags
-	if((enemy->v.flags & (FL_CLIENT | FL_FAKECLIENT)))
+	else if((enemy->v.flags & (FL_CLIENT | FL_FAKECLIENT)))
 	{
 		// KTP: Validate enemy player index is in range
 		int enemyIdx = ENTINDEX_SAFE(enemy);
@@ -238,29 +248,64 @@ void Client_Health_End(void* mValue)
 			}
 		}
 	}
-	else 
+	else
 	{
-		g_grenades.find(enemy , &pAttacker , weapon);
+		g_grenades.find(enemy, &pAttacker, weapon);
 	}
 
 	int TA = 0;
-	
+
 	if ( !pAttacker )
-	{
 		pAttacker = mPlayer;
-	}
 
 	if ( pAttacker->index != mPlayer->index )
 	{
-		pAttacker->saveHit( mPlayer , weapon , damage, aim );
-
 		// KTP: Check pEdict is valid before accessing for team comparison
 		if ( pAttacker->pEdict && !pAttacker->pEdict->free &&
 		     mPlayer->pEdict->v.team == pAttacker->pEdict->v.team )
 			TA = 1;
 	}
 
-	MF_ExecuteForward( iFDamage, pAttacker->index, mPlayer->index, damage, weapon, aim, TA );
+	// KTP: Fire pre-damage forward to allow damage modification
+	// Plugins can return a modified damage value (lower to reduce, 0 to block)
+	int effectiveDamage = damage;
+	if (iFDamagePre >= 0)
+	{
+		cell result = MF_ExecuteForward(iFDamagePre, pAttacker->index, mPlayer->index, damage, weapon, aim, TA);
+
+		// If plugin returned a different damage value, apply the reduction
+		if (result >= 0 && result < damage)
+		{
+			int reduction = damage - result;
+			effectiveDamage = result;
+
+			// Heal the player by the reduction amount (effectively reducing the damage taken)
+			// Only heal if player is still alive and reduction is meaningful
+			if (mPlayer->IsAlive() && reduction > 0)
+			{
+				float newHealth = mPlayer->pEdict->v.health + (float)reduction;
+				// Cap at max health (100 for DoD, could be higher with other mods)
+				if (newHealth > 100.0f)
+					newHealth = 100.0f;
+				mPlayer->pEdict->v.health = newHealth;
+
+				// KTP: Send Health message to update client HUD
+				// The game already sent the Health message with the reduced value,
+				// so we need to send another one with the correct value after heal-back
+				MESSAGE_BEGIN(MSG_ONE, gmsgHealth, NULL, mPlayer->pEdict);
+				WRITE_BYTE((int)newHealth);
+				MESSAGE_END();
+			}
+		}
+	}
+
+	// Use effective damage for stats tracking
+	if ( pAttacker->index != mPlayer->index )
+	{
+		pAttacker->saveHit( mPlayer , weapon , effectiveDamage, aim );
+	}
+
+	MF_ExecuteForward( iFDamage, pAttacker->index, mPlayer->index, effectiveDamage, weapon, aim, TA );
 
 	if ( !mPlayer->IsAlive() )
 	{

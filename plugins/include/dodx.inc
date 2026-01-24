@@ -40,6 +40,26 @@ native register_statsfwd(ftype);
 * if players were damaged by teammate TA is set to 1 */
 forward client_damage(attacker, victim, damage, wpnindex, hitplace, TA);
 
+/**
+ * KTP: Pre-damage forward for damage modification.
+ * Called BEFORE damage is finalized - return value modifies the damage.
+ *
+ * @param attacker   Attacker player index (0 for world/environment)
+ * @param victim     Victim player index
+ * @param damage     Original damage amount
+ * @param wpnindex   Weapon ID (DODW_* constants from dodconst.inc)
+ * @param hitplace   Hitgroup (1=head, etc.)
+ * @param TA         Team attack (1 if attacker and victim are same team)
+ * @return           Modified damage value:
+ *                   - Return same damage value to keep unchanged
+ *                   - Return lower value to reduce damage (player is healed by difference)
+ *                   - Return 0 to completely block damage
+ *
+ * @note Grenade weapon IDs: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+ *       DODW_HANDGRENADE_EX (37), DODW_STICKGRENADE_EX (38)
+ */
+forward dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA);
+
 /* Function is called after player death ,
 * if player was killed by teammate TK is set to 1 */
 forward client_death(killer, victim, wpnindex, hitplace, TK);
@@ -320,5 +340,78 @@ native dodx_set_user_noclip(id, noclip);
  * @return           1 on success, 0 on failure
  */
 native dodx_send_ammox(id, ammo_slot, count);
+
+/**
+ * Give a grenade weapon to a player.
+ * Creates a weapon entity and makes the player pick it up.
+ * Use this for infinite grenade functionality in practice mode.
+ *
+ * @param id            Player index
+ * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+ * @return              1 on success, 0 on failure
+ */
+native dodx_give_grenade(id, grenade_type);
+
+/**
+ * Set player class.
+ * Ported from dodfun module for extension mode compatibility.
+ *
+ * @param id        Player index
+ * @param classId   Class ID (1-6 depending on team), or 0 for random class
+ * @return          1 on success, 0 on failure
+ */
+native dodx_set_user_class(id, classId);
+
+/**
+ * Set player team.
+ * Ported from dodfun module for extension mode compatibility.
+ * Note: This kills the player and sets random class.
+ *
+ * @param id        Player index
+ * @param teamId    Team ID: 1 = Allies, 2 = Axis, 3 = Spectators
+ * @param refresh   1 = broadcast team change to all clients, 0 = silent
+ * @return          1 on success, 0 on failure
+ */
+native dodx_set_user_team(id, teamId, refresh = 1);
+
+/**
+ * Get player origin (position).
+ * Extension mode compatible alternative to pev/get_user_origin.
+ *
+ * @param id        Player index
+ * @param origin    Float array[3] to store origin (x, y, z)
+ * @return          1 on success, 0 on failure
+ */
+native dodx_get_user_origin(id, Float:origin[3]);
+
+/**
+ * Set player origin (position/teleport).
+ * Extension mode compatible alternative to set_pev/entity_set_origin.
+ *
+ * @param id        Player index
+ * @param origin    Float array[3] with new origin (x, y, z)
+ * @return          1 on success, 0 on failure
+ */
+native dodx_set_user_origin(id, Float:origin[3]);
+
+/**
+ * Get player view angles.
+ * Extension mode compatible alternative to pev.
+ *
+ * @param id        Player index
+ * @param angles    Float array[3] to store angles (pitch, yaw, roll)
+ * @return          1 on success, 0 on failure
+ */
+native dodx_get_user_angles(id, Float:angles[3]);
+
+/**
+ * Set player view angles.
+ * Extension mode compatible alternative to set_pev.
+ *
+ * @param id        Player index
+ * @param angles    Float array[3] with new angles (pitch, yaw, roll)
+ * @return          1 on success, 0 on failure
+ */
+native dodx_set_user_angles(id, Float:angles[3]);
 
 // ==================================================================

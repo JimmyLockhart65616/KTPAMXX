@@ -5,6 +5,64 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.7] - 2026-01-24
+
+### Added
+
+#### DODX Module - Pre-Damage Forward
+New forward for modifying damage before it's applied:
+
+- **`dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA)`** - Fires before `client_damage`
+  - Return a lower damage value (0 to damage-1) to reduce damage taken
+  - Return 0 to completely block the damage
+  - Return original damage (or higher) for no modification
+  - **Health message sync** - Automatically sends Health message to victim's HUD after heal-back
+  - Stats tracking uses the effective (modified) damage value
+
+**Use Case:** KTPPracticeMode uses this to reduce teammate grenade damage for practice sessions.
+
+#### DODX Module - Give Grenade Native
+New native for giving grenades to players (extension mode compatible):
+
+- **`dodx_give_grenade(id, grenade_type)`** - Give a grenade to a player
+  - `DODW_HANDGRENADE` (13) - US hand grenade
+  - `DODW_STICKGRENADE` (14) - German stick grenade
+  - `DODW_MILLS_BOMB` (36) - British Mills bomb
+  - Creates weapon entity and touches it to the player
+  - Returns 1 on success, 0 on failure
+
+**Use Case:** KTPPracticeMode uses this to give grenades during practice mode.
+
+#### DODX Module - Player Manipulation Natives
+New natives ported from dodfun module for extension mode compatibility:
+
+**Class/Team:**
+- **`dodx_set_user_class(id, classId)`** - Set player class (1-6, or 0 for random)
+- **`dodx_set_user_team(id, teamId, refresh=1)`** - Set player team (1=Allies, 2=Axis, 3=Spectators)
+  - Kills player, sets random class
+  - `refresh=1` broadcasts team change to all clients
+
+**Position/Angles:**
+- **`dodx_get_user_origin(id, Float:origin[3])`** - Get player position
+- **`dodx_set_user_origin(id, Float:origin[3])`** - Teleport player
+- **`dodx_get_user_angles(id, Float:angles[3])`** - Get player view angles
+- **`dodx_set_user_angles(id, Float:angles[3])`** - Set player view angles (includes fixangle)
+
+**Use Case:** These enable player state save/restore during hostname broadcast operations where the server briefly respawns players.
+
+**New Private Data Offsets (CMisc.h):**
+- `STEAM_PDOFFSET_CLASS` (367 + Linux offset) - Player class
+- `STEAM_PDOFFSET_RCLASS` (368 + Linux offset) - Random class flag
+
+### Fixed
+
+#### Multi-Victim Grenade Damage
+- **Freed entity handling** - Grenade entities can be freed after damaging the first victim but before subsequent victims are processed
+- **Solution** - Check `enemy->free` flag and fall back to grenade lookup table when entity is freed
+- **Result** - Grenade damage now correctly attributes to the thrower for all victims
+
+---
+
 ## [2.6.6] - 2026-01-23
 
 ### Added
@@ -620,6 +678,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.7 | 2026-01-24 | DODX dod_damage_pre forward, dodx_give_grenade + player manipulation natives, grenade fix |
 | 2.6.6 | 2026-01-23 | DODX dodx_send_ammox native for HUD ammo sync |
 | 2.6.5 | 2026-01-23 | DODX dodx_set_user_noclip native |
 | 2.6.4 | 2026-01-22 | DODX grenade ammo natives, consistency hook fix, precache timing fix |
@@ -636,6 +695,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.7]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.7
 [2.6.6]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.6
 [2.6.5]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.5
 [2.6.4]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.4

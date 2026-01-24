@@ -1,10 +1,39 @@
 # KTP AMX
 
-**Version 2.6.6** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.7** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
 Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
+
+---
+
+## What's New in v2.6.7
+
+### DODX Module - Pre-Damage Forward
+
+New forward for modifying damage before it's applied:
+
+- **`dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA)`** - Fires before `client_damage`
+  - Return a lower value to reduce damage, 0 to block completely
+  - Automatically syncs client Health HUD after damage reduction
+
+### DODX Module - Give Grenade Native
+
+- **`dodx_give_grenade(id, grenade_type)`** - Give a grenade to a player
+  - Works with `DODW_HANDGRENADE` (13), `DODW_STICKGRENADE` (14), `DODW_MILLS_BOMB` (36)
+
+### DODX Module - Player Manipulation Natives
+
+Ported from dodfun for extension mode:
+
+- **`dodx_set_user_class(id, classId)`** / **`dodx_set_user_team(id, teamId)`** - Class/team control
+- **`dodx_get/set_user_origin(id, Float:origin[3])`** - Position manipulation
+- **`dodx_get/set_user_angles(id, Float:angles[3])`** - View angle manipulation
+
+### Multi-Victim Grenade Damage Fix
+
+- Fixed grenade damage attribution when entity is freed between victims
 
 ---
 

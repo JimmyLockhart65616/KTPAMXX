@@ -82,6 +82,7 @@ int iFGrenadeExplode = -1;
 int iFRocketExplode = -1;
 int iFObjectTouched = -1;
 int iFStaminaForward = -1;
+int iFDamagePre = -1;  // KTP: Pre-damage forward for damage modification
 
 int gmsgCurWeapon;
 int gmsgCurWeaponEnd;
@@ -611,6 +612,12 @@ void OnPluginsLoaded()
 	// KTP: HLStatsX integration forward - fired by dodx_flush_all_stats() native
 	// stats_logging.sma should register for this to log weaponstats
 	iFFlushStats = MF_RegisterForward("dod_stats_flush",ET_IGNORE,FP_CELL/*id*/,FP_DONE);
+
+	// KTP: Pre-damage forward for damage modification (grenade reduction, etc.)
+	// Fires before client_damage with ET_CONTINUE - return value is the modified damage
+	// Return original damage to keep unchanged, return lower value to reduce, return 0 to block
+	// Params: attacker, victim, damage, weapon, hitgroup, team_attack
+	iFDamagePre = MF_RegisterForward("dod_damage_pre",ET_CONTINUE,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_DONE);
 
 	// KTP: Initialize gamerules access for scoreboard score modification
 	// This allows dodx_set_team_score/dodx_get_team_score natives to work

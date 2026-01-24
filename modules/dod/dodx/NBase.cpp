@@ -175,6 +175,151 @@ static cell AMX_NATIVE_CALL get_user_class(AMX *amx, cell *params)
 	return 0;
 }
 
+// KTP: Set player class (ported from dodfun, extension mode compatible)
+static cell AMX_NATIVE_CALL dodx_set_user_class(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+	int iClass = params[2];
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	if (iClass) {
+		*((int*)pPlayer->pEdict->pvPrivateData + STEAM_PDOFFSET_CLASS) = iClass;
+		*((int*)pPlayer->pEdict->pvPrivateData + STEAM_PDOFFSET_RCLASS) = 0; // disable random class
+	} else {
+		*((int*)pPlayer->pEdict->pvPrivateData + STEAM_PDOFFSET_RCLASS) = 1; // set random class
+	}
+
+	return 1;
+}
+
+// KTP: Set player team (ported from dodfun, extension mode compatible)
+static cell AMX_NATIVE_CALL dodx_set_user_team(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+	int iTeam = params[2];
+
+	if (iTeam < 1 || iTeam > 3) {
+		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid team id %d", iTeam);
+		return 0;
+	}
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	pPlayer->killPlayer();
+	pPlayer->pEdict->v.team = iTeam;
+
+	// Set team name in private data
+	char* pTeamName = (char*)pPlayer->pEdict->pvPrivateData + STEAM_PDOFFSET_TEAMNAME;
+	const char* teamName;
+	switch (iTeam) {
+		case 1: teamName = "Allies"; break;
+		case 2: teamName = "Axis"; break;
+		case 3: teamName = "Spectators"; break;
+		default: teamName = ""; break;
+	}
+	strncpy(pTeamName, teamName, 15);
+	pTeamName[15] = '\0';
+
+	*((int*)pPlayer->pEdict->pvPrivateData + STEAM_PDOFFSET_RCLASS) = 1; // set random class
+
+	// Broadcast team change if refresh requested
+	if (params[3]) {
+		MESSAGE_BEGIN(MSG_ALL, gmsgPTeam);
+		WRITE_BYTE(pPlayer->index);
+		WRITE_BYTE(iTeam);
+		MESSAGE_END();
+	}
+
+	return 1;
+}
+
+// KTP: Get player origin (extension mode compatible, no fakemeta needed)
+static cell AMX_NATIVE_CALL dodx_get_user_origin(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	cell *origin = MF_GetAmxAddr(amx, params[2]);
+	origin[0] = amx_ftoc(pPlayer->pEdict->v.origin[0]);
+	origin[1] = amx_ftoc(pPlayer->pEdict->v.origin[1]);
+	origin[2] = amx_ftoc(pPlayer->pEdict->v.origin[2]);
+
+	return 1;
+}
+
+// KTP: Set player origin (extension mode compatible, no fakemeta needed)
+static cell AMX_NATIVE_CALL dodx_set_user_origin(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	cell *origin = MF_GetAmxAddr(amx, params[2]);
+	pPlayer->pEdict->v.origin[0] = amx_ctof(origin[0]);
+	pPlayer->pEdict->v.origin[1] = amx_ctof(origin[1]);
+	pPlayer->pEdict->v.origin[2] = amx_ctof(origin[2]);
+
+	return 1;
+}
+
+// KTP: Get player view angles (extension mode compatible, no fakemeta needed)
+static cell AMX_NATIVE_CALL dodx_get_user_angles(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	cell *angles = MF_GetAmxAddr(amx, params[2]);
+	angles[0] = amx_ftoc(pPlayer->pEdict->v.v_angle[0]);
+	angles[1] = amx_ftoc(pPlayer->pEdict->v.v_angle[1]);
+	angles[2] = amx_ftoc(pPlayer->pEdict->v.v_angle[2]);
+
+	return 1;
+}
+
+// KTP: Set player view angles (extension mode compatible, no fakemeta needed)
+static cell AMX_NATIVE_CALL dodx_set_user_angles(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	cell *angles = MF_GetAmxAddr(amx, params[2]);
+	pPlayer->pEdict->v.v_angle[0] = amx_ctof(angles[0]);
+	pPlayer->pEdict->v.v_angle[1] = amx_ctof(angles[1]);
+	pPlayer->pEdict->v.v_angle[2] = amx_ctof(angles[2]);
+
+	// Also set angles for proper view direction
+	pPlayer->pEdict->v.angles[0] = amx_ctof(angles[0]) / -3.0f;
+	pPlayer->pEdict->v.angles[1] = amx_ctof(angles[1]);
+	pPlayer->pEdict->v.angles[2] = 0;
+
+	// Fix view with fixangle
+	pPlayer->pEdict->v.fixangle = 1;
+
+	return 1;
+}
+
 static cell AMX_NATIVE_CALL user_kill(AMX *amx, cell *params)
 {
 	int index = params[1];
@@ -933,6 +1078,72 @@ static cell AMX_NATIVE_CALL dodx_send_ammox(AMX *amx, cell *params)
 	return 1;
 }
 
+// KTP: Give a grenade weapon to a player (for infinite grenades in practice mode)
+// dodx_give_grenade(id, grenade_type)
+// grenade_type: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+static cell AMX_NATIVE_CALL dodx_give_grenade(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict || !pPlayer->IsAlive())
+		return 0;
+
+	int grenadeType = params[2];
+
+	// Determine weapon classname based on grenade type
+	const char* weaponClass;
+	switch (grenadeType)
+	{
+		case 13: // DODW_HANDGRENADE
+			weaponClass = "weapon_handgrenade";
+			break;
+		case 14: // DODW_STICKGRENADE
+			weaponClass = "weapon_stickgrenade";
+			break;
+		case 36: // DODW_MILLS_BOMB
+			weaponClass = "weapon_mills_bomb";
+			break;
+		default:
+			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_give_grenade: invalid grenade type %d", grenadeType);
+			return 0;
+	}
+
+	// Get game DLL functions (works in both Metamod and extension mode)
+	DLL_FUNCTIONS* pGameDll = (DLL_FUNCTIONS*)MF_GetGameDllFuncs();
+	if (!pGameDll || !pGameDll->pfnSpawn || !pGameDll->pfnTouch)
+		return 0;
+
+	// Create the weapon entity
+	edict_t* pWeapon = CREATE_NAMED_ENTITY(ALLOC_STRING(weaponClass));
+	if (!pWeapon || FNullEnt(pWeapon))
+		return 0;
+
+	// Position at player's origin
+	pWeapon->v.origin = pPlayer->pEdict->v.origin;
+	pWeapon->v.spawnflags |= (1 << 30);  // SF_NORESPAWN - prevent respawn
+
+	// Spawn the entity using game DLL function
+	pGameDll->pfnSpawn(pWeapon);
+
+	// Remember solid state before touch
+	int oldSolid = pWeapon->v.solid;
+
+	// Touch the player to pick it up using game DLL function
+	pGameDll->pfnTouch(pWeapon, pPlayer->pEdict);
+
+	// If solid state changed, pickup was successful
+	// If not, entity wasn't picked up - remove it to avoid clutter
+	if (pWeapon->v.solid == oldSolid && !FNullEnt(pWeapon) && pWeapon->free == 0)
+	{
+		REMOVE_ENTITY(pWeapon);
+		return -1;  // Indicate pickup failed (player may already have max)
+	}
+
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -998,6 +1209,17 @@ AMX_NATIVE_INFO base_Natives[] =
 	// KTP: Noclip control (extension mode compatible)
 	{"dodx_set_user_noclip", dodx_set_user_noclip},
 	{"dodx_send_ammox", dodx_send_ammox},
+
+	// KTP: Give grenade weapon (for practice mode infinite grenades)
+	{"dodx_give_grenade", dodx_give_grenade},
+
+	// KTP: Player class/team/position manipulation (hostname broadcast state restoration)
+	{"dodx_set_user_class", dodx_set_user_class},
+	{"dodx_set_user_team", dodx_set_user_team},
+	{"dodx_get_user_origin", dodx_get_user_origin},
+	{"dodx_set_user_origin", dodx_set_user_origin},
+	{"dodx_get_user_angles", dodx_get_user_angles},
+	{"dodx_set_user_angles", dodx_set_user_angles},
 
 	///*******************
 	{ NULL, NULL }

@@ -26,6 +26,10 @@
 #define LINUXOFFSET	5
 #endif
 
+// KTP: Private data offsets for player class/team manipulation
+#define STEAM_PDOFFSET_CLASS	367 + LINUXOFFSET  // player class
+#define STEAM_PDOFFSET_RCLASS	368 + LINUXOFFSET  // random class flag
+
 #define DOD_VERSION "0.1"
 
 #define MAX_TRACE	6
