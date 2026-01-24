@@ -70,7 +70,7 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.1.0"
+#define KTP_DISCORD_VERSION "1.2.0"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
