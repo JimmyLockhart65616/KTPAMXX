@@ -479,33 +479,34 @@ AMXX.utf8rewind = builder.RunScript(
   'third_party/utf8rewind/AMBuilder'
 )
 
-builder.RunBuildScripts(
-  [
+# KTP: Only build core + dodx - minimal build for extension mode
+build_scripts = [
     'amxmodx/AMBuilder',
     'compiler/amxxpc/AMBuilder',
     'compiler/libpc300/AMBuilder',
-    'modules/cstrike/cstrike/AMBuilder',
-    'modules/cstrike/csx/AMBuilder',
-    'modules/dod/dodfun/AMBuilder',
     'modules/dod/dodx/AMBuilder',
-    'modules/engine/AMBuilder',
-    'modules/fakemeta/AMBuilder',
-    'modules/fun/AMBuilder',
-    'modules/geoip/AMBuilder',
-    'modules/hamsandwich/AMBuilder',
-    'modules/json/AMBuilder',
-    'modules/mysqlx/AMBuilder',
-    'modules/ns/AMBuilder',
-    'modules/nvault/AMBuilder',
-    'modules/regex/AMBuilder',
-    'modules/sockets/AMBuilder',
-    'modules/sqlite/AMBuilder',
-    'modules/tfcx/AMBuilder',
-    'modules/ts/tsfun/AMBuilder',
-    'modules/ts/tsx/AMBuilder',
-  ],
-  { 'AMXX': AMXX }
-)
+    # ALL OTHER MODULES DISABLED - Require Metamod SDK headers:
+    # 'modules/dod/dodfun/AMBuilder',
+    # 'modules/geoip/AMBuilder',
+    # 'modules/json/AMBuilder',
+    # 'modules/nvault/AMBuilder',
+    # 'modules/regex/AMBuilder',
+    # 'modules/sockets/AMBuilder',
+    # 'modules/sqlite/AMBuilder',
+    # DISABLED - Require Metamod headers:
+    # 'modules/cstrike/cstrike/AMBuilder',
+    # 'modules/cstrike/csx/AMBuilder',
+    # 'modules/engine/AMBuilder',
+    # 'modules/fakemeta/AMBuilder',
+    # 'modules/fun/AMBuilder',
+    # 'modules/hamsandwich/AMBuilder',
+    # 'modules/mysqlx/AMBuilder',
+    # 'modules/ns/AMBuilder',
+    # 'modules/tfcx/AMBuilder',
+    # 'modules/ts/tsfun/AMBuilder',
+    # 'modules/ts/tsx/AMBuilder',
+]
+builder.RunBuildScripts(build_scripts, { 'AMXX': AMXX })
 
 # The csstats.dat reader is Windows-only.
 if builder.target_platform == 'windows':

@@ -11,7 +11,18 @@
 
 #include <stddef.h>   // size_t
 #include <extdll.h>   // edict_t, etc.
+#ifdef USE_METAMOD
 #include <sdk_util.h> // FNullEnt, INDEXENT, etc.
+#else
+// Provide engine macros when not using Metamod
+extern enginefuncs_t g_engfuncs;
+#ifndef INDEXENT
+#define INDEXENT(iEdictNum)     (*g_engfuncs.pfnPEntityOfEntIndex)(iEdictNum)
+#endif
+#ifndef VARS
+#define VARS(pent)              (&(pent)->v)
+#endif
+#endif
 
 template <typename T> static inline T& ref_pdata(void *pPrivateData, int offset, int element = 0)
 {

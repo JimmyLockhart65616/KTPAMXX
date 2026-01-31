@@ -14,6 +14,10 @@ int LoadMetamodPlugin(const char *path, void **handle, PLUG_LOADTIME now)
 {
 	// KTP: If running without Metamod, we can't load Metamod plugins
 	// But modules can still work via AMXX_Query/AMXX_Attach for natives
+#ifndef USE_METAMOD
+	// Extension mode - no Metamod available
+	return 1;
+#else
 	if (!g_bRunningWithMetamod)
 	{
 		// Return success but don't actually load via Metamod
@@ -29,10 +33,15 @@ int LoadMetamodPlugin(const char *path, void **handle, PLUG_LOADTIME now)
 	}
 
 	return 1;
+#endif
 }
 
 int UnloadMetamodPlugin(void *handle)
 {
+#ifndef USE_METAMOD
+	// Extension mode - no Metamod available
+	return 1;
+#else
 	// KTP: If running without Metamod, nothing to unload
 	if (!g_bRunningWithMetamod)
 	{
@@ -45,4 +54,5 @@ int UnloadMetamodPlugin(void *handle)
 	}
 
 	return 1;
+#endif
 }

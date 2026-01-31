@@ -8,6 +8,7 @@ binary.compiler.defines += [
   #'JIT',
   #'ASM32',
   'HAVE_STDINT_H',
+  'USE_METAMOD',  # KTP: Need Metamod headers for compilation (not runtime)
 ]
 
 # KTP DEBUG: AMX interpreter assembly disabled - using C interpreter

@@ -5,6 +5,39 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.8] - 2026-01-31
+
+### Added
+
+#### Extension Mode Header Stubs
+Complete Metamod-free compilation support for third-party modules:
+
+**amxmodx/amxmodx.h:**
+- Added Metamod enum stubs (`PLUG_LOADTIME`, `PL_UNLOAD_REASON`)
+- Added `hudtextparms_t` struct definition
+- Added engine function macros (`INDEXENT`, `VARS`, `IS_DEDICATED_SERVER`, etc.)
+- Added cvar macros (`CVAR_GET_POINTER`, `CVAR_REGISTER`, etc.)
+- Added info key macros (`GET_INFO_KEY_BUFFER`, `INFO_KEY_VALUE`, etc.)
+- Added game DLL function wrapper stubs (`MDLL_Spawn`, etc.)
+
+**public/sdk/amxxmodule.h:**
+- Mirror stub definitions for third-party module compilation
+- Enables modules like amxxcurl to compile without Metamod SDK headers
+
+**amxmodx/fakemeta.cpp:**
+- Added `#ifndef USE_METAMOD` guards for extension mode
+- Returns early when Metamod unavailable (no-op instead of crash)
+
+#### Docker Build Support
+- `Dockerfile` - Ubuntu 22.04 build environment for glibc 2.35 compatibility
+- `docker-build.sh` - Automated Docker build script
+
+### Fixed
+
+- **Module compilation without Metamod** - Third-party modules no longer require Metamod SDK headers when `USE_METAMOD` is not defined
+
+---
+
 ## [2.6.7] - 2026-01-24
 
 ### Added

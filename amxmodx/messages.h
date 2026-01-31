@@ -11,7 +11,9 @@
 #define _MSGS_INCLUDE_H
 
 #include <extdll.h>
+#ifdef USE_METAMOD
 #include <meta_api.h>
+#endif
 #include "amx.h"
 #include "sh_stack.h"
 

@@ -34,6 +34,7 @@
 #endif // __DATE__
 
 // metamod plugin?
+// KTP: Enabled for compilation (need Metamod SDK headers)
 #define USE_METAMOD
 
 // use memory manager/tester?

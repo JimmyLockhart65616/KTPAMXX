@@ -1,0 +1,11 @@
+services:
+  ktpamxx-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount source directories (read-only for safety)
+      - .:/build/ktpamxx:ro
+      - ../KTPhlsdk:/build/ktphlsdk:ro
+      # Output directory (writable)
+      - ./docker-output:/build/output

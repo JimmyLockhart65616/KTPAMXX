@@ -10,8 +10,10 @@
 #define _ENGINE_STRUCTS_H_
 
 #include <extdll.h>
+#ifdef USE_METAMOD
 #include <meta_api.h>
 #include <osdep.h>
+#endif
 #include <FileSystem.h>
 #include <entity_state.h>
 #include <usercmd.h>

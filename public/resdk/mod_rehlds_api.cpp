@@ -1,5 +1,12 @@
 
 #include "mod_rehlds_api.h"
+#include <extdll.h>
+
+// Engine function for dedicated server check (when not using Metamod)
+extern enginefuncs_t g_engfuncs;
+#ifndef IS_DEDICATED_SERVER
+#define IS_DEDICATED_SERVER (*g_engfuncs.pfnIsDedicatedServer)
+#endif
 
 IRehldsApi*          RehldsApi;
 const RehldsFuncs_t* RehldsFuncs;

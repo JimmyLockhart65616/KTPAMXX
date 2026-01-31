@@ -26,6 +26,103 @@
 #include <extdll.h>
 #include <meta_api.h>
 #include "osdep.h"
+#else
+// Stub definitions for extension mode (no Metamod)
+#include <extdll.h>
+
+// Maximum registered user messages
+#ifndef MAX_REG_MSGS
+#define MAX_REG_MSGS 256
+#endif
+
+// Plugin load time (Metamod enum stub)
+typedef enum {
+	PT_NEVER = 0,
+	PT_STARTUP,
+	PT_CHANGELEVEL,
+	PT_ANYTIME,
+	PT_ANYPAUSE,
+} PLUG_LOADTIME;
+
+// Plugin unload reason
+typedef enum {
+	PNL_NULL = 0,
+	PNL_INI_DELETED,
+	PNL_FILE_NEWER,
+	PNL_COMMAND,
+	PNL_CMD_FORCED,
+	PNL_DELAYED,
+	PNL_PLUGIN,
+	PNL_PLG_FORCED,
+	PNL_RELOAD,
+} PL_UNLOAD_REASON;
+
+// HUD text message parameters
+typedef struct hudtextparms_s {
+	float x;
+	float y;
+	int effect;
+	byte r1, g1, b1, a1;
+	byte r2, g2, b2, a2;
+	float fadeinTime;
+	float fadeoutTime;
+	float holdTime;
+	float fxTime;
+	int channel;
+} hudtextparms_t;
+
+// Engine functions extern
+extern enginefuncs_t g_engfuncs;
+#ifndef INDEXENT
+#define INDEXENT(iEdictNum) (*g_engfuncs.pfnPEntityOfEntIndex)(iEdictNum)
+#endif
+#ifndef VARS
+#define VARS(pent) (&(pent)->v)
+#endif
+#ifndef IS_DEDICATED_SERVER
+#define IS_DEDICATED_SERVER (*g_engfuncs.pfnIsDedicatedServer)
+#endif
+
+// Cvar macros
+#ifndef CVAR_GET_POINTER
+#define CVAR_GET_POINTER(name) (*g_engfuncs.pfnCVarGetPointer)(name)
+#endif
+#ifndef CVAR_REGISTER
+#define CVAR_REGISTER(x) (*g_engfuncs.pfnCVarRegister)(x)
+#endif
+#ifndef CVAR_GET_STRING
+#define CVAR_GET_STRING(name) (*g_engfuncs.pfnCVarGetString)(name)
+#endif
+#ifndef CVAR_GET_FLOAT
+#define CVAR_GET_FLOAT(name) (*g_engfuncs.pfnCVarGetFloat)(name)
+#endif
+#ifndef CVAR_SET_STRING
+#define CVAR_SET_STRING(name, value) (*g_engfuncs.pfnCVarSetString)(name, value)
+#endif
+#ifndef CVAR_SET_FLOAT
+#define CVAR_SET_FLOAT(name, value) (*g_engfuncs.pfnCVarSetFloat)(name, value)
+#endif
+
+// Info key macros
+#ifndef GET_INFO_KEY_BUFFER
+#define GET_INFO_KEY_BUFFER (*g_engfuncs.pfnGetInfoKeyBuffer)
+#endif
+#ifndef INFO_KEY_VALUE
+#define INFO_KEY_VALUE (*g_engfuncs.pfnInfoKeyValue)
+#endif
+#ifndef SET_KEY_VALUE
+#define SET_KEY_VALUE (*g_engfuncs.pfnSetKeyValue)
+#endif
+#ifndef ENTITY_KEYVALUE
+#define ENTITY_KEYVALUE(e, key) INFO_KEY_VALUE(GET_INFO_KEY_BUFFER(e), (key))
+#endif
+#ifndef SET_LOCALINFO
+#define SET_LOCALINFO(key, value) SET_KEY_VALUE(GET_INFO_KEY_BUFFER(NULL), (char*)(key), (char*)(value))
+#endif
+#ifndef GET_LOCALINFO
+#define GET_LOCALINFO(key) INFO_KEY_VALUE(GET_INFO_KEY_BUFFER(NULL), (key))
+#endif
+
 #endif // #ifdef USE_METAMOD
 
 // DLL Export

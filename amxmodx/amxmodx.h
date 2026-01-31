@@ -18,7 +18,356 @@
 #include <ctype.h>				//tolower, etc
 #include "string.h"
 #include <extdll.h>
+#ifdef USE_METAMOD
 #include <meta_api.h>
+#else
+// Stub definitions for extension mode (no Metamod)
+// Maximum registered user messages
+#ifndef MAX_REG_MSGS
+#define MAX_REG_MSGS 256
+#endif
+
+// Plugin load time (Metamod enum stub)
+typedef enum {
+	PT_NEVER = 0,
+	PT_STARTUP,
+	PT_CHANGELEVEL,
+	PT_ANYTIME,
+	PT_ANYPAUSE,
+} PLUG_LOADTIME;
+
+// Plugin unload reason
+typedef enum {
+	PNL_NULL = 0,
+	PNL_INI_DELETED,
+	PNL_FILE_NEWER,
+	PNL_COMMAND,
+	PNL_CMD_FORCED,
+	PNL_DELAYED,
+	PNL_PLUGIN,
+	PNL_PLG_FORCED,
+	PNL_RELOAD,
+} PL_UNLOAD_REASON;
+
+// HUD text message parameters
+typedef struct hudtextparms_s {
+	float x;
+	float y;
+	int effect;
+	unsigned char r1, g1, b1, a1;
+	unsigned char r2, g2, b2, a2;
+	float fadeinTime;
+	float fadeoutTime;
+	float holdTime;
+	float fxTime;
+	int channel;
+} hudtextparms_t;
+
+// Engine functions extern
+extern enginefuncs_t g_engfuncs;
+#ifndef INDEXENT
+#define INDEXENT(iEdictNum) (*g_engfuncs.pfnPEntityOfEntIndex)(iEdictNum)
+#endif
+#ifndef VARS
+#define VARS(pent) (&(pent)->v)
+#endif
+#ifndef IS_DEDICATED_SERVER
+#define IS_DEDICATED_SERVER (*g_engfuncs.pfnIsDedicatedServer)
+#endif
+#ifndef SERVER_COMMAND
+#define SERVER_COMMAND (*g_engfuncs.pfnServerCommand)
+#endif
+#ifndef STRING
+#define STRING(offset) (const char *)(gpGlobals->pStringBase + (unsigned int)(offset))
+#endif
+// Plugin ID and request ID macros (Metamod stubs)
+#ifndef PLID
+#define PLID 1  // Extension mode doesn't need real plugin ID
+#endif
+#ifndef MAKE_REQUESTID
+#define MAKE_REQUESTID(plid) (((plid) << 12) | 0x800)
+#endif
+#ifndef QUERY_CLIENT_CVAR_VALUE2
+#define QUERY_CLIENT_CVAR_VALUE2 (*g_engfuncs.pfnQueryClientCvarValue2)
+#endif
+#ifndef FNullEnt
+#define FNullEnt(pent) ((pent) == nullptr || (pent)->free || ENTOFFSET(pent) == 0)
+#endif
+#ifndef ENTOFFSET
+#define ENTOFFSET(pent) ((int)((char*)(pent) - (char*)INDEXENT(0)))
+#endif
+// Game DLL function wrappers (Metamod stubs)
+extern DLL_FUNCTIONS gEntityInterface;
+#ifndef MDLL_Spawn
+#define MDLL_Spawn gEntityInterface.pfnSpawn
+#endif
+
+// Engine cvar macros
+#ifndef CVAR_GET_POINTER
+#define CVAR_GET_POINTER(name) (*g_engfuncs.pfnCVarGetPointer)(name)
+#endif
+#ifndef CVAR_REGISTER
+#define CVAR_REGISTER(x) (*g_engfuncs.pfnCVarRegister)(x)
+#endif
+#ifndef CVAR_SET_STRING
+#define CVAR_SET_STRING(name, value) (*g_engfuncs.pfnCVarSetString)(name, value)
+#endif
+#ifndef CVAR_SET_FLOAT
+#define CVAR_SET_FLOAT(name, value) (*g_engfuncs.pfnCVarSetFloat)(name, value)
+#endif
+#ifndef CVAR_GET_FLOAT
+#define CVAR_GET_FLOAT(name) (*g_engfuncs.pfnCVarGetFloat)(name)
+#endif
+#ifndef CVAR_GET_STRING
+#define CVAR_GET_STRING(name) (*g_engfuncs.pfnCVarGetString)(name)
+#endif
+
+// Engine command macros
+#ifndef CMD_ARGC
+#define CMD_ARGC (*g_engfuncs.pfnCmd_Argc)
+#endif
+#ifndef CMD_ARGV
+#define CMD_ARGV (*g_engfuncs.pfnCmd_Argv)
+#endif
+#ifndef CMD_ARGS
+#define CMD_ARGS (*g_engfuncs.pfnCmd_Args)
+#endif
+#ifndef REG_SVR_COMMAND
+#define REG_SVR_COMMAND (*g_engfuncs.pfnAddServerCommand)
+#endif
+#ifndef SERVER_PRINT
+#define SERVER_PRINT (*g_engfuncs.pfnServerPrint)
+#endif
+
+// Entity macros
+#ifndef REMOVE_ENTITY
+#define REMOVE_ENTITY (*g_engfuncs.pfnRemoveEntity)
+#endif
+#ifndef CREATE_NAMED_ENTITY
+#define CREATE_NAMED_ENTITY (*g_engfuncs.pfnCreateNamedEntity)
+#endif
+#ifndef MAKE_STRING
+#define MAKE_STRING(str) ((uint64)(str) - (uint64)(STRING(0)))
+#endif
+#ifndef ALLOC_STRING
+#define ALLOC_STRING (*g_engfuncs.pfnAllocString)
+#endif
+#ifndef PRECACHE_MODEL
+#define PRECACHE_MODEL (*g_engfuncs.pfnPrecacheModel)
+#endif
+#ifndef PRECACHE_SOUND
+#define PRECACHE_SOUND (*g_engfuncs.pfnPrecacheSound)
+#endif
+#ifndef MODEL_INDEX
+#define MODEL_INDEX (*g_engfuncs.pfnModelIndex)
+#endif
+#ifndef MODEL_FRAMES
+#define MODEL_FRAMES (*g_engfuncs.pfnModelFrames)
+#endif
+
+// Misc engine macros
+#ifndef GET_GAME_DIR
+#define GET_GAME_DIR (*g_engfuncs.pfnGetGameDir)
+#endif
+#ifndef ALERT
+#define ALERT (*g_engfuncs.pfnAlertMessage)
+#endif
+#ifndef ENGINE_FPRINTF
+#define ENGINE_FPRINTF (*g_engfuncs.pfnEngineFprintf)
+#endif
+#ifndef GET_INFO_KEY_BUFFER
+#define GET_INFO_KEY_BUFFER (*g_engfuncs.pfnGetInfoKeyBuffer)
+#endif
+#ifndef INFO_KEY_VALUE
+#define INFO_KEY_VALUE (*g_engfuncs.pfnInfoKeyValue)
+#endif
+#ifndef SET_KEY_VALUE
+#define SET_KEY_VALUE (*g_engfuncs.pfnSetKeyValue)
+#endif
+#ifndef SET_CLIENT_KEY_VALUE
+#define SET_CLIENT_KEY_VALUE (*g_engfuncs.pfnSetClientKeyValue)
+#endif
+// Localinfo macros (server info buffer accessed via NULL)
+#ifndef SET_LOCALINFO
+#define SET_LOCALINFO(key, value) SET_KEY_VALUE(GET_INFO_KEY_BUFFER(NULL), (char*)(key), (char*)(value))
+#endif
+#ifndef GET_LOCALINFO
+#define GET_LOCALINFO(key) INFO_KEY_VALUE(GET_INFO_KEY_BUFFER(NULL), (key))
+#endif
+#ifndef ENTITY_KEYVALUE
+#define ENTITY_KEYVALUE(e, key) INFO_KEY_VALUE(GET_INFO_KEY_BUFFER(e), (key))
+#endif
+#ifndef GETPLAYERUSERID
+#define GETPLAYERUSERID (*g_engfuncs.pfnGetPlayerUserId)
+#endif
+// MESSAGE_BEGIN macro - handle 3 or 4 arguments (4th is entity, defaults to NULL)
+#ifndef MESSAGE_BEGIN
+#define MESSAGE_BEGIN_3(dest, type, origin) (*g_engfuncs.pfnMessageBegin)(dest, type, origin, NULL)
+#define MESSAGE_BEGIN_4(dest, type, origin, ent) (*g_engfuncs.pfnMessageBegin)(dest, type, origin, ent)
+#define MESSAGE_BEGIN_GET_MACRO(_1,_2,_3,_4,NAME,...) NAME
+#define MESSAGE_BEGIN(...) MESSAGE_BEGIN_GET_MACRO(__VA_ARGS__, MESSAGE_BEGIN_4, MESSAGE_BEGIN_3)(__VA_ARGS__)
+#endif
+#ifndef MESSAGE_END
+#define MESSAGE_END (*g_engfuncs.pfnMessageEnd)
+#endif
+#ifndef WRITE_BYTE
+#define WRITE_BYTE (*g_engfuncs.pfnWriteByte)
+#endif
+#ifndef WRITE_CHAR
+#define WRITE_CHAR (*g_engfuncs.pfnWriteChar)
+#endif
+#ifndef WRITE_SHORT
+#define WRITE_SHORT (*g_engfuncs.pfnWriteShort)
+#endif
+#ifndef WRITE_LONG
+#define WRITE_LONG (*g_engfuncs.pfnWriteLong)
+#endif
+#ifndef WRITE_ANGLE
+#define WRITE_ANGLE (*g_engfuncs.pfnWriteAngle)
+#endif
+#ifndef WRITE_COORD
+#define WRITE_COORD (*g_engfuncs.pfnWriteCoord)
+#endif
+#ifndef WRITE_STRING
+#define WRITE_STRING (*g_engfuncs.pfnWriteString)
+#endif
+#ifndef WRITE_ENTITY
+#define WRITE_ENTITY (*g_engfuncs.pfnWriteEntity)
+#endif
+#ifndef GET_USER_MSG_ID
+#define GET_USER_MSG_ID(pfn, name, sz) (*g_engfuncs.pfnGetUserMsgID)(pfn, name, sz)
+#endif
+#ifndef GET_USER_MSG_NAME
+#define GET_USER_MSG_NAME (*g_engfuncs.pfnGetUserMsgName)
+#endif
+#ifndef REG_USER_MSG
+#define REG_USER_MSG (*g_engfuncs.pfnRegUserMsg)
+#endif
+#ifndef FIND_ENTITY_BY_STRING
+#define FIND_ENTITY_BY_STRING (*g_engfuncs.pfnFindEntityByString)
+#endif
+#ifndef FIND_ENTITY_IN_SPHERE
+#define FIND_ENTITY_IN_SPHERE (*g_engfuncs.pfnFindEntityInSphere)
+#endif
+#ifndef SET_SIZE
+#define SET_SIZE (*g_engfuncs.pfnSetSize)
+#endif
+#ifndef SET_ORIGIN
+#define SET_ORIGIN (*g_engfuncs.pfnSetOrigin)
+#endif
+#ifndef SET_MODEL
+#define SET_MODEL (*g_engfuncs.pfnSetModel)
+#endif
+#ifndef DROP_TO_FLOOR
+#define DROP_TO_FLOOR (*g_engfuncs.pfnDropToFloor)
+#endif
+#ifndef EMIT_SOUND_DYN
+#define EMIT_SOUND_DYN (*g_engfuncs.pfnEmitSound)
+#endif
+#ifndef CLIENT_PRINTF
+#define CLIENT_PRINTF (*g_engfuncs.pfnClientPrintf)
+#endif
+#ifndef POINT_CONTENTS
+#define POINT_CONTENTS (*g_engfuncs.pfnPointContents)
+#endif
+#ifndef TRACE_LINE
+#define TRACE_LINE (*g_engfuncs.pfnTraceLine)
+#endif
+#ifndef TRACE_HULL
+#define TRACE_HULL (*g_engfuncs.pfnTraceHull)
+#endif
+#ifndef TRACE_MODEL
+#define TRACE_MODEL (*g_engfuncs.pfnTraceModel)
+#endif
+#ifndef NUMBER_OF_ENTITIES
+#define NUMBER_OF_ENTITIES (*g_engfuncs.pfnNumberOfEntities)
+#endif
+#ifndef GET_BONE_POSITION
+#define GET_BONE_POSITION (*g_engfuncs.pfnGetBonePosition)
+#endif
+#ifndef GET_ATTACHMENT
+#define GET_ATTACHMENT (*g_engfuncs.pfnGetAttachment)
+#endif
+#ifndef SET_VIEW
+#define SET_VIEW (*g_engfuncs.pfnSetView)
+#endif
+#ifndef SET_CROSSHAIRANGLE
+#define SET_CROSSHAIRANGLE (*g_engfuncs.pfnCrosshairAngle)
+#endif
+#ifndef CHANGE_LEVEL
+#define CHANGE_LEVEL (*g_engfuncs.pfnChangeLevel)
+#endif
+#ifndef GET_AIM_VECTOR
+#define GET_AIM_VECTOR (*g_engfuncs.pfnGetAimVector)
+#endif
+#ifndef FREE_ENTITY_PRIVATE_DATA
+#define FREE_ENTITY_PRIVATE_DATA (*g_engfuncs.pfnFreeEntPrivateData)
+#endif
+#ifndef PLAYER_RUN_MOVE
+#define PLAYER_RUN_MOVE (*g_engfuncs.pfnRunPlayerMove)
+#endif
+#ifndef TIME
+#define TIME (*g_engfuncs.pfnTime)
+#endif
+#ifndef RANDOM_FLOAT
+#define RANDOM_FLOAT (*g_engfuncs.pfnRandomFloat)
+#endif
+#ifndef RANDOM_LONG
+#define RANDOM_LONG (*g_engfuncs.pfnRandomLong)
+#endif
+#ifndef CRC32_INIT
+#define CRC32_INIT (*g_engfuncs.pfnCRC32_Init)
+#endif
+#ifndef CRC32_PROCESS_BUFFER
+#define CRC32_PROCESS_BUFFER (*g_engfuncs.pfnCRC32_ProcessBuffer)
+#endif
+#ifndef CRC32_PROCESS_BYTE
+#define CRC32_PROCESS_BYTE (*g_engfuncs.pfnCRC32_ProcessByte)
+#endif
+#ifndef CRC32_FINAL
+#define CRC32_FINAL (*g_engfuncs.pfnCRC32_Final)
+#endif
+#ifndef MAKE_VECTORS
+#define MAKE_VECTORS (*g_engfuncs.pfnMakeVectors)
+#endif
+#ifndef VEC_TO_ANGLES
+#define VEC_TO_ANGLES (*g_engfuncs.pfnVecToAngles)
+#endif
+#ifndef ANGLE_VECTORS
+#define ANGLE_VECTORS (*g_engfuncs.pfnAngleVectors)
+#endif
+
+// Dynamic library handle
+#ifdef _WIN32
+typedef HINSTANCE DLHANDLE;
+#else
+typedef void* DLHANDLE;
+#endif
+
+// Metamod result enum stubs
+typedef enum {
+	MRES_UNSET = 0,
+	MRES_IGNORED,
+	MRES_HANDLED,
+	MRES_OVERRIDE,
+	MRES_SUPERCEDE,
+} META_RES;
+
+// RETURN_META macro - in extension mode, just return from the function
+#define RETURN_META(result) return
+#define RETURN_META_VALUE(result, value) return (value)
+
+// Entity index macros
+#ifndef ENTINDEX
+#define ENTINDEX(pent) ((pent) ? ((int)((char*)(pent) - (char*)INDEXENT(0)) / sizeof(edict_t)) : 0)
+#endif
+
+// GET_USER_MSG_NAME - in extension mode, Metamod's version with PLID isn't available
+// Use direct engine call instead (pfnGetUserMsgName doesn't exist in HLSDK, so return NULL)
+#undef GET_USER_MSG_NAME
+#define GET_USER_MSG_NAME(plid, msgid, size) (NULL)
+
+#endif // USE_METAMOD
 
 #ifdef _MSC_VER
 	// MSVC8 - replace POSIX functions with ISO C++ conformant ones as they are deprecated
