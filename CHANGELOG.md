@@ -5,6 +5,46 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.9] - 2026-02-01
+
+### Added
+
+#### DODX Module - Runtime Pdata Offset Detection
+
+Auto-detection of Linux pdata offsets for grenade ammo manipulation:
+
+- **Ubuntu 22.04 and older** - Uses +5 offset adjustment
+- **Ubuntu 24.04 and newer** - Uses +4 offset adjustment
+- **Auto-detection on first spawn** - Probes memory at both offsets to find valid grenade count
+- **No recompilation needed** - Works across Ubuntu versions automatically
+
+**New Globals:**
+- `g_iLinuxPdataOffsetAdjust` - Current offset adjustment (4 or 5)
+- `g_bPdataOffsetDetected` - Whether detection has run
+
+**New Function:**
+- `DODX_DetectPdataOffset(edict_t*)` - Probes player pdata to detect correct offset
+
+**Detection Strategy:**
+1. Look for value 1-10 at expected grenade offset
+2. Check if same value appears at all 3 redundant offsets (they should match)
+3. If +4 matches, use +4; if +5 matches, use +5; otherwise default to +4
+
+**Use Case:** Denver bare-metal runs Ubuntu 24.04, Atlanta runs Ubuntu 22.04. This eliminates the need for separate binaries.
+
+#### DODX Module - New Grenade Natives
+
+- **`dodx_strip_grenade(id, grenade_type)`** - Remove grenade from player and clear ammo slots
+  - Clears all 3 ammo slots for the specified grenade type
+  - Returns 1 on success, 0 on failure
+
+- **`dodx_debug_dump_ammo(id)`** - Debug utility to dump pdata ammo offsets
+  - Scans player pdata for values 1-10 (potential grenade counts)
+  - Shows current offset adjustment and expected offsets
+  - Useful for debugging offset issues on new OS versions
+
+---
+
 ## [2.6.8] - 2026-01-31
 
 ### Added
@@ -711,6 +751,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.9 | 2026-02-01 | DODX runtime pdata offset detection for Ubuntu 22.04/24.04 |
+| 2.6.8 | 2026-01-31 | Extension mode header stubs, Docker build support |
 | 2.6.7 | 2026-01-24 | DODX dod_damage_pre forward, dodx_give_grenade + player manipulation natives, grenade fix |
 | 2.6.6 | 2026-01-23 | DODX dodx_send_ammox native for HUD ammo sync |
 | 2.6.5 | 2026-01-23 | DODX dodx_set_user_noclip native |
@@ -728,6 +770,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.9]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.9
+[2.6.8]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.8
 [2.6.7]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.7
 [2.6.6]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.6
 [2.6.5]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.5

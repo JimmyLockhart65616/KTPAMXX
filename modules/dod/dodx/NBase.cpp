@@ -969,6 +969,12 @@ static cell AMX_NATIVE_CALL dodx_set_grenade_ammo(AMX *amx, cell *params)
 	if (!pPlayer->ingame || !pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
 		return 0;
 
+#if defined(__linux__) || defined(__APPLE__)
+	// Auto-detect pdata offset on first grenade operation
+	if (!g_bPdataOffsetDetected)
+		DODX_DetectPdataOffset(pPlayer->pEdict);
+#endif
+
 	int grenadeType = params[2];
 	int count = params[3];
 
@@ -1009,6 +1015,12 @@ static cell AMX_NATIVE_CALL dodx_get_grenade_ammo(AMX *amx, cell *params)
 
 	if (!pPlayer->ingame || !pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
 		return 0;
+
+#if defined(__linux__) || defined(__APPLE__)
+	// Auto-detect pdata offset on first grenade operation
+	if (!g_bPdataOffsetDetected)
+		DODX_DetectPdataOffset(pPlayer->pEdict);
+#endif
 
 	int grenadeType = params[2];
 
@@ -1144,6 +1156,86 @@ static cell AMX_NATIVE_CALL dodx_give_grenade(AMX *amx, cell *params)
 	return 1;
 }
 
+// dodx_strip_grenade(id, grenade_type)
+// Clears grenade ammo for a player (simplified - just zeros ammo slots)
+// grenade_type: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+static cell AMX_NATIVE_CALL dodx_strip_grenade(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
+		return 0;
+
+	int grenadeType = params[2];
+
+	// Clear all ammo slots for this grenade type
+	switch (grenadeType)
+	{
+		case 13: // DODW_HANDGRENADE
+		case 36: // DODW_MILLS_BOMB
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_1) = 0;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_2) = 0;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_HANDGRENADE_3) = 0;
+			break;
+
+		case 14: // DODW_STICKGRENADE
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_1) = 0;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_2) = 0;
+			*((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_3) = 0;
+			break;
+
+		default:
+			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_strip_grenade: invalid grenade type %d", grenadeType);
+			return 0;
+	}
+
+	return 1;
+}
+
+// dodx_debug_dump_ammo(id)
+// Debug function to dump potential ammo offset values
+// Scans for values 1-10 which could be grenade/ammo counts
+static cell AMX_NATIVE_CALL dodx_debug_dump_ammo(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
+		return 0;
+
+	int* pData = (int*)pPlayer->pEdict->pvPrivateData;
+
+#if defined(__linux__) || defined(__APPLE__)
+	// Show current offset adjustment
+	MF_Log("[DODX DEBUG] Player %d - Runtime offset adjustment: +%d (detected=%s)",
+		index, g_iLinuxPdataOffsetAdjust, g_bPdataOffsetDetected ? "yes" : "no");
+	MF_Log("[DODX DEBUG] Expected offsets: HG1=%d HG2=%d HG3=%d SG1=%d",
+		PDOFFSET_AMMO_HANDGRENADE_1, PDOFFSET_AMMO_HANDGRENADE_2,
+		PDOFFSET_AMMO_HANDGRENADE_3, PDOFFSET_AMMO_STICKGRENADE_1);
+#endif
+
+	// Scan a wide range looking for values 1-10 (potential grenade counts)
+	MF_Log("[DODX DEBUG] Player %d - Scanning for values 1-10 (grenade counts):", index);
+
+	// Scan offsets 0-400 looking for small positive values
+	for (int i = 0; i <= 400; i++) {
+		int val = pData[i];
+		if (val >= 1 && val <= 10) {
+			const char* marker = "";
+			if (i == PDOFFSET_AMMO_HANDGRENADE_1) marker = " <-- HANDGRENADE_1 (expected)";
+			else if (i == PDOFFSET_AMMO_HANDGRENADE_2) marker = " <-- HANDGRENADE_2 (expected)";
+			else if (i == PDOFFSET_AMMO_HANDGRENADE_3) marker = " <-- HANDGRENADE_3 (expected)";
+			else if (i == PDOFFSET_AMMO_STICKGRENADE_1) marker = " <-- STICKGRENADE_1 (expected)";
+			MF_Log("[DODX DEBUG]   [%d] = %d%s", i, val, marker);
+		}
+	}
+
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1212,6 +1304,8 @@ AMX_NATIVE_INFO base_Natives[] =
 
 	// KTP: Give grenade weapon (for practice mode infinite grenades)
 	{"dodx_give_grenade", dodx_give_grenade},
+	{"dodx_strip_grenade", dodx_strip_grenade},
+	{"dodx_debug_dump_ammo", dodx_debug_dump_ammo},
 
 	// KTP: Player class/team/position manipulation (hostname broadcast state restoration)
 	{"dodx_set_user_class", dodx_set_user_class},

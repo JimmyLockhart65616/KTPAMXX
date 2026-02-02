@@ -1,10 +1,25 @@
 # KTP AMX
 
-**Version 2.6.8** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.9** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
 
 Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
+
+---
+
+## What's New in v2.6.9
+
+### DODX Module - Runtime Pdata Offset Detection
+
+Auto-detection of Linux pdata offsets for grenade ammo manipulation:
+
+- **Ubuntu 22.04 and older** - Uses +5 offset adjustment
+- **Ubuntu 24.04 and newer** - Uses +4 offset adjustment
+- **Auto-detection on first spawn** - Probes memory to find valid offset
+- **No recompilation needed** - Single binary works across Ubuntu versions
+
+This eliminates the need for separate builds when running on different Ubuntu versions.
 
 ---
 
@@ -17,8 +32,6 @@ Complete Metamod-free compilation support for third-party modules:
 - **amxmodx/amxmodx.h** - Added Metamod enum stubs, `hudtextparms_t`, engine function macros, cvar macros, and game DLL wrappers
 - **public/sdk/amxxmodule.h** - Mirror stub definitions for third-party module compilation
 - **amxmodx/fakemeta.cpp** - Added `#ifndef USE_METAMOD` guards (no-op instead of crash)
-
-Third-party modules like amxxcurl can now compile without Metamod SDK headers when `USE_METAMOD` is not defined.
 
 ### Docker Build Support
 
@@ -369,7 +382,7 @@ public client_cvar_changed(id, const cvar[], const value[]) {
 
 Check server console on startup:
 ```
-KTP AMX v2.6.8 loaded
+KTP AMX v2.6.9 loaded
 Core mode: JIT+ASM32
 Running as: ReHLDS Extension (or: Metamod Plugin)
 ```

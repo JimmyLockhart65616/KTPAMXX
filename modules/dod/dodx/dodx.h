@@ -78,24 +78,44 @@ enum
 
 // KTP: Grenade ammo offsets (ported from dodfun for extension mode)
 // Each grenade type has 3 offsets that need to be set together
+//
+// Linux offset adjustment varies by OS version:
+//   Ubuntu 22.04 and older: +5
+//   Ubuntu 24.04 and newer: +4
+// Runtime detection is used to automatically determine the correct offset.
+//
+// Base offsets (without adjustment):
+#define PDOFFSET_BASE_HANDGRENADE_1  59
+#define PDOFFSET_BASE_HANDGRENADE_2  289
+#define PDOFFSET_BASE_HANDGRENADE_3  321
+#define PDOFFSET_BASE_STICKGRENADE_1 61
+#define PDOFFSET_BASE_STICKGRENADE_2 291
+#define PDOFFSET_BASE_STICKGRENADE_3 323
+
 #if defined(__linux__) || defined(__APPLE__)
-	// Hand grenade / Mills bomb (Allies)
-	#define PDOFFSET_AMMO_HANDGRENADE_1  (59 + 5)
-	#define PDOFFSET_AMMO_HANDGRENADE_2  (289 + 5)
-	#define PDOFFSET_AMMO_HANDGRENADE_3  (321 + 5)
-	// Stick grenade (Axis)
-	#define PDOFFSET_AMMO_STICKGRENADE_1 (61 + 5)
-	#define PDOFFSET_AMMO_STICKGRENADE_2 (291 + 5)
-	#define PDOFFSET_AMMO_STICKGRENADE_3 (323 + 5)
+	// Runtime offset adjustment - detected at first player spawn
+	// Default to +4 (Ubuntu 24.04), will be auto-detected
+	extern int g_iLinuxPdataOffsetAdjust;
+	extern bool g_bPdataOffsetDetected;
+
+	// Detection function - call from NBase.cpp before grenade operations
+	void DODX_DetectPdataOffset(edict_t* pEdict);
+
+	// Macros that use runtime offset adjustment
+	#define PDOFFSET_AMMO_HANDGRENADE_1  (PDOFFSET_BASE_HANDGRENADE_1 + g_iLinuxPdataOffsetAdjust)
+	#define PDOFFSET_AMMO_HANDGRENADE_2  (PDOFFSET_BASE_HANDGRENADE_2 + g_iLinuxPdataOffsetAdjust)
+	#define PDOFFSET_AMMO_HANDGRENADE_3  (PDOFFSET_BASE_HANDGRENADE_3 + g_iLinuxPdataOffsetAdjust)
+	#define PDOFFSET_AMMO_STICKGRENADE_1 (PDOFFSET_BASE_STICKGRENADE_1 + g_iLinuxPdataOffsetAdjust)
+	#define PDOFFSET_AMMO_STICKGRENADE_2 (PDOFFSET_BASE_STICKGRENADE_2 + g_iLinuxPdataOffsetAdjust)
+	#define PDOFFSET_AMMO_STICKGRENADE_3 (PDOFFSET_BASE_STICKGRENADE_3 + g_iLinuxPdataOffsetAdjust)
 #else
-	// Hand grenade / Mills bomb (Allies)
-	#define PDOFFSET_AMMO_HANDGRENADE_1  59
-	#define PDOFFSET_AMMO_HANDGRENADE_2  289
-	#define PDOFFSET_AMMO_HANDGRENADE_3  321
-	// Stick grenade (Axis)
-	#define PDOFFSET_AMMO_STICKGRENADE_1 61
-	#define PDOFFSET_AMMO_STICKGRENADE_2 291
-	#define PDOFFSET_AMMO_STICKGRENADE_3 323
+	// Windows: no adjustment needed
+	#define PDOFFSET_AMMO_HANDGRENADE_1  PDOFFSET_BASE_HANDGRENADE_1
+	#define PDOFFSET_AMMO_HANDGRENADE_2  PDOFFSET_BASE_HANDGRENADE_2
+	#define PDOFFSET_AMMO_HANDGRENADE_3  PDOFFSET_BASE_HANDGRENADE_3
+	#define PDOFFSET_AMMO_STICKGRENADE_1 PDOFFSET_BASE_STICKGRENADE_1
+	#define PDOFFSET_AMMO_STICKGRENADE_2 PDOFFSET_BASE_STICKGRENADE_2
+	#define PDOFFSET_AMMO_STICKGRENADE_3 PDOFFSET_BASE_STICKGRENADE_3
 #endif
 
 // Weapons Structure

@@ -26,6 +26,15 @@ static bool g_bExtensionMode = false;
 static IRehldsHookchains* g_pRehldsHookchains = nullptr;
 static IMessageManager* g_pMessageManager = nullptr;
 
+#if defined(__linux__) || defined(__APPLE__)
+// KTP: Runtime pdata offset adjustment for grenade ammo
+// Ubuntu 22.04 and older: +5
+// Ubuntu 24.04 and newer: +4
+// This is auto-detected on first player spawn with grenades
+int g_iLinuxPdataOffsetAdjust = 4;  // Default to +4 (24.04)
+bool g_bPdataOffsetDetected = false;
+#endif
+
 // KTP: Forward declarations for ReHLDS hook handlers
 static void DODX_OnTraceLine(IVoidHookChain<const float *, const float *, int, edict_t *, TraceResult *> *chain,
                               const float *v1, const float *v2, int fNoMonsters, edict_t *e, TraceResult *ptr);
@@ -1347,3 +1356,73 @@ static void DODX_CleanupExtensionHooks()
 	g_pRehldsHookchains = nullptr;
 	g_pMessageManager = nullptr;
 }
+
+#if defined(__linux__) || defined(__APPLE__)
+// KTP: Runtime detection of pdata offset for grenade ammo
+// Called from NBase.cpp when first grenade operation is performed
+// Probes memory at +4 and +5 offsets to find which one contains valid grenade count
+//
+// Detection strategy:
+// 1. Look for a value 1-10 at the expected grenade offset
+// 2. Check if the same value appears at offset_2 and offset_3 (they should match)
+// 3. If +4 matches, use +4; if +5 matches, use +5; otherwise default to +4
+void DODX_DetectPdataOffset(edict_t* pEdict)
+{
+	if (g_bPdataOffsetDetected || !pEdict || !pEdict->pvPrivateData)
+		return;
+
+	int* pData = (int*)pEdict->pvPrivateData;
+
+	// Try +4 offset (Ubuntu 24.04)
+	int offset4_1 = PDOFFSET_BASE_HANDGRENADE_1 + 4;
+	int offset4_2 = PDOFFSET_BASE_HANDGRENADE_2 + 4;
+	int offset4_3 = PDOFFSET_BASE_HANDGRENADE_3 + 4;
+
+	// Try +5 offset (Ubuntu 22.04)
+	int offset5_1 = PDOFFSET_BASE_HANDGRENADE_1 + 5;
+	int offset5_2 = PDOFFSET_BASE_HANDGRENADE_2 + 5;
+	int offset5_3 = PDOFFSET_BASE_HANDGRENADE_3 + 5;
+
+	int val4_1 = pData[offset4_1];
+	int val4_2 = pData[offset4_2];
+	int val4_3 = pData[offset4_3];
+
+	int val5_1 = pData[offset5_1];
+	int val5_2 = pData[offset5_2];
+	int val5_3 = pData[offset5_3];
+
+	// Check if +4 offset has valid matching values
+	bool valid4 = (val4_1 >= 1 && val4_1 <= 10 && val4_1 == val4_2 && val4_2 == val4_3);
+
+	// Check if +5 offset has valid matching values
+	bool valid5 = (val5_1 >= 1 && val5_1 <= 10 && val5_1 == val5_2 && val5_2 == val5_3);
+
+	if (valid4 && !valid5)
+	{
+		g_iLinuxPdataOffsetAdjust = 4;
+		MF_Log("[DODX] Detected pdata offset +4 (Ubuntu 24.04 style) - grenades=%d at offsets %d/%d/%d",
+			val4_1, offset4_1, offset4_2, offset4_3);
+	}
+	else if (valid5 && !valid4)
+	{
+		g_iLinuxPdataOffsetAdjust = 5;
+		MF_Log("[DODX] Detected pdata offset +5 (Ubuntu 22.04 style) - grenades=%d at offsets %d/%d/%d",
+			val5_1, offset5_1, offset5_2, offset5_3);
+	}
+	else if (valid4 && valid5)
+	{
+		// Both valid - prefer +4 as it's the newer standard
+		// This shouldn't happen in practice since the offsets don't overlap meaningfully
+		g_iLinuxPdataOffsetAdjust = 4;
+		MF_Log("[DODX] Both offsets valid, using +4 (Ubuntu 24.04 style)");
+	}
+	else
+	{
+		// Neither valid - keep default +4 and log warning
+		MF_Log("[DODX] Warning: Could not auto-detect pdata offset (val4=%d/%d/%d val5=%d/%d/%d), using +4",
+			val4_1, val4_2, val4_3, val5_1, val5_2, val5_3);
+	}
+
+	g_bPdataOffsetDetected = true;
+}
+#endif

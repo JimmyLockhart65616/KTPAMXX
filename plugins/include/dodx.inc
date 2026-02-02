@@ -353,6 +353,26 @@ native dodx_send_ammox(id, ammo_slot, count);
 native dodx_give_grenade(id, grenade_type);
 
 /**
+ * Strip a grenade weapon from a player.
+ * Removes the grenade weapon entity and clears all ammo slots.
+ * Use this before giving grenades to ensure clean state.
+ *
+ * @param id            Player index
+ * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
+ * @return              Number of weapon entities removed, 0 if none found
+ */
+native dodx_strip_grenade(id, grenade_type);
+
+/**
+ * Debug: Dump potential ammo offset values to server log.
+ * Use this to find correct ammo offsets on different OS versions.
+ *
+ * @param id  Player index
+ * @return    1 on success
+ */
+native dodx_debug_dump_ammo(id);
+
+/**
  * Set player class.
  * Ported from dodfun module for extension mode compatibility.
  *
