@@ -30,9 +30,11 @@ static IMessageManager* g_pMessageManager = nullptr;
 // KTP: Runtime pdata offset adjustment for grenade ammo
 // Ubuntu 22.04 and older: +5
 // Ubuntu 24.04 and newer: +4
-// This is auto-detected on first player spawn with grenades
+// Can be forced via addons/ktpamx/configs/dodx.ini: pdata_offset = 4 or 5
+// If not set, auto-detection is attempted on first grenade operation
 int g_iLinuxPdataOffsetAdjust = 4;  // Default to +4 (24.04)
 bool g_bPdataOffsetDetected = false;
+bool g_bPdataOffsetForced = false;  // True if set via config file
 #endif
 
 // KTP: Forward declarations for ReHLDS hook handlers
@@ -555,6 +557,8 @@ void OnAmxxAttach()
 		DODX_SetupExtensionHooks();
 
 		// Skip engine-dependent initialization - will be done in OnPluginsLoaded
+		// NOTE: Config file loading moved to OnPluginsLoaded() because MF_BuildPathnameR
+		// doesn't work correctly during OnAmxxAttach() in extension mode
 		// NOTE: Cvar registration moved to OnPluginsLoaded() because engine
 		// function pointers may not be ready yet in OnAmxxAttach for extension mode
 		return;
@@ -680,6 +684,53 @@ void OnPluginsLoaded()
 	// Engine functions aren't ready during OnAmxxAttach in extension mode
 	if (g_bExtensionMode)
 	{
+#if defined(__linux__) || defined(__APPLE__)
+		// KTP: Load pdata offset from config file if present
+		// Config file: addons/ktpamx/configs/dodx.ini
+		// Format: pdata_offset = 4  (or 5)
+		// NOTE: Must be done in OnPluginsLoaded because MF_BuildPathnameR needs engine ready
+		if (!g_bPdataOffsetForced)
+		{
+			char configPath[256];
+			MF_BuildPathnameR(configPath, sizeof(configPath), "addons/ktpamx/configs/dodx.ini");
+			FILE* fp = fopen(configPath, "r");
+			if (fp)
+			{
+				char line[128];
+				while (fgets(line, sizeof(line), fp))
+				{
+					// Skip comments and empty lines
+					if (line[0] == ';' || line[0] == '#' || line[0] == '\n' || line[0] == '\r')
+						continue;
+
+					int offset;
+					if (sscanf(line, "pdata_offset = %d", &offset) == 1 ||
+					    sscanf(line, "pdata_offset=%d", &offset) == 1)
+					{
+						if (offset == 4 || offset == 5)
+						{
+							g_iLinuxPdataOffsetAdjust = offset;
+							g_bPdataOffsetForced = true;
+							g_bPdataOffsetDetected = true;  // Skip auto-detection
+							MF_PrintSrvConsole("[DODX] Pdata offset forced to +%d via config file\n", offset);
+						}
+						else
+						{
+							MF_PrintSrvConsole("[DODX] Warning: Invalid pdata_offset %d in config (must be 4 or 5)\n", offset);
+						}
+						break;
+					}
+				}
+				fclose(fp);
+			}
+
+			if (!g_bPdataOffsetForced)
+			{
+				MF_PrintSrvConsole("[DODX] Using default pdata offset +%d (auto-detect on first grenade op)\n", g_iLinuxPdataOffsetAdjust);
+			}
+		}
+#endif
+
 		// KTP: Skip cvar registration in extension mode - CVAR_REGISTER crashes
 		// because module SDK doesn't properly set up engine function pointers
 		// for extension mode. The isModuleActive() function handles NULL pointers

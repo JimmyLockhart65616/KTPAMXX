@@ -92,6 +92,11 @@ public plugin_init()
 #if defined USING_SQL
 	server_cmd("amx_sqladmins")
 #else
+	// KTP: Fix admin accumulation bug - flush and reset before loading
+	// Without this, admins accumulate on each map change (48 -> 96 -> 144 -> ...)
+	admins_flush();
+	AdminCount = 0;
+
 	format(configsDir, 63, "%s/users.ini", configsDir)
 	loadSettings(configsDir)					// Load admins accounts
 #endif
@@ -420,12 +425,17 @@ public adminSql()
 	if (sql == Empty_Handle)
 	{
 		server_print("[AMXX] %L", LANG_SERVER, "SQL_CANT_CON", error)
-		
+
 		//backup to users.ini
 		new configsDir[64]
-		
+
 		get_configsdir(configsDir, charsmax(configsDir))
 		format(configsDir, charsmax(configsDir), "%s/users.ini", configsDir)
+
+		// KTP: Fix admin accumulation bug - flush and reset before loading
+		admins_flush();
+		AdminCount = 0;
+
 		loadSettings(configsDir) // Load admins accounts
 
 		return PLUGIN_HANDLED
@@ -453,9 +463,10 @@ public adminSql()
 	} else if (!SQL_NumResults(query)) {
 		server_print("[AMXX] %L", LANG_SERVER, "NO_ADMINS")
 	} else {
-		
+		// KTP: Fix admin accumulation bug - flush before loading from SQL
+		admins_flush();
 		AdminCount = 0
-		
+
 		/** do this incase people change the query order and forget to modify below */
 		new qcolAuth = SQL_FieldNameToNum(query, "auth")
 		new qcolPass = SQL_FieldNameToNum(query, "password")

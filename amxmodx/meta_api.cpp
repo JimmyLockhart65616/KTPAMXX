@@ -2342,7 +2342,7 @@ C_DLLEXPORT	int	Meta_Attach(PLUG_LOADTIME now, META_FUNCTIONS *pFunctionTable, m
 
 	// ###### Print short GPL
 	print_srvconsole("\n   KTP AMX version %s (based on AMX Mod X)\n"
-					 "   Copyright (c) 2004-2015 AMX Mod X Development Team, 2025 KTP\n", AMXX_VERSION);
+					 "   Copyright (c) 2004-2015 AMX Mod X Development Team, 2025-2026 KTP\n", AMXX_VERSION);
 	print_srvconsole("   This is free software licensed under GPL v3.\n"
 					 "   Type 'amx gpl' for details.\n  \n");
 
@@ -3102,7 +3102,7 @@ static void KTPAMX_InitAsRehldsExtension()
 
 	// Print startup message
 	print_srvconsole("\n   KTP AMX version %s (ReHLDS Extension Mode)\n"
-					 "   Copyright (c) 2004-2015 AMX Mod X Development Team, 2025 KTP\n", AMXX_VERSION);
+					 "   Copyright (c) 2004-2015 AMX Mod X Development Team, 2025-2026 KTP\n", AMXX_VERSION);
 	print_srvconsole("   Running without Metamod - using ReHLDS hookchains.\n\n");
 
 	// Load custom path configuration

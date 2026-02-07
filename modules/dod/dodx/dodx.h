@@ -95,8 +95,10 @@ enum
 #if defined(__linux__) || defined(__APPLE__)
 	// Runtime offset adjustment - detected at first player spawn
 	// Default to +4 (Ubuntu 24.04), will be auto-detected
+	// Can be forced via addons/ktpamx/configs/dodx.ini: pdata_offset = 4 or 5
 	extern int g_iLinuxPdataOffsetAdjust;
 	extern bool g_bPdataOffsetDetected;
+	extern bool g_bPdataOffsetForced;
 
 	// Detection function - call from NBase.cpp before grenade operations
 	void DODX_DetectPdataOffset(edict_t* pEdict);

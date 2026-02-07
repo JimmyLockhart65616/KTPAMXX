@@ -1,362 +1,98 @@
 # KTP AMX
 
-**Version 2.6.9** - Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.9** | Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
-A major fork of AMX Mod X featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat and Counter-Strike servers requiring strict anti-cheat enforcement.
+A major fork of [AMX Mod X](https://github.com/alliedmodders/amxmodx) featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat servers requiring strict anti-cheat enforcement.
 
 Part of the [KTP Competitive Infrastructure](https://github.com/afraznein).
 
 ---
 
-## What's New in v2.6.9
+## Architecture Position
 
-### DODX Module - Runtime Pdata Offset Detection
+KTPAMXX is the **scripting platform** (Layer 2) of the KTP competitive stack:
 
-Auto-detection of Linux pdata offsets for grenade ammo manipulation:
-
-- **Ubuntu 22.04 and older** - Uses +5 offset adjustment
-- **Ubuntu 24.04 and newer** - Uses +4 offset adjustment
-- **Auto-detection on first spawn** - Probes memory to find valid offset
-- **No recompilation needed** - Single binary works across Ubuntu versions
-
-This eliminates the need for separate builds when running on different Ubuntu versions.
-
----
-
-## What's New in v2.6.8
-
-### Extension Mode Header Stubs
-
-Complete Metamod-free compilation support for third-party modules:
-
-- **amxmodx/amxmodx.h** - Added Metamod enum stubs, `hudtextparms_t`, engine function macros, cvar macros, and game DLL wrappers
-- **public/sdk/amxxmodule.h** - Mirror stub definitions for third-party module compilation
-- **amxmodx/fakemeta.cpp** - Added `#ifndef USE_METAMOD` guards (no-op instead of crash)
-
-### Docker Build Support
-
-- `Dockerfile` - Ubuntu 22.04 build environment for glibc 2.35 compatibility
-- `docker-build.sh` - Automated Docker build script
+```
+Layer 6: Application Plugins (KTPMatchHandler, KTPAdminAudit, etc.)
+Layer 5: Game Stats Module (DODX with HLStatsX integration)
+Layer 4: HTTP Module (KTP AMXX Curl)
+Layer 3: Engine Bridge (KTP-ReAPI)
+Layer 2: Scripting Platform (KTPAMXX) <-- YOU ARE HERE
+Layer 1: Game Engine (KTP-ReHLDS)
+```
 
 ---
 
-## What's New in v2.6.7
+## Key Features
 
-### DODX Module - Pre-Damage Forward
+### Extension Mode (No Metamod Required)
 
-New forward for modifying damage before it's applied:
-
-- **`dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA)`** - Fires before `client_damage`
-  - Return a lower value to reduce damage, 0 to block completely
-  - Automatically syncs client Health HUD after damage reduction
-
-### DODX Module - Give Grenade Native
-
-- **`dodx_give_grenade(id, grenade_type)`** - Give a grenade to a player
-  - Works with `DODW_HANDGRENADE` (13), `DODW_STICKGRENADE` (14), `DODW_MILLS_BOMB` (36)
-
-### DODX Module - Player Manipulation Natives
-
-Ported from dodfun for extension mode:
-
-- **`dodx_set_user_class(id, classId)`** / **`dodx_set_user_team(id, teamId)`** - Class/team control
-- **`dodx_get/set_user_origin(id, Float:origin[3])`** - Position manipulation
-- **`dodx_get/set_user_angles(id, Float:angles[3])`** - View angle manipulation
-
-### Multi-Victim Grenade Damage Fix
-
-- Fixed grenade damage attribution when entity is freed between victims
-
----
-
-## What's New in v2.6.6
-
-### DODX Module - AmmoX HUD Sync Native
-
-New native for updating client HUD ammo display after modifying grenade ammo:
-
-- **`dodx_send_ammox(id, ammo_slot, count)`** - Send AmmoX message to update client HUD
-  - `ammo_slot=9` for hand grenade / Mills bomb
-  - `ammo_slot=11` for stick grenade
-
-**Use Case:** After calling `dodx_set_grenade_ammo()`, the server-side ammo is updated but the client HUD shows the old value. This native syncs the client display.
-
-**Why a native?** AMX Mod X `message_begin()` crashes in extension mode for certain messages. This native uses engine functions directly.
-
----
-
-## What's New in v2.6.5
-
-### DODX Module - Noclip Native
-
-New native for player noclip control (ported from fun module for extension mode compatibility):
-
-- **`dodx_set_user_noclip(id, noclip)`** - Set player noclip mode (0=disable, 1=enable)
-
-**Use Case:** KTPPracticeMode uses this for the `.noclip` command without requiring the fun module.
-
----
-
-## What's New in v2.6.4
-
-### DODX Module - Grenade Ammo Natives
-
-New natives for grenade ammo manipulation (extension mode compatible, no Metamod/dodfun required):
-
-- **`dodx_set_grenade_ammo(id, grenade_type, count)`** - Set grenade count for a player
-- **`dodx_get_grenade_ammo(id, grenade_type)`** - Get current grenade count
-
-**Grenade Types:**
-- `DODW_HANDGRENADE` (13) - US hand grenade
-- `DODW_STICKGRENADE` (14) - German stick grenade
-- `DODW_MILLS_BOMB` (36) - British Mills bomb (shares ammo pool with hand grenade)
-
-**Use Case:** KTPGrenadeLoadout plugin uses these for per-class grenade configuration.
-
-### Extension Mode Fixes
-
-- **Consistency hook fix** - `SV_CheckConsistencyResponse_RH` had inverted logic that kicked players with CONSISTENT files
-- **Precache timing fix** - `force_unmodified()` now works correctly via `PF_precache_model_I` hook
-  - Calls full AMXX init during precache phase with deferred `plugin_init`/`plugin_cfg`
-  - Processes force lists with `ENGINE_FORCE_UNMODIFIED` during actual precache
-- **Map change fix** - Properly resets precache flag and force lists on map change
-
----
-
-## v2.6.3 - ktp_discord.inc Draft Channel
-
-### ktp_discord.inc v1.2.0 - Draft Channel Support
-
-New channel type for draft match Discord integration:
-- **`KTP_DISCORD_CHANNEL_DRAFT`** - Channel type constant (value 5)
-- **`discord_channel_id_draft`** - New config key in discord.ini
-
----
-
-## v2.6.2 - DODX Score Broadcasting
-
-### DODX Module - Score Broadcasting Natives
-
-Two new natives for scoreboard manipulation:
-- **`dodx_broadcast_team_score(team, score)`** - Broadcast TeamScore message to all clients
-- **`dodx_set_scoreboard_team_name(team, const name[])`** - Set custom team name on scoreboard
-
-### ktp_discord.inc Cleanup
-- Removed unused `g_ktpDiscordConfigLoaded` variable
-
----
-
-## v2.6.1 - ktp_discord.inc + RH_SV_Rcon
-
-### ktp_discord.inc v1.1.0
-
-Major rewrite of Discord integration include:
-- **AMXX curl module** - Switched from `server_cmd("curl...")` to proper curl module
-- **Fixed JSON field names** - Match Discord Relay API expectations
-- **Added curl cleanup** - Proper resource management in callbacks
-
-### RH_SV_Rcon Hook Constant
-
-Added `RH_SV_Rcon` enum constant for KTP-ReHLDS RCON audit hook.
-
----
-
-## v2.6.0 - New Native: ktp_drop_client
-
-Drop clients via ReHLDS API, bypassing blocked kick console command:
-
-| Native | Purpose |
-|--------|---------|
-| `ktp_drop_client(id, const reason[] = "")` | Drop client via ReHLDS DropClient API |
-
-- Bypasses blocked kick command in KTP ReHLDS
-- Works in extension mode (no Metamod required)
-- Requires ReHLDS API to be available
-- Used by KTPAdminAudit for menu-based kick execution
-
-### New Include: ktp_discord.inc
-
-Shared Discord integration for KTP plugins:
-
-- Common configuration loading from `discord.ini`
-- Audit channel ID retrieval for logging
-- Used by: KTPAdminAudit, KTPCvarChecker, KTPFileChecker, KTPMatchHandler
-
----
-
-## What's New in v2.5.x
-
-### v2.5.1 - DODX Player Team Name Native
-
-| Native | Purpose |
-|--------|---------|
-| `dodx_set_pl_teamname(id, szName[])` | Set player's team name in private data |
-
-### v2.5.0 - HLStatsX Integration
-
-New DODX natives enable match-based statistics tracking with KTPMatchHandler:
-
-| Native | Purpose |
-|--------|---------|
-| `dodx_flush_all_stats()` | Flush warmup stats before match starts |
-| `dodx_reset_all_stats()` | Reset all player stats for fresh match |
-| `dodx_set_match_id(id[])` | Set match ID for stats correlation |
-| `dodx_get_match_id(out[], len)` | Get current match ID |
-
-**New Forward:** `dod_stats_flush(id)` - Called for each player when flushing stats
-
-**stats_logging.sma:** Now includes `(matchid "xxx")` in all log lines when match ID is set
-
----
-
-## What's New in v2.4.0
-
-### DODX Extension Mode - Complete Rewrite
-
-KTP AMX v2.4.0 brings a comprehensive rewrite of the DODX module for full extension mode support:
-
-**New ReHLDS Hook Handlers:**
-- `DODX_OnPlayerPreThink` - Stats tracking loop with shot detection
-- `DODX_OnClientConnected`, `DODX_OnSV_Spawn_f`, `DODX_OnSV_DropClient` - Player lifecycle
-- `DODX_OnChangelevel` - Pre-changelevel cleanup prevents stale pointer crashes
-- `DODX_OnTraceLine` - Hit detection and aiming statistics
-
-**Shot Tracking via Button State:**
-- Tracks shots via IN_ATTACK button monitoring with per-weapon fire rate delays
-- MG42: 0.05s | SMGs: 0.1s | Semi-auto rifles: 0.5s (rising edge only)
-
-**Safety Hardening:**
-- `ENTINDEX_SAFE` inline function uses pointer arithmetic instead of engine calls
-- `g_bServerActive` flag prevents processing during map changes
-- All stats natives hardened with gpGlobals/pEdict/free checks
-- `CHECK_PLAYER` macro rewritten to use players[] array directly
-
-### Module SDK Extensions
-
-- **`MF_GetEngineFuncs()`** / **`MF_GetGlobalVars()`** - Engine access for modules
-- **`MF_GetUserMsgId()`** - Message ID lookup in extension mode
-- **`MF_RegModuleMsgHandler()`** - Module message handler registration
-
-### Logging & Cleanup
-
-- **Fixed log rotation** - stats_logging.sma no longer causes log file cycling
-- **Debug cleanup** - Removed all verbose debug messages
-- **Cleaner startup** - Minimal console output
-
-### Module Compatibility
-
-| Module | Extension Mode Status |
-|--------|----------------------|
-| amxxcurl | Working |
-| ReAPI | Working |
-| DODX | **Working** (full stats + shot tracking + safety hardening) |
-| SQLite | Broken (Metamod incompatible) |
-
----
-
-## What's New in v2.3.0
-
-- **DODX extension mode complete** - All stats natives, TraceLine hook, hardened safety checks
-- **stats_logging crash fixed** - End-of-round logging works correctly
-
-### What's New in v2.2.0
-
-- **`register_event` works** - Via KTPReHLDS IMessageManager integration
-- **`register_logevent` works** - Via AlertMessage hookchain
-- **Module API** - Modules can now access ReHLDS API directly (`MF_GetRehldsApi`, etc.)
-
----
-
-## What's New in v2.1.0
-
-### Full Map Change Support (Extension Mode)
-
-KTP AMX v2.1.0 added complete map change support in extension mode:
-
-- **Seamless map transitions** - Clients persist through map changes without disconnection
-- **All forwards fire correctly** - `plugin_init`, `plugin_cfg`, `client_connect`, `client_putinserver` work on new maps
-- **Chat commands work** - `/start`, `.start`, and other chat-triggered commands fully functional
-- **Menu systems work** - `register_menucmd`, `show_menu`, and menu selections (`menuselect 1-9`)
-
-### New ReHLDS Hooks
-
-| Hook | Purpose |
-|------|---------|
-| `SV_ClientCommand` | Chat commands, menus, `client_command` forward |
-| `SV_InactivateClients` | Map change deactivation, `plugin_end` forward |
-| `SV_Spawn_f` | Client reconnect after map change |
-
----
-
-## What's New in v2.0.0
-
-### ReHLDS Extension Mode (No Metamod Required)
-
-KTP AMX can now run as a **direct ReHLDS extension**, eliminating the Metamod dependency:
+Runs as a direct ReHLDS extension, eliminating the Metamod dependency. Wall penetration breaks when using ReHLDS + Metamod together — extension mode bypasses this entirely.
 
 | Feature | Traditional (Metamod) | Extension Mode |
 |---------|----------------------|----------------|
 | Dependencies | ReHLDS + Metamod | ReHLDS only |
 | Load method | Metamod plugin | ReHLDS extension |
-| Binary | `ktpamx.dll` via Metamod | `ktpamx.dll` direct |
-| Performance | Standard | Slightly reduced overhead |
 | Compatibility | Full | Most features (no Metamod hooks) |
 
 ### Real-Time Cvar Monitoring
 
-The `client_cvar_changed` forward provides instant notification when clients respond to cvar queries:
+The `client_cvar_changed` forward provides instant notification when clients respond to cvar queries — event-driven instead of polling.
 
 ```pawn
-public client_cvar_changed(id, const cvar[], const value[]) {
-    if (equal(cvar, "r_fullbright") && floatstr(value) != 0.0) {
-        client_cmd(id, "r_fullbright 0")
-        log_amx("Player %d violated r_fullbright", id)
-    }
-    return PLUGIN_CONTINUE
-}
+forward client_cvar_changed(id, const cvar[], const value[]);
 ```
 
-### KTP Branding
+### Module Frame Callback API
 
-- Main binary: `ktpamx.dll` / `ktpamx_i386.so`
-- Module suffix: `*_ktp.dll` / `*_ktp_i386.so`
-- Default paths: `addons/ktpamx/`
+`MF_RegModuleFrameFunc()` allows modules to register per-frame callbacks without Metamod's `pfnStartFrame`. Used by KTPAmxxCurl for async HTTP processing.
 
----
+### Module SDK Extensions
 
-## Features
+Extension mode exposes additional APIs for third-party modules:
 
-### Core Capabilities
+| API | Purpose |
+|-----|---------|
+| `MF_GetEngineFuncs()` | Engine function table access |
+| `MF_GetGlobalVars()` | Global variables access |
+| `MF_IsExtensionMode()` | Check if running without Metamod |
+| `MF_GetRehldsApi()` | ReHLDS API interface pointer |
 
-- **Dual-mode operation** - Runs with Metamod (traditional) or as standalone ReHLDS extension
-- **Real-time cvar monitoring** - `client_cvar_changed` forward for instant anti-cheat
-- **Full backwards compatibility** - All existing AMX Mod X plugins work unchanged
-- **Cross-platform** - Windows and Linux support with unified build system
+### DODX Module (KTP Additions)
 
-### For Plugin Developers
+The DODX stats module includes extensive KTP-specific natives:
 
-- **New forward**: `client_cvar_changed(id, cvar[], value[])` - Event-driven cvar monitoring
-- **Standard API unchanged** - All existing natives and forwards work identically
-- **Zero code changes required** - Drop-in replacement for AMX Mod X
+**Score Management:** `dodx_set_team_score`, `dodx_get_team_score`, `dodx_broadcast_team_score`, `dodx_set_scoreboard_team_name`, `dodx_has_gamerules`
 
-### For Server Operators
+**HLStatsX Integration:** `dodx_flush_all_stats`, `dodx_reset_all_stats`, `dodx_set_match_id`, `dodx_get_match_id`
 
-- **Simpler deployment** - Extension mode requires only ReHLDS, no Metamod setup
-- **Better anti-cheat** - Real-time cvar validation instead of polling
-- **Standard configs** - Same configuration files as AMX Mod X (in `addons/ktpamx/`)
+**Grenade Manipulation:** `dodx_set_grenade_ammo`, `dodx_get_grenade_ammo`, `dodx_send_ammox`, `dodx_give_grenade`, `dodx_strip_grenade`
+
+**Player Manipulation:** `dodx_set_user_noclip`, `dodx_set_user_class`, `dodx_set_user_team`, `dodx_get/set_user_origin`, `dodx_get/set_user_angles`
+
+**Pre-Damage Forward:** `dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA)` — return modified damage or 0 to block.
+
+See `plugins/include/dodx.inc` for full API documentation.
+
+### Shared Includes
+
+| Include | Purpose |
+|---------|---------|
+| `ktp_discord.inc` | Discord webhook integration (config loading, channel routing, embeds) |
+| `dodx.inc` | DODX natives including all KTP additions |
+| `reapi_engine_const.inc` | KTP-ReHLDS hook constants |
 
 ---
 
 ## Installation
 
-### Option 1: ReHLDS Extension Mode (Recommended)
+### Extension Mode (Recommended)
 
-1. Install [ReHLDS](https://github.com/dreamstalker/rehlds) (or [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS) for `client_cvar_changed`)
+1. Install [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS)
 2. Copy KTP AMX files to your server:
    ```
    addons/ktpamx/
-   ├── dlls/
-   │   └── ktpamx.dll (or ktpamx_i386.so)
+   ├── dlls/ktpamx_i386.so
    ├── configs/
    ├── data/
    ├── logs/
@@ -364,16 +100,18 @@ public client_cvar_changed(id, const cvar[], const value[]) {
    ├── plugins/
    └── scripting/
    ```
-3. Add to ReHLDS extension config or load via your preferred method
+3. Add to `rehlds/extensions.ini`:
+   ```
+   ktpamx/dlls/ktpamx_i386.so
+   ```
 4. Restart server
 
-### Option 2: Metamod Mode (Traditional)
+### Metamod Mode (Traditional)
 
 1. Install ReHLDS and Metamod
 2. Copy KTP AMX files (same structure as above)
 3. Add to `metamod/plugins.ini`:
    ```
-   win32 addons/ktpamx/dlls/ktpamx.dll
    linux addons/ktpamx/dlls/ktpamx_i386.so
    ```
 4. Restart server
@@ -382,9 +120,7 @@ public client_cvar_changed(id, const cvar[], const value[]) {
 
 Check server console on startup:
 ```
-KTP AMX v2.6.9 loaded
-Core mode: JIT+ASM32
-Running as: ReHLDS Extension (or: Metamod Plugin)
+KTP AMX version 2.6.9 (ReHLDS Extension Mode)
 ```
 
 ---
@@ -393,250 +129,92 @@ Running as: ReHLDS Extension (or: Metamod Plugin)
 
 ### Prerequisites
 
-- **Python 3.8+**
-- **AMBuild**: `pip install git+https://github.com/alliedmodders/ambuild`
-- **Windows**: Visual Studio 2019+ or MSVC Build Tools
-- **Linux**: GCC 7.3+ with multilib support (`gcc-multilib g++-multilib`)
+- Python 3.8+ with [AMBuild](https://github.com/alliedmodders/ambuild)
+- GCC 7.3+ with multilib support (`gcc-multilib g++-multilib`)
+- KTPhlsdk (HLSDK headers) in sibling directory
 
-### Build Commands
+### Linux (WSL)
 
-#### Windows
 ```bash
-python configure.py --enable-optimize
-ambuild
+wsl bash -c "cd '/mnt/n/Nein_/KTP Git Projects/KTPAMXX' && bash build_linux.sh"
 ```
 
-#### Linux
-```bash
-python3 configure.py --enable-optimize
-ambuild
-```
+The build script handles AMBuild setup, configuration, and auto-stages output to `KTP DoD Server/serverfiles/`.
 
-#### Skip Plugin Compilation
+### Manual Build
+
 ```bash
-python configure.py --enable-optimize --disable-plugins
-ambuild
+python3 configure.py --enable-optimize --no-mysql --no-plugins
+cd obj-linux && python3 $(which ambuild)
 ```
 
 ### Build Output
 
-Binaries are packaged in `build/package/addons/ktpamx/`:
-- `dlls/ktpamx.dll` / `dlls/ktpamx_i386.so` - Main binary
-- `modules/*.dll` / `modules/*.so` - Extension modules
-
-### Cross-Platform Building (Windows + WSL)
-
-```powershell
-# Setup WSL build environment
-.\setup_wsl_build.ps1
-
-# Build for both platforms
-.\build_windows.bat
-.\build_linux_wsl.ps1
-
-# Collect builds
-.\collect_builds.bat
-```
+| File | Description |
+|------|-------------|
+| `ktpamx_i386.so` | Main AMXX binary |
+| `dodx_ktp_i386.so` | DoD stats module |
+| `fun_ktp_i386.so` | Fun module |
+| `engine_ktp_i386.so` | Engine module |
+| `fakemeta_ktp_i386.so` | FakeMeta module |
 
 ---
 
-## Configuration
+## ReHLDS Hooks (Extension Mode)
 
-KTP AMX uses the same configuration structure as AMX Mod X, with paths updated to `addons/ktpamx/`:
+KTP AMX registers these hooks when running as a ReHLDS extension:
 
-```
-addons/ktpamx/
-├── configs/
-│   ├── amxx.cfg          # Main configuration
-│   ├── plugins.ini       # Plugin load list
-│   ├── modules.ini       # Module load list
-│   ├── users.ini         # Admin users
-│   └── cmdaccess.ini     # Command access levels
-├── data/
-│   ├── lang/             # Language files
-│   └── gamedata/         # Game signature data
-├── logs/                 # Log output
-├── modules/              # Binary modules
-├── plugins/              # Compiled plugins (.amxx)
-└── scripting/            # Plugin source (.sma)
-```
+**Connection & Lifecycle:** `ClientConnected`, `SV_ConnectClient`, `SV_DropClient`, `Steam_NotifyClientConnect`
 
----
+**Server Events:** `SV_ActivateServer`, `SV_InactivateClients`, `SV_Frame`
 
-## API Reference
+**Client Processing:** `SV_ClientCommand`, `SV_Spawn_f`, `SV_WriteFullClientUpdate`, `SV_ClientUserInfoChanged`
 
-### New Forward: client_cvar_changed
-
-```pawn
-/**
- * Called when a client responds to ANY cvar query.
- * Requires KTP-ReHLDS for full functionality.
- *
- * @param id        Client index (1-32)
- * @param cvar      Name of the queried cvar
- * @param value     Value returned by client (string)
- *
- * @note Fires for ALL cvar queries from any source
- * @note Use for real-time monitoring without polling
- */
-forward client_cvar_changed(id, const cvar[], const value[]);
-```
-
-### Example: Anti-Cheat Plugin
-
-```pawn
-#include <amxmodx>
-
-new g_enforcing[MAX_PLAYERS + 1]
-
-public plugin_init() {
-    register_plugin("Cvar Enforcer", "2.0", "KTP")
-}
-
-public client_cvar_changed(id, const cvar[], const value[]) {
-    if (!is_user_connected(id) || g_enforcing[id])
-        return PLUGIN_CONTINUE
-
-    // Enforce r_fullbright = 0
-    if (equal(cvar, "r_fullbright")) {
-        if (floatstr(value) != 0.0) {
-            g_enforcing[id] = true
-            client_cmd(id, "r_fullbright 0")
-            set_task(0.5, "clear_enforce", id)
-            log_amx("Enforced r_fullbright on player %d", id)
-        }
-    }
-
-    return PLUGIN_CONTINUE
-}
-
-public clear_enforce(id) {
-    g_enforcing[id] = false
-}
-
-public client_disconnected(id) {
-    g_enforcing[id] = false
-}
-```
-
----
-
-## Architecture
-
-### How Extension Mode Works
-
-```
-┌─────────────────────────────────────────┐
-│  ReHLDS Engine                          │
-│  - Loads ktpamx as extension            │
-│  - Provides hook callbacks              │
-└────────────────┬────────────────────────┘
-                 │ ReHLDS API
-                 ↓
-┌─────────────────────────────────────────┐
-│  KTP AMX                                │
-│  - AMXX_RehldsExtensionInit()           │
-│  - Registers ReHLDS hooks               │
-│  - Loads plugins and modules            │
-└────────────────┬────────────────────────┘
-                 │ AMX Forwards
-                 ↓
-┌─────────────────────────────────────────┐
-│  Plugins                                │
-│  - Standard forwards work normally      │
-│  - client_cvar_changed available        │
-└─────────────────────────────────────────┘
-```
-
-### ReHLDS Hooks (Extension Mode)
-
-KTP AMX registers these ReHLDS hooks when running in extension mode:
-
-#### Connection & Lifecycle
-- `ClientConnected` / `SV_ConnectClient` - Client connection handling
-- `SV_DropClient` - Client disconnect handling
-- `Steam_NotifyClientConnect` - Client authorization
-
-#### Server Events
-- `SV_ActivateServer` - Map load / server activation
-- `SV_InactivateClients` - Map change deactivation (fires `plugin_end`, `client_disconnect`)
-- `SV_Frame` - Per-frame processing
-
-#### Client Processing
-- `SV_ClientCommand` - Client command processing (`register_clcmd`, menus, `client_command`)
-- `SV_Spawn_f` - Client spawn command (handles reconnect after map change)
-- `SV_WriteFullClientUpdate` - Client info updates
-
-#### Engine Functions
-- `Cvar_DirectSet` - Cvar change monitoring
-- `ED_Alloc` / `ED_Free` - Entity allocation
-- `SV_StartSound` - Sound emission
-- `PF_RegUserMsg_I` - Message ID capture for HUD drawing
+**Engine Functions:** `Cvar_DirectSet`, `ED_Alloc`, `ED_Free`, `SV_StartSound`, `PF_RegUserMsg_I`, `PF_changelevel_I`, `PF_precache_model_I`, `PF_setmodel_I`, `PF_TraceLine`, `PF_SetClientKeyValue`, `AlertMessage`, `SV_PlayerRunPreThink`
 
 ---
 
 ## Compatibility
 
-### Requirements
-
 | Component | Extension Mode | Metamod Mode |
 |-----------|---------------|--------------|
 | ReHLDS | Required | Required |
-| KTP-ReHLDS | For client_cvar_changed | For client_cvar_changed |
+| KTP-ReHLDS | For `client_cvar_changed` | For `client_cvar_changed` |
 | Metamod | Not needed | Required |
 
-### Plugin Compatibility
+100% backwards compatible with existing AMX Mod X plugins. Standard forwards work identically in both modes.
 
-- **100% backwards compatible** with AMX Mod X plugins
-- **Standard forwards** work identically in both modes
-- **Modules** work in both modes (some Metamod-specific features unavailable in extension mode)
-
-### Known Limitations (Extension Mode)
-
-- Metamod plugin features unavailable (no LOAD_PLUGIN, UNLOAD_PLUGIN)
-- Some modules that rely on Metamod hooks may have reduced functionality
+**Extension Mode Limitations:**
+- Metamod plugin management unavailable (`LOAD_PLUGIN`, `UNLOAD_PLUGIN`)
 - Fakemeta module's Metamod-specific functions are no-ops
+
+---
+
+## Version Information
+
+- **Current Version**: 2.6.9 (2026-02)
+- **Based on**: AMX Mod X 1.10.0 (upstream)
+- **Platform**: GCC 7.3+ / Visual Studio 2019+
+- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+
+
+See [CHANGELOG.md](CHANGELOG.md) for full version history.
 
 ---
 
 ## Related Projects
 
-### KTP Competitive Infrastructure
+**KTP Stack:**
+- [KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS) - Game engine with `pfnClientCvarChanged`
+- [KTP-ReAPI](https://github.com/afraznein/KTPReAPI) - Engine bridge module
+- [KTPAmxxCurl](https://github.com/afraznein/KTPAmxxCurl) - Async HTTP module
+- [KTPMatchHandler](https://github.com/afraznein/KTPMatchHandler) - Match management
 
-- **[KTP-ReHLDS](https://github.com/afraznein/KTPReHLDS)** - Modified ReHLDS with `pfnClientCvarChanged`
-- **[KTP AMX](https://github.com/afraznein/KTPAMXX)** - This project
-- **[KTPCvarChecker](https://github.com/afraznein/KTPCvarChecker)** - Real-time cvar enforcement plugin
-
-### Upstream
-
-- **[AMX Mod X](https://github.com/alliedmodders/amxmodx)** - Original project
-- **[ReHLDS](https://github.com/dreamstalker/rehlds)** - Reverse-engineered HLDS
+**Upstream:**
+- [AMX Mod X](https://github.com/alliedmodders/amxmodx) - Original project
+- [ReHLDS](https://github.com/dreamstalker/rehlds) - Reverse-engineered HLDS
 
 ---
 
 ## License
 
-**GNU General Public License v3.0**
-
-Based on [AMX Mod X](https://github.com/alliedmodders/amxmodx) by AlliedModders LLC.
-
-See [LICENSE](LICENSE) for full text.
-
----
-
-## Credits
-
-**KTP AMX Development:**
-- **Nein_** ([@afraznein](https://github.com/afraznein)) - ReHLDS extension mode, `client_cvar_changed`, KTP integration
-
-**Upstream AMX Mod X:**
-- **AlliedModders LLC** and **AMX Mod X Team**
-
----
-
-## Links
-
-- **Repository**: https://github.com/afraznein/KTPAMXX
-- **Changelog**: [CHANGELOG.md](CHANGELOG.md)
-- **Issues**: https://github.com/afraznein/KTPAMXX/issues
-- **Upstream AMX Mod X**: https://github.com/alliedmodders/amxmodx
+GNU General Public License v3.0 - Same as upstream AMX Mod X. See [LICENSE](LICENSE) for full text.
