@@ -5,11 +5,20 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.2.0
- * DATE: 2026-01-06
+ * VERSION: 1.3.1
+ * DATE: 2026-02-19
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.1 (2026-02-19)
+ *   * FIXED: Curl response bodies (relay error messages) no longer dumped to server console
+ *   + ADDED: CURLOPT_WRITEFUNCTION discard callback suppresses HTTP response output
+ *
+ * v1.3.0 (2026-02-19)
+ *   * FIXED: Shared curl headers use-after-free — headers now created once at config load
+ *   * FIXED: Per-request header free/create cycle eliminated (same bug as KTPHLTVRecorder v1.5.1)
+ *   * FIXED: Multi-audit-channel sends no longer corrupt headers for concurrent curl handles
+ *
  * v1.2.0 (2026-01-06)
  *   + ADDED: KTP_DISCORD_CHANNEL_DRAFT channel type for draft matches
  *   + ADDED: discord_channel_id_draft config key
@@ -70,7 +79,7 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.2.0"
+#define KTP_DISCORD_VERSION "1.3.1"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
@@ -241,6 +250,10 @@ stock bool:ktp_discord_load_config()
     if (g_ktpDiscordRelayUrl[0] && g_ktpDiscordAuthSecret[0] &&
         (g_ktpDiscordChannelDefault[0] || g_ktpDiscordAuditChannelCount > 0)) {
         g_ktpDiscordEnabled = true;
+
+        // Initialize persistent curl headers (created once, reused for all requests)
+        ktp_discord_init_headers();
+
         log_amx("[KTP Discord] Loaded %d keys, %d audit channels from %s",
                 loadedCount, g_ktpDiscordAuditChannelCount, path);
         return true;
@@ -445,7 +458,6 @@ stock bool:ktp_discord_send_to(channelType, const message[])
  */
 stock ktp_discord_send_audit(const message[])
 {
-    log_amx("[KTP Discord] send_audit called, enabled=%d, audit_channels=%d", g_ktpDiscordEnabled, g_ktpDiscordAuditChannelCount);
     if (!g_ktpDiscordEnabled || g_ktpDiscordAuditChannelCount == 0) return 0;
 
     // Escape message once
@@ -594,6 +606,23 @@ stock ktp_discord_send_raw_to(const endpoint[], const payload[])
 }
 
 /**
+ * Initialize persistent curl headers.
+ * Called once from ktp_discord_load_config() after auth secret is loaded.
+ * Headers are reused across all requests — never freed per-request.
+ */
+stock ktp_discord_init_headers()
+{
+    if (g_ktpDiscordCurlHeaders != SList_Empty) {
+        curl_slist_free_all(g_ktpDiscordCurlHeaders);
+        g_ktpDiscordCurlHeaders = SList_Empty;
+    }
+
+    g_ktpDiscordCurlHeaders = curl_slist_append(SList_Empty, "Content-Type: application/json");
+    formatex(g_ktpDiscordAuthHeader, charsmax(g_ktpDiscordAuthHeader), "X-Relay-Auth: %s", g_ktpDiscordAuthSecret);
+    g_ktpDiscordCurlHeaders = curl_slist_append(g_ktpDiscordCurlHeaders, g_ktpDiscordAuthHeader);
+}
+
+/**
  * Internal: Perform a POST request using AMXX curl module
  *
  * @param url       URL to POST to
@@ -607,26 +636,19 @@ stock ktp_discord_curl_post(const url[], const payload[])
         return;
     }
 
-    // Free any previous headers
-    if (g_ktpDiscordCurlHeaders != SList_Empty) {
-        curl_slist_free_all(g_ktpDiscordCurlHeaders);
-        g_ktpDiscordCurlHeaders = SList_Empty;
-    }
-
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
     // Disable SSL verification (server may not have CA bundle)
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
 
-    // Build headers (X-Relay-Auth matches the relay API expectation)
-    g_ktpDiscordCurlHeaders = curl_slist_append(SList_Empty, "Content-Type: application/json");
-    formatex(g_ktpDiscordAuthHeader, charsmax(g_ktpDiscordAuthHeader), "X-Relay-Auth: %s", g_ktpDiscordAuthSecret);
-    g_ktpDiscordCurlHeaders = curl_slist_append(g_ktpDiscordCurlHeaders, g_ktpDiscordAuthHeader);
-
+    // Use persistent headers (created once at config load, never freed per-request)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, g_ktpDiscordCurlHeaders);
 
-    // Set POST data
+    // Discard response body (prevents relay responses from appearing in server console)
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, "ktp_discord_curl_discard");
+
+    // Set POST data (COPYPOSTFIELDS copies the data, safe even if payload buffer is reused)
     curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, payload);
 
     // Set timeout (5 seconds)
@@ -634,6 +656,15 @@ stock ktp_discord_curl_post(const url[], const payload[])
 
     // Perform request asynchronously
     curl_easy_perform(curl, "ktp_discord_curl_callback");
+}
+
+/**
+ * Discard write callback — prevents curl from dumping HTTP response body to server console.
+ * Returns size*nmemb to tell curl all bytes were handled.
+ */
+public ktp_discord_curl_discard(const data[], const size, const nmemb)
+{
+    return size * nmemb;
 }
 
 /**
@@ -647,14 +678,8 @@ public ktp_discord_curl_callback(CURL:curl, CURLcode:code)
         log_amx("[KTP Discord] curl error: %s (code %d)", error, code);
     }
 
-    // Cleanup curl handle
+    // Cleanup curl handle only — headers are persistent, never freed per-request
     curl_easy_cleanup(curl);
-
-    // Free headers
-    if (g_ktpDiscordCurlHeaders != SList_Empty) {
-        curl_slist_free_all(g_ktpDiscordCurlHeaders);
-        g_ktpDiscordCurlHeaders = SList_Empty;
-    }
 }
 
 // ============================================================================

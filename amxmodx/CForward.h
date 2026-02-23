@@ -106,12 +106,17 @@ public:
 	{
 		return m_Name.chars();
 	}
-	
+
+	ForwardExecType getExecType() const
+	{
+		return m_ExecType;
+	}
+
 	ForwardParam getParamType(int paramId) const
 	{
 		if (paramId < 0 || paramId >= m_NumParams)
 			return FP_DONE;
-		
+
 		return m_ParamTypes[paramId];
 	}
 };
@@ -207,6 +212,7 @@ public:
 	
 	ForwardParam getParamType(int id, int paramId) const;
 	cell prepareArray(void *ptr, unsigned int size, ForwardArrayElemType type, bool copyBack);		// prepare array
+
 };
 
 // (un)register forward

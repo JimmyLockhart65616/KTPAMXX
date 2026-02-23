@@ -76,8 +76,15 @@ void MenuMngr::registerMenuCmd(CPluginMngr::CPlugin *a, int mi, int k, int f, bo
 			temp = &(*temp)->next;
 		}
 	} else {
+		// KTP: Dedup old-style menu commands — same plugin + menuid + function
 		while (*temp)
 		{
+			MenuCommand *ptr = *temp;
+			if (!ptr->is_new_menu && ptr->plugin == a && ptr->menuid == mi &&
+				g_forwards.isSameSPForward(ptr->function, f))
+			{
+				return;
+			}
 			temp = &(*temp)->next;
 		}
 	}

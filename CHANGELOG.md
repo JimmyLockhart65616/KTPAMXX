@@ -5,6 +5,38 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.10] - 2026-02-17
+
+### Fixed
+
+#### Extension Mode Subsystem Re-Registration Leak
+
+In extension mode, `KTPAMX_ReloadPlugins()` fires `plugin_init` on every map change without clearing subsystem registrations. Each map change re-registered all commands, forwards, events, log events, messages, and menu commands — causing linear growth in plugin_init time (~2ms/map, reaching 100ms+ after 50 maps).
+
+**Two-pronged fix:**
+
+1. **Module cleanup callback** — Call `modules_callPluginsUnloading()` before `plugin_init` in `KTPAMX_ReloadPlugins()`. This notifies modules (e.g., KTP-ReAPI) to clear plugin-owned state like hookchain vectors before plugins re-register them.
+
+2. **Registration-time deduplication** — All AMXX subsystems now detect duplicate registrations and return existing handles instead of allocating new entries:
+
+| Subsystem | Dedup Key | File |
+|-----------|-----------|------|
+| Commands (`CmdMngr`) | plugin + command line | `CCmd.cpp` |
+| SP Forwards (`CForwardMngr`) | AMX + function index/name | `CForward.cpp` |
+| Multi-Forwards (`CForwardMngr`) | function name + exec type + param count | `CForward.cpp` |
+| Events (`EventsMngr`) | plugin + function + message ID | `CEvent.cpp` |
+| Log Events (`LogEventsMngr`) | plugin + function | `CLogEvent.cpp` |
+| Messages (`MessageHooks`) | message ID + function | `messages.h` |
+| Menu Commands (`MenuMngr`) | plugin + function + menu keys | `CMenu.cpp` |
+
+3. **`setCmdType()` guard** — Changed return type from `void` to `bool`. Returns `false` if command type bits are unchanged, preventing duplicate entries in secondary command lists and redundant `REG_SVR_COMMAND` engine calls.
+
+**Result:** plugin_init time is now flat at ~0.9ms regardless of map change count (was 107ms+ at 55 map changes — 120x improvement).
+
+**Technical note:** Subsystem clearing (e.g., `g_commands.clear()`) is NOT safe because C++ modules register state once during `AMXX_Attach` — clearing subsystems destroys module state and causes delayed segfaults. Dedup-at-registration is the correct approach.
+
+---
+
 ## [2.6.9] - 2026-02-01
 
 ### Added
@@ -751,6 +783,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.10 | 2026-02-17 | Extension mode subsystem dedup: flat plugin_init time across map changes |
 | 2.6.9 | 2026-02-01 | DODX runtime pdata offset detection for Ubuntu 22.04/24.04 |
 | 2.6.8 | 2026-01-31 | Extension mode header stubs, Docker build support |
 | 2.6.7 | 2026-01-24 | DODX dod_damage_pre forward, dodx_give_grenade + player manipulation natives, grenade fix |
@@ -770,6 +803,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.10]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.10
 [2.6.9]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.9
 [2.6.8]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.8
 [2.6.7]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.7

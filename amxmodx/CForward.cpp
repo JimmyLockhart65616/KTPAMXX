@@ -402,87 +402,124 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 
 int CForwardMngr::registerForward(const char *funcName, ForwardExecType et, int numParams, const ForwardParam * paramTypes)
 {
+	// KTP: Dedup — if same function name + exec type + param count exists, return it.
+	// In extension mode, plugin_init fires on every map change. Multi-forwards like
+	// CreateMultiForward("client_connect", ...) would otherwise accumulate duplicates.
+	for (size_t i = 0; i < m_Forwards.length(); i++)
+	{
+		CForward *fwd = m_Forwards[i];
+		if (fwd && fwd->getExecType() == et &&
+			fwd->getParamsNum() == numParams &&
+			!strcmp(fwd->getFuncName(), funcName))
+		{
+			return (int)(i << 1);
+		}
+	}
+
 	int retVal = m_Forwards.length() << 1;
 	CForward *tmp = new CForward(funcName, et, numParams, paramTypes);
-	
+
 	if (!tmp)
 	{
 		return -1;				// should be invalid
 	}
-	
+
 	m_Forwards.append(tmp);
-	
+
 	return retVal;
 }
 
 int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
+	// KTP: Dedup — if same AMX + function index exists and is active, return existing handle.
+	// In extension mode, plugin_init fires on every map change without clearing forwards.
+	for (size_t i = 0; i < m_SPForwards.length(); i++)
+	{
+		CSPForward *fwd = m_SPForwards[i];
+		if (fwd && !fwd->isFree && fwd->m_Amx == amx && fwd->m_Func == func)
+		{
+			return (int)((i << 1) | 1);
+		}
+	}
+
 	int retVal = -1;
 	CSPForward *pForward;
-	
+
 	if (!m_FreeSPForwards.empty())
 	{
 		retVal = m_FreeSPForwards.front();
 		pForward = m_SPForwards[retVal >> 1];
 		pForward->Set(func, amx, numParams, paramTypes);
-		
+
 		if (pForward->getFuncsNum() == 0)
 			return -1;
-		
+
 		m_FreeSPForwards.pop();
 	} else {
 		retVal = (m_SPForwards.length() << 1) | 1;
 		pForward = new CSPForward();
-		
+
 		if (!pForward)
 			return -1;
-		
+
 		pForward->Set(func, amx, numParams, paramTypes);
-		
+
 		if (pForward->getFuncsNum() == 0)
 		{
 			delete pForward;
 			return -1;
 		}
-					 
+
 		m_SPForwards.append(pForward);
 	}
-	
+
 	return retVal;
 }
 
 int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
+	// KTP: Dedup — if same AMX + function name exists and is active, return existing handle.
+	// In extension mode, plugin_init fires on every map change without clearing forwards.
+	for (size_t i = 0; i < m_SPForwards.length(); i++)
+	{
+		CSPForward *fwd = m_SPForwards[i];
+		if (fwd && !fwd->isFree && fwd->m_Amx == amx &&
+			!strcmp(fwd->getFuncName(), funcName))
+		{
+			return (int)((i << 1) | 1);
+		}
+	}
+
 	int retVal = (m_SPForwards.length() << 1) | 1;
 	CSPForward *pForward;
-	
+
 	if (!m_FreeSPForwards.empty())
 	{
 		retVal = m_FreeSPForwards.front();
 		pForward = m_SPForwards[retVal>>1];			// >>1 because unregisterSPForward pushes the id which contains the sp flag
 		pForward->Set(funcName, amx, numParams, paramTypes);
-		
+
 		if (pForward->getFuncsNum() == 0)
 			return -1;
-		
+
 		m_FreeSPForwards.pop();
 	} else {
 		pForward = new CSPForward();
-		
+
 		if (!pForward)
 			return -1;
-		
+
 		pForward->Set(funcName, amx, numParams, paramTypes);
-		
+
 		if (pForward->getFuncsNum() == 0)
 		{
 			delete pForward;
 			return -1;
 		}
-		
+
 		m_SPForwards.append(pForward);
 	}
-	
+
 	return retVal;
 }
 

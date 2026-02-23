@@ -55,10 +55,24 @@ CmdMngr::Command::~Command()
 
 CmdMngr::Command* CmdMngr::registerCommand(CPluginMngr::CPlugin* plugin, int func, const char* cmd, const char* info, int level, bool listable, bool info_ml)
 {
+	// KTP: Dedup — if same plugin + command line already registered, return it.
+	// In extension mode, plugin_init fires on every map change without clearing commands.
+	// Must use getCmdLine() not getCommand() because the Command constructor splits
+	// "say .kick" into command="say" + argument=".kick", but the incoming cmd parameter
+	// is the full unsplit string "say .kick".
+	for (CmdLink* link = sortedlists[0]; link; link = link->next)
+	{
+		if (link->cmd->plugin == plugin &&
+			!stricmp(link->cmd->getCmdLine(), cmd))
+		{
+			return link->cmd;
+		}
+	}
+
 	Command* b = new Command(plugin, cmd, info, level, func, listable, info_ml, this);
 	if (b == 0) return 0;
 	setCmdLink(&sortedlists[0], b);
-	
+
 	return b;
 }
 
@@ -158,8 +172,13 @@ void CmdMngr::clearCmdLink(CmdLink** phead, bool pclear)
 	}
 }
 
-void CmdMngr::Command::setCmdType(int a)
+bool CmdMngr::Command::setCmdType(int a)
 {
+	// KTP: Save old cmdtype to detect if bits actually changed.
+	// If they didn't, this command was already registered for this type —
+	// skip adding to secondary lists to prevent accumulation on map change.
+	int oldtype = cmdtype;
+
 	switch (a)
 	{
 		case CMD_ConsoleCommand: cmdtype |= 3; break;
@@ -167,19 +186,24 @@ void CmdMngr::Command::setCmdType(int a)
 		case CMD_ServerCommand: cmdtype |= 2; break;
 	}
 
+	if (cmdtype == oldtype)
+		return false;
+
 	if (cmdtype & 1)	// ClientCommand
 	{
 		parent->setCmdLink(&parent->sortedlists[1], this);
-		
+
 		if (!parent->registerCmdPrefix(this))
 			parent->setCmdLink(&parent->clcmdlist, this, false);
 	}
-	
+
 	if (cmdtype & 2)	// ServerCommand
 	{
 		parent->setCmdLink(&parent->sortedlists[2], this);
 		parent->setCmdLink(&parent->srvcmdlist, this, false);
 	}
+
+	return true;
 }
 
 const char* CmdMngr::Command::getCmdType() const

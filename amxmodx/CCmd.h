@@ -64,8 +64,8 @@ public:
 		inline int getFlags() const { return flags; }
 		inline long int getId() const { return (long int)id; }
 		
-		const char* getCmdType() const;		
-		void setCmdType(int a);
+		const char* getCmdType() const;
+		bool setCmdType(int a);
 	};
 
 private:

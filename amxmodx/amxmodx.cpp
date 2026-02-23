@@ -1691,8 +1691,10 @@ static cell AMX_NATIVE_CALL register_concmd(AMX *amx, cell *params)
 		plugin->AddToFailCounter(1);
 	}
 
-	cmd->setCmdType(CMD_ConsoleCommand);
-	REG_SVR_COMMAND((char*)cmd->getCommand(), plugin_srvcmd);
+	// KTP: setCmdType returns false if already registered for this type (dedup).
+	// Skip REG_SVR_COMMAND to avoid redundant engine command table walks.
+	if (cmd->setCmdType(CMD_ConsoleCommand))
+		REG_SVR_COMMAND((char*)cmd->getCommand(), plugin_srvcmd);
 
 	return cmd->getId();
 }
@@ -1769,8 +1771,8 @@ static cell AMX_NATIVE_CALL register_srvcmd(AMX *amx, cell *params)
 	if ((cmd = g_commands.registerCommand(plugin, idx, temp, info, access, listable, info_ml)) == NULL)
 		return 0;
 
-	cmd->setCmdType(CMD_ServerCommand);
-	REG_SVR_COMMAND((char*)cmd->getCommand(), plugin_srvcmd);
+	if (cmd->setCmdType(CMD_ServerCommand))
+		REG_SVR_COMMAND((char*)cmd->getCommand(), plugin_srvcmd);
 
 	return cmd->getId();
 }

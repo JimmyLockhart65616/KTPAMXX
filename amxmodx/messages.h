@@ -38,6 +38,13 @@ public:
 
 	void AddHook(int fwd)
 	{
+		// KTP: Dedup — skip if this forward ID is already hooked.
+		// SP forward dedup may return the same ID on re-registration.
+		for (size_t i = 0; i < m_Forwards.length(); i++)
+		{
+			if (m_Forwards[i] == fwd)
+				return;
+		}
 		m_Forwards.append(fwd);
 	}
 	bool RemoveHook(int fwd)

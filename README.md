@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Version 2.6.9** | Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.6.10** | Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
 
 A major fork of [AMX Mod X](https://github.com/alliedmodders/amxmodx) featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat servers requiring strict anti-cheat enforcement.
 
@@ -120,7 +120,7 @@ See `plugins/include/dodx.inc` for full API documentation.
 
 Check server console on startup:
 ```
-KTP AMX version 2.6.9 (ReHLDS Extension Mode)
+KTP AMX version 2.6.10 (ReHLDS Extension Mode)
 ```
 
 ---
@@ -192,7 +192,7 @@ KTP AMX registers these hooks when running as a ReHLDS extension:
 
 ## Version Information
 
-- **Current Version**: 2.6.9 (2026-02)
+- **Current Version**: 2.6.10 (2026-02)
 - **Based on**: AMX Mod X 1.10.0 (upstream)
 - **Platform**: GCC 7.3+ / Visual Studio 2019+
 - **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+

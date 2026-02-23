@@ -207,10 +207,30 @@ int EventsMngr::registerEvent(CPluginMngr::CPlugin* plugin, int func, int flags,
 		return 0;
 	}
 
+	// KTP: Dedup — if same plugin + function + msgid already registered, return existing handle.
+	// In extension mode, plugin_init fires on every map change without clearing events.
+	// Without dedup, each map change adds duplicate event entries that all fire.
+	for (size_t i = 0; i < m_Events[msgid].length(); i++)
+	{
+		auto& existing = m_Events[msgid][i];
+		if (existing->getPlugin() == plugin && existing->getFunction() == func)
+		{
+			// Find the handle for this existing event by scanning EventHandles
+			for (size_t h = 1; h <= EventHandles.size(); h++)
+			{
+				auto* hook = EventHandles.lookup(h);
+				if (hook && hook->m_event == existing.get())
+				{
+					return (int)h;
+				}
+			}
+		}
+	}
+
 	auto event = ke::AutoPtr<ClEvent>(new ClEvent(plugin, func, flags));
 
 	int handle = EventHandles.create(event.get());
-	
+
 	if (!handle)
 	{
 		return 0;

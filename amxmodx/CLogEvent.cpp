@@ -178,6 +178,24 @@ int LogEventsMngr::registerLogEvent(CPluginMngr::CPlugin* plugin, int func, int 
 		return 0;
 	}
 
+	// KTP: Dedup — if same plugin + function + position already registered, return existing handle.
+	// In extension mode, plugin_init fires on every map change without clearing log events.
+	for (CLogEvent* ev = logevents[pos]; ev; ev = ev->next)
+	{
+		if (ev->getPlugin() == plugin && ev->getFunction() == func)
+		{
+			// Find the handle for this existing log event
+			for (size_t h = 1; h <= LogEventHandles.size(); h++)
+			{
+				auto* hook = LogEventHandles.lookup(h);
+				if (hook && hook->m_logevent == ev)
+				{
+					return (int)h;
+				}
+			}
+		}
+	}
+
 	arelogevents = true;
 	auto d = &logevents[pos];
 

@@ -3008,6 +3008,12 @@ static void KTPAMX_ReloadPlugins()
 		pPlayer->Init(pEdict, i);
 	}
 
+	// KTP: Notify modules to clean up plugin-specific state before re-init.
+	// This allows ReAPI to clear hookchain vectors (100% plugin-owned) so hooks
+	// don't accumulate on each map change. Module-owned state (registered during
+	// AMXX_Attach) is preserved because modules handle their own cleanup.
+	modules_callPluginsUnloading();
+
 	// Execute plugin_init and plugin_cfg for the new map
 	// Plugins are still loaded, we just fire the forwards so they can reinitialize
 	executeForwards(FF_PluginInit);

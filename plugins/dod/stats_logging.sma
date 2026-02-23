@@ -79,6 +79,44 @@ stock log_player_stats(id) {
   }
 }
 
+// KTP: Log headshot kills for HLStatsX per-frag headshot tracking.
+// The engine logs "killed with weapon" but without (headshot) properties.
+// We log a separate "headshot_kill" triggered event so HLStatsX can mark
+// the corresponding frag entry as a headshot without double-counting kills.
+public client_death(killer, victim, wpnindex, hitplace, TK) {
+  if (hitplace != HIT_HEAD)
+    return PLUGIN_CONTINUE
+
+  if (!killer || killer == victim || !is_user_connected(killer) || !is_user_connected(victim))
+    return PLUGIN_CONTINUE
+
+  new szKillerName[MAX_NAME_LENGTH], szKillerAuthid[32], szKillerTeam[16]
+  new szVictimName[MAX_NAME_LENGTH], szVictimAuthid[32], szVictimTeam[16]
+  new szWeapon[16]
+
+  get_user_name(killer, szKillerName, charsmax(szKillerName))
+  get_user_authid(killer, szKillerAuthid, charsmax(szKillerAuthid))
+  get_user_info(killer, "team", szKillerTeam, charsmax(szKillerTeam))
+  szKillerTeam[0] -= 32
+
+  get_user_name(victim, szVictimName, charsmax(szVictimName))
+  get_user_authid(victim, szVictimAuthid, charsmax(szVictimAuthid))
+  get_user_info(victim, "team", szVictimTeam, charsmax(szVictimTeam))
+  szVictimTeam[0] -= 32
+
+  xmod_get_wpnlogname(wpnindex, szWeapon, charsmax(szWeapon))
+
+  new iKillerUserid = get_user_userid(killer)
+  new iVictimUserid = get_user_userid(victim)
+
+  log_message("^"%s<%d><%s><%s>^" triggered ^"headshot_kill^" against ^"%s<%d><%s><%s>^" with ^"%s^"",
+    szKillerName, iKillerUserid, szKillerAuthid, szKillerTeam,
+    szVictimName, iVictimUserid, szVictimAuthid, szVictimTeam,
+    szWeapon)
+
+  return PLUGIN_CONTINUE
+}
+
 public client_disconnected(id) {
   if ( is_user_bot(id) || !is_user_connected(id) || !isDSMActive() )
     return PLUGIN_CONTINUE
