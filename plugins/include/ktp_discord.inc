@@ -5,11 +5,17 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.3.1
- * DATE: 2026-02-19
+ * VERSION: 1.3.2
+ * DATE: 2026-02-25
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.2 (2026-02-25)
+ *   * FIXED: Duplicate audit messages when discord_channel_id_admin matches an audit channel ID
+ *   + ADDED: Audit channel dedup — same channel ID is never added twice to audit array
+ *   - REMOVED: g_ktpDiscordTempFile dead code (unused since v1.1.0)
+ *   * CHANGED: containi → contain for audit key matching (keys already lowercased)
+ *
  * v1.3.1 (2026-02-19)
  *   * FIXED: Curl response bodies (relay error messages) no longer dumped to server console
  *   + ADDED: CURLOPT_WRITEFUNCTION discard callback suppresses HTTP response output
@@ -79,7 +85,7 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.3.1"
+#define KTP_DISCORD_VERSION "1.3.2"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
@@ -119,8 +125,7 @@ new g_ktpDiscordAuditChannelCount = 0;
 // Config state
 new bool:g_ktpDiscordEnabled = false;
 
-// Temp file for curl responses (no longer used, kept for compatibility)
-new g_ktpDiscordTempFile[128];
+// (g_ktpDiscordTempFile removed in v1.3.2 — was unused since v1.1.0)
 
 // Curl state
 new curl_slist:g_ktpDiscordCurlHeaders = SList_Empty;
@@ -133,6 +138,24 @@ new g_ktpDiscordPayloadBuf[1024];
 // ============================================================================
 // CONFIGURATION LOADING
 // ============================================================================
+
+/**
+ * Internal: Add a channel to the audit array if not already present and not full.
+ * Returns true if added, false if duplicate or full.
+ */
+stock bool:_ktp_discord_audit_add(const channelId[])
+{
+    if (g_ktpDiscordAuditChannelCount >= KTP_DISCORD_MAX_AUDIT_CHANNELS) return false;
+
+    // Check for duplicate
+    for (new i = 0; i < g_ktpDiscordAuditChannelCount; i++) {
+        if (equal(g_ktpDiscordAuditChannels[i], channelId)) return false;
+    }
+
+    copy(g_ktpDiscordAuditChannels[g_ktpDiscordAuditChannelCount], 63, channelId);
+    g_ktpDiscordAuditChannelCount++;
+    return true;
+}
 
 /**
  * Load Discord configuration from discord.ini
@@ -161,9 +184,6 @@ stock bool:ktp_discord_load_config()
     new configsDir[128], path[192];
     get_configsdir(configsDir, charsmax(configsDir));
     formatex(path, charsmax(path), "%s/discord.ini", configsDir);
-
-    // Set up temp file path
-    formatex(g_ktpDiscordTempFile, charsmax(g_ktpDiscordTempFile), "%s/ktp_discord_resp.tmp", configsDir);
 
     // Open config file
     new fp = fopen(path, "rt");
@@ -228,18 +248,15 @@ stock bool:ktp_discord_load_config()
         }
         else if (equal(key, "discord_channel_id_admin")) {
             copy(g_ktpDiscordChannelAdmin, charsmax(g_ktpDiscordChannelAdmin), val);
-            // Also add to audit channels
-            if (g_ktpDiscordAuditChannelCount < KTP_DISCORD_MAX_AUDIT_CHANNELS) {
-                copy(g_ktpDiscordAuditChannels[g_ktpDiscordAuditChannelCount], 63, val);
-                g_ktpDiscordAuditChannelCount++;
+            // Also add to audit channels (if not already present)
+            if (_ktp_discord_audit_add(val)) {
+                // added
             }
             loadedCount++;
         }
         // Collect all audit channel variants
-        else if (containi(key, "discord_channel_id_audit") != -1) {
-            if (g_ktpDiscordAuditChannelCount < KTP_DISCORD_MAX_AUDIT_CHANNELS) {
-                copy(g_ktpDiscordAuditChannels[g_ktpDiscordAuditChannelCount], 63, val);
-                g_ktpDiscordAuditChannelCount++;
+        else if (contain(key, "discord_channel_id_audit") != -1) {
+            if (_ktp_discord_audit_add(val)) {
                 loadedCount++;
             }
         }

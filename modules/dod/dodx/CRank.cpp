@@ -152,11 +152,11 @@ RankSystem::RankStats* RankSystem::findEntryInRank(const char* unique, const cha
 	
 	if (isip) // IP lookups need to strip the port from already saved instances.
 	{         // Otherwise the stats file would be essentially reset.
-	
+
 		// The IP passed does not contain the port any more for unique
 		size_t iplen = strlen(unique);
-		
-		
+
+
 		while ( a )
 		{
 			const char* targetUnique = a->getUnique();
@@ -164,10 +164,10 @@ RankSystem::RankStats* RankSystem::findEntryInRank(const char* unique, const cha
 			{
 				// It mostly matches, make sure this isn't a false match
 				// eg: checking 4.2.2.2 would match 4.2.2.24 here.
-				
+
 				// Get the next character stored in targetUnique
 				char c = targetUnique[iplen];
-				
+
 				// If c is either a colon or end of line, then this
 				// is a valid match.
 				if (c == ':' ||
@@ -177,8 +177,8 @@ RankSystem::RankStats* RankSystem::findEntryInRank(const char* unique, const cha
 					return a;
 				}
 				// Any other case was a false match.
-				a = a->prev;
 			}
+			a = a->prev;
 		}
 	}
 	else // No special case

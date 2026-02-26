@@ -201,3 +201,18 @@ native curl_slist_free_all(curl_slist: list);
  * @noreturn
  */
 native curl_version(buffer[], const maxlen);
+
+/**
+ * Retrieves the response body captured during an async transfer.
+ * Only available when no CURLOPT_WRITEFUNCTION callback was set — the module
+ * automatically buffers the response in C++. Call this in your completion callback
+ * before curl_easy_cleanup.
+ *
+ * @param handle    Curl handle
+ * @param buffer    Buffer to copy response body into
+ * @param maxlen    Maximum buffer size
+ *
+ * @return          Number of bytes copied
+ * @error           If passed curl handle is not valid
+ */
+native curl_get_response_body(const CURL:handle, buffer[], const maxlen);

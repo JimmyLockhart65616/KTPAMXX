@@ -431,12 +431,17 @@ int CForwardMngr::registerForward(const char *funcName, ForwardExecType et, int 
 
 int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
-	// KTP: Dedup — if same AMX + function index exists and is active, return existing handle.
+	// KTP: Dedup — if same AMX + function index + param signature exists and is active, return existing handle.
 	// In extension mode, plugin_init fires on every map change without clearing forwards.
+	// IMPORTANT: Must also match numParams and paramTypes — the same function can be registered
+	// as different forward types (e.g., menu callback with FP_CELL vs curl callback with FP_STRING).
+	// Matching only on amx+func causes param type mismatch crashes (str=0x1 segfault in execute).
 	for (size_t i = 0; i < m_SPForwards.length(); i++)
 	{
 		CSPForward *fwd = m_SPForwards[i];
-		if (fwd && !fwd->isFree && fwd->m_Amx == amx && fwd->m_Func == func)
+		if (fwd && !fwd->isFree && fwd->m_Amx == amx && fwd->m_Func == func
+			&& fwd->m_NumParams == numParams
+			&& memcmp(fwd->m_ParamTypes, paramTypes, numParams * sizeof(ForwardParam)) == 0)
 		{
 			return (int)((i << 1) | 1);
 		}
@@ -478,13 +483,18 @@ int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const For
 
 int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
-	// KTP: Dedup — if same AMX + function name exists and is active, return existing handle.
+	// KTP: Dedup — if same AMX + function name + param signature exists and is active, return existing handle.
 	// In extension mode, plugin_init fires on every map change without clearing forwards.
+	// IMPORTANT: Must also match numParams and paramTypes — the same function can be registered
+	// as different forward types (e.g., menu callback with FP_CELL vs curl callback with FP_STRING).
+	// Matching only on amx+name causes param type mismatch crashes (str=0x1 segfault in execute).
 	for (size_t i = 0; i < m_SPForwards.length(); i++)
 	{
 		CSPForward *fwd = m_SPForwards[i];
-		if (fwd && !fwd->isFree && fwd->m_Amx == amx &&
-			!strcmp(fwd->getFuncName(), funcName))
+		if (fwd && !fwd->isFree && fwd->m_Amx == amx
+			&& !strcmp(fwd->getFuncName(), funcName)
+			&& fwd->m_NumParams == numParams
+			&& memcmp(fwd->m_ParamTypes, paramTypes, numParams * sizeof(ForwardParam)) == 0)
 		{
 			return (int)((i << 1) | 1);
 		}

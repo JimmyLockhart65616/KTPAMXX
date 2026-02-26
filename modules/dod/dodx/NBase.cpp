@@ -183,7 +183,7 @@ static cell AMX_NATIVE_CALL dodx_set_user_class(AMX *amx, cell *params)
 	int iClass = params[2];
 
 	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
-	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free || !pPlayer->pEdict->pvPrivateData)
 		return 0;
 
 	if (iClass) {
@@ -209,7 +209,7 @@ static cell AMX_NATIVE_CALL dodx_set_user_team(AMX *amx, cell *params)
 	}
 
 	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
-	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free || !pPlayer->pEdict->pvPrivateData)
 		return 0;
 
 	pPlayer->killPlayer();
@@ -1217,11 +1217,11 @@ static cell AMX_NATIVE_CALL dodx_debug_dump_ammo(AMX *amx, cell *params)
 		PDOFFSET_AMMO_HANDGRENADE_3, PDOFFSET_AMMO_STICKGRENADE_1);
 #endif
 
-	// Scan a wide range looking for values 1-10 (potential grenade counts)
+	// Scan within safe bounds of DoD player private data (~175 ints / 700 bytes)
 	MF_Log("[DODX DEBUG] Player %d - Scanning for values 1-10 (grenade counts):", index);
 
-	// Scan offsets 0-400 looking for small positive values
-	for (int i = 0; i <= 400; i++) {
+	// Scan offsets 0-175 (700 bytes) - safe range for DoD player private data
+	for (int i = 0; i <= 175; i++) {
 		int val = pData[i];
 		if (val >= 1 && val <= 10) {
 			const char* marker = "";

@@ -5,6 +5,48 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.11] - 2026-02-25
+
+### Fixed
+
+#### DODX Module - Missing pvPrivateData Null Checks
+
+`dodx_set_user_class` and `dodx_set_user_team` natives accessed `pEdict->pvPrivateData` without null-checking it first, inconsistent with other KTP natives (grenade, noclip, teamname) that properly validate before access.
+
+- `dodx_set_user_class` — Added `|| !pPlayer->pEdict->pvPrivateData` guard
+- `dodx_set_user_team` — Added `|| !pPlayer->pEdict->pvPrivateData` guard
+
+#### DODX Module - CRank IP Lookup Infinite Loop (Stock AMXX Bug)
+
+`CRank.cpp:findEntryInRank()` with IP-based ranking had `a = a->prev` inside the `strncmp` match block only. When `strncmp` didn't match (common case), the loop variable never advanced, causing an infinite loop. Moved `a = a->prev` outside the conditional so the linked list always advances.
+
+This is a stock AMX Mod X bug. Does not affect KTP production (rank system is skipped in extension mode) but fixed for correctness.
+
+#### Core AMXX - SP Forward Dedup Parameter Type Mismatch (Crash Fix)
+
+Both `registerSPForward` overloads in `CForward.cpp` matched on `amx + func/name` only, ignoring `numParams` and `paramTypes`. When the same Pawn function was registered as both a menu callback (FP_CELL params) and a curl/discord callback (FP_STRING params), the dedup returned the wrong forward handle. Integer values (e.g., menu selection `1`) were then cast to `const char*` and passed to `strlen()`, causing a segfault at address `0x1` in `CSPForward::execute`.
+
+- Both overloads now compare `numParams` and `paramTypes` via `memcmp` in addition to `amx + func/name`
+- Fixes 4 confirmed production crashes (3x NY, 1x ATL) on 2026-02-27
+
+#### Core AMXX - C_ClientCvarChanged Null Guard
+
+`C_ClientCvarChanged` called `GET_PLAYER_POINTER(pEntity)` without validating `pEntity`. Added null check, `FNullEnt` check, and player index range validation before accessing the player array. Uses `GET_PLAYER_POINTER_I` with validated index instead of raw `GET_PLAYER_POINTER` macro.
+
+#### DODX Module - Debug Ammo Dump Out-of-Bounds Read
+
+`dodx_debug_dump_ammo` scanned pvPrivateData offsets 0–400 (1600 bytes), well beyond the ~700 byte DoD player private data structure. Reduced scan range to 0–175 (700 bytes) to stay within safe bounds.
+
+### Changed
+
+#### Shared Include - ktp_discord.inc v1.3.2
+
+- Fixed duplicate audit messages when `discord_channel_id_admin` matches an audit channel ID — added `_ktp_discord_audit_add()` dedup helper
+- Removed `g_ktpDiscordTempFile` dead code (unused since v1.1.0, 128 cells freed per plugin)
+- Changed `containi` to `contain` for audit key matching (keys already lowercased)
+
+---
+
 ## [2.6.10] - 2026-02-17
 
 ### Fixed
@@ -783,6 +825,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.11 | 2026-02-25 | SP forward dedup crash fix, pvPrivateData null checks, CRank infinite loop fix, cvar null guard |
 | 2.6.10 | 2026-02-17 | Extension mode subsystem dedup: flat plugin_init time across map changes |
 | 2.6.9 | 2026-02-01 | DODX runtime pdata offset detection for Ubuntu 22.04/24.04 |
 | 2.6.8 | 2026-01-31 | Extension mode header stubs, Docker build support |
@@ -803,6 +846,7 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.11]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.11
 [2.6.10]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.10
 [2.6.9]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.9
 [2.6.8]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.8

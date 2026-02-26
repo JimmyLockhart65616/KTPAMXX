@@ -1678,7 +1678,14 @@ void C_ClientUserInfoChanged_Post(edict_t *pEntity, char *infobuffer)
 // This enables real-time cvar validation without periodic polling
 void C_ClientCvarChanged(const edict_t *pEntity, const char *cvarName, const char *value)
 {
-	CPlayer *pPlayer = GET_PLAYER_POINTER(pEntity);
+	if (!pEntity || FNullEnt(pEntity))
+		RETURN_META(MRES_IGNORED);
+
+	int index = ENTINDEX(const_cast<edict_t*>(pEntity));
+	if (index < 1 || index > gpGlobals->maxClients)
+		RETURN_META(MRES_IGNORED);
+
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
 	executeForwards(FF_ClientCvarChanged, static_cast<cell>(pPlayer->index), cvarName, value);
 	RETURN_META(MRES_IGNORED);
 }
