@@ -287,9 +287,13 @@ void RankSystem::loadRank(const char* filename)
 
 		while(i && !feof(bfp))
 		{
+			if (i >= (int)sizeof(name)) i = sizeof(name) - 1;
 			TRYREAD(name, i, sizeof(char), bfp);
+			name[i] = '\0';
 			TRYREAD(&i, 1, sizeof(short int), bfp);
+			if (i >= (int)sizeof(unique)) i = sizeof(unique) - 1;
 			TRYREAD(unique, i, sizeof(char) , bfp);
+			unique[i] = '\0';
 			TRYREAD(&d.tks, 1, sizeof(int), bfp);
 			TRYREAD(&d.damage, 1, sizeof(int), bfp);
 			TRYREAD(&d.deaths, 1, sizeof(int), bfp);

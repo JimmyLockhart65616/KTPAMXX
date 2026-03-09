@@ -44,16 +44,19 @@ static void DODX_OnSetClientKeyValue(IVoidHookChain<int, char *, const char *, c
                                       int clientIndex, char *infobuffer, const char *key, const char *value);
 static int DODX_OnRegUserMsg(IHookChain<int, const char *, int> *chain, const char *pszName, int iSize);
 static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *msg);
+static void DODX_OnInitObjMessage(IVoidHookChain<IMessage *> *chain, IMessage *msg);
 static void DODX_OnClientConnected(IVoidHookChain<IGameClient *> *chain, IGameClient *client);
 static void DODX_OnSV_Spawn_f(IVoidHookChain<> *chain);
 static void DODX_OnSV_DropClient(IVoidHookChain<IGameClient *, bool, const char *> *chain, IGameClient *client, bool crash, const char *reason);
 static void DODX_OnChangelevel(IVoidHookChain<const char *, const char *> *chain, const char *s1, const char *s2);
+static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics);
 
 // KTP: Forward declarations for extension mode setup/cleanup functions
 static bool DODX_SetupExtensionHooks();
 static void DODX_CleanupExtensionHooks();
 void DODX_DetectMapInfo();
 void DODX_RegisterMessageHooks();
+static void DODX_InitCPFromEntities();
 
 funEventCall modMsgsEnd[MAX_REG_MSGS];
 funEventCall modMsgs[MAX_REG_MSGS];
@@ -62,6 +65,7 @@ void (*endfunction)(void*);
 CPlayer* mPlayer;
 CPlayer players[33];
 CMapInfo g_map;
+CObjective mObjects;
 
 // KTP: First edict pointer for ENTINDEX_SAFE
 // Initialized in ServerActivate_Post to enable safe entity index calculation
@@ -69,6 +73,8 @@ edict_t* g_pFirstEdict = nullptr;
 
 // KTP: Server active flag - prevents message processing during map changes
 bool g_bServerActive = false;
+
+// (g_bCPFromInitObj was removed — entity scan + BSP reorder is the sole CP ordering path)
 
 bool rankBots;
 int mState;
@@ -94,6 +100,12 @@ int iFRocketExplode = -1;
 int iFObjectTouched = -1;
 int iFStaminaForward = -1;
 int iFDamagePre = -1;  // KTP: Pre-damage forward for damage modification
+int iFInitCP = -1;     // KTP: CP init forward
+int iFCPCaptured = -1; // KTP: CP ownership change forward
+int iFScoreEvent = -1; // KTP: Enriched score event with CP context
+
+int g_lastCapturedCP = -1;      // KTP: Last CP from SetObj
+float g_lastCapturedTime = 0.0f; // KTP: Time of last SetObj
 
 int gmsgCurWeapon;
 int gmsgCurWeaponEnd;
@@ -112,6 +124,8 @@ int gmsgObject;
 int gmsgObject_End;
 int gmsgPStatus;
 int gmsgTeamInfo;  // KTP: For scoreboard team name refresh
+int gmsgInitObj;   // KTP: CP tracking
+int gmsgSetObj;    // KTP: CP tracking
 
 RankSystem g_rank;
 Grenades g_grenades;
@@ -160,6 +174,8 @@ g_user_msg[] =
 	{ "ScoreShort",	&gmsgScoreShort,		NULL,					false },
 	{ "PTeam",		&gmsgPTeam,				NULL,					false },
 	{ "TeamInfo",	&gmsgTeamInfo,			NULL,					false },  // KTP: For scoreboard refresh
+	{ "InitObj",	&gmsgInitObj,			Client_InitObj,			false },  // KTP: CP tracking
+	{ "SetObj",		&gmsgSetObj,			Client_SetObj,			false },  // KTP: CP tracking
 	{ 0,0,0,false }
 };
 
@@ -241,7 +257,20 @@ void PlayerPreThink_Post(edict_t *pEntity)
 	if (pPlayer->sendScore && pPlayer->sendScore < gpGlobals->time)
 	{
 		pPlayer->sendScore = 0;
+
+		// KTP: Resolve pending CP index (ObjScore fires before SetObj)
+		if (pPlayer->lastScoreCP == -2)
+		{
+			if ((gpGlobals->time - g_lastCapturedTime) < 2.0f)
+				pPlayer->lastScoreCP = g_lastCapturedCP;
+			else
+				pPlayer->lastScoreCP = -1;
+		}
+
 		MF_ExecuteForward(iFScore, pPlayer->index, pPlayer->lastScore, pPlayer->savedScore);
+		if (iFScoreEvent >= 0)
+			MF_ExecuteForward(iFScoreEvent, pPlayer->index, pPlayer->lastScore, (int)pPlayer->savedScore, pPlayer->lastScoreCP);
+		pPlayer->lastScoreCP = -1;
 	}
 
 	RETURN_META(MRES_IGNORED);
@@ -284,6 +313,9 @@ void ServerDeactivate()
 		weaponData[i].needcheck = false;
 
 	g_map.Init();
+	mObjects.Clear();
+	g_lastCapturedCP = -1;
+	g_lastCapturedTime = 0.0f;
 
 	RETURN_META(MRES_IGNORED);
 }
@@ -546,6 +578,7 @@ void OnAmxxAttach()
 {
 	MF_AddNatives( stats_Natives );
 	MF_AddNatives( base_Natives );
+	MF_AddNatives( cp_Natives );
 
 	// KTP: Check if running in extension mode (without Metamod)
 	if (MF_IsExtensionMode && MF_IsExtensionMode())
@@ -631,6 +664,13 @@ void OnPluginsLoaded()
 	// Return original damage to keep unchanged, return lower value to reduce, return 0 to block
 	// Params: attacker, victim, damage, weapon, hitgroup, team_attack
 	iFDamagePre = MF_RegisterForward("dod_damage_pre",ET_CONTINUE,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_CELL,FP_DONE);
+
+	// KTP: Control point tracking forwards
+	iFInitCP = MF_RegisterForward("controlpoints_init", ET_IGNORE, FP_DONE);
+	iFCPCaptured = MF_RegisterForward("dod_control_point_captured", ET_IGNORE,
+		FP_CELL/*cp_index*/, FP_CELL/*new_owner*/, FP_CELL/*old_owner*/, FP_DONE);
+	iFScoreEvent = MF_RegisterForward("dod_score_event", ET_IGNORE,
+		FP_CELL/*id*/, FP_CELL/*score_delta*/, FP_CELL/*total_score*/, FP_CELL/*cp_index*/, FP_DONE);
 
 	// KTP: Initialize gamerules access for scoreboard score modification
 	// This allows dodx_set_team_score/dodx_get_team_score natives to work
@@ -758,11 +798,15 @@ void OnPluginsLoaded()
 					else
 						modMsgs[id] = g_user_msg[i].func;
 				}
+				// MsgID logging removed — only useful during initial development
 			}
 		}
 
 		// KTP: Register IMessageManager hooks for message interception
 		DODX_RegisterMessageHooks();
+
+		// KTP: Entity scan for CP data is deferred to SV_ActivateServer hook.
+		// At OnPluginsLoaded time, entities haven't been spawned yet.
 	}
 }
 
@@ -972,7 +1016,22 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	if (pPlayer->sendScore && pPlayer->sendScore < gpGlobals->time)
 	{
 		pPlayer->sendScore = 0;
+
+		// KTP: Resolve pending CP index. ObjScore fires BEFORE SetObj in DoD,
+		// so lastScoreCP=-2 means "ObjScore was received but SetObj hasn't set
+		// g_lastCapturedCP yet". By now (~0.2s later), SetObj has fired.
+		if (pPlayer->lastScoreCP == -2)
+		{
+			if ((gpGlobals->time - g_lastCapturedTime) < 2.0f)
+				pPlayer->lastScoreCP = g_lastCapturedCP;
+			else
+				pPlayer->lastScoreCP = -1;
+		}
+
 		MF_ExecuteForward(iFScore, pPlayer->index, pPlayer->lastScore, pPlayer->savedScore);
+		if (iFScoreEvent >= 0)
+			MF_ExecuteForward(iFScoreEvent, pPlayer->index, pPlayer->lastScore, (int)pPlayer->savedScore, pPlayer->lastScoreCP);
+		pPlayer->lastScoreCP = -1;
 	}
 }
 
@@ -1077,8 +1136,67 @@ static void DODX_OnChangelevel(IVoidHookChain<const char *, const char *> *chain
 	g_bServerActive = false;
 	g_pFirstEdict = nullptr;
 
+	// Clear CP data — pEdict pointers become stale after map change
+	mObjects.Clear();
+
+	// Clear grenade tracking — edict pointers become stale after map change
+	g_grenades.clear();
+
+	// Reset team scores — stale values from previous map shouldn't leak into new map
+	AlliesScore = 0;
+	AxisScore = 0;
+
 	// Call original to perform the changelevel
 	chain->callNext(s1, s2);
+}
+
+// KTP: SV_ActivateServer hook handler - fires after map entities are fully spawned.
+// In extension mode, this replaces ServerActivate_Post for g_pFirstEdict init,
+// and scans for dod_control_point entities (since InitObj message was missed).
+static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
+{
+	// KTP: Set up g_pFirstEdict and g_bServerActive BEFORE chain->callNext().
+	// Entities are already spawned (SV_SpawnServer ran before SV_ActivateServer).
+	if (gpGlobals && gpGlobals->maxEntities > 0)
+	{
+		edict_t *pWorld = INDEXENT(0);
+		if (pWorld && !FNullEnt(pWorld))
+		{
+			g_pFirstEdict = pWorld;
+			g_bServerActive = true;
+
+			// Initialize player slots
+			for (int i = 1; i <= gpGlobals->maxClients; i++)
+				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
+		}
+	}
+
+	// KTP: Register IMessage hook for InitObj BEFORE chain->callNext().
+	// The game DLL sends InitObj during ServerActivate (inside callNext).
+	// By registering the hook here, we catch it with correct CP ordering.
+	// Message IDs are available because GameDLLInit ran before SV_ActivateServer.
+	{
+		static bool s_initObjHooked = false;
+		if (!s_initObjHooked && g_pMessageManager)
+		{
+			// Look up InitObj message ID via engine function
+			int initObjId = MF_GetUserMsgId ? MF_GetUserMsgId("InitObj") : 0;
+			if (initObjId > 0)
+			{
+				gmsgInitObj = initObjId;
+				g_pMessageManager->registerHook(initObjId, DODX_OnInitObjMessage, HC_PRIORITY_DEFAULT);
+				s_initObjHooked = true;
+			}
+		}
+	}
+
+	// Call original — game DLL's ServerActivate runs here, sending InitObj.
+	// Our DODX_OnInitObjMessage hook catches it and populates mObjects with
+	// the authoritative CP ordering that matches SetObj indices.
+	chain->callNext(runPhysics);
+
+	// Entity scan as fallback if InitObj wasn't intercepted
+	DODX_InitCPFromEntities();
 }
 
 // KTP: SV_DropClient hook handler - replaces FN_ClientDisconnect
@@ -1104,6 +1222,15 @@ static void DODX_OnSV_DropClient(IVoidHookChain<IGameClient *, bool, const char 
 	}
 }
 
+// KTP: InitObj IMessage hook — passthrough only.
+// NOTE: IMessageManager does NOT dispatch during SV_ActivateServer, so this hook
+// only catches client-connect InitObj messages (per-player CP data, not the initial
+// full CP list). CP ordering comes from entity scan + BSP point_index reorder instead.
+static void DODX_OnInitObjMessage(IVoidHookChain<IMessage *> *chain, IMessage *msg)
+{
+	chain->callNext(msg);
+}
+
 // KTP: Message handler for IMessageManager - replaces all the Write*_Post and MessageBegin/End_Post hooks
 static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *msg)
 {
@@ -1114,6 +1241,8 @@ static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *m
 		return;
 	}
 
+	int msg_type = msg->getId();
+
 	// KTP: Skip all message processing if server is not active (during map change)
 	if (!g_bServerActive)
 	{
@@ -1122,7 +1251,6 @@ static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *m
 	}
 
 	// Get message info
-	int msg_type = msg->getId();
 	edict_t *ed = msg->getEdict();
 
 	// Validate message type is in range
@@ -1173,7 +1301,9 @@ static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *m
 	// KTP: Skip processing for players that aren't initialized yet.
 	// In extension mode, players are initialized via SV_PlayerRunPreThink hook.
 	// In Metamod mode, they're initialized via ClientPutInServer_Post.
-	if (mPlayer && !mPlayer->ingame)
+	// Exception: InitObj is global CP data sent to connecting players (MSG_ONE)
+	// and doesn't need a player context — let it through even if !ingame.
+	if (mPlayer && !mPlayer->ingame && msg_type != gmsgInitObj)
 	{
 		// Player not fully initialized yet, skip message processing
 		chain->callNext(msg);
@@ -1300,6 +1430,13 @@ static bool DODX_SetupExtensionHooks()
 	if (g_pRehldsHookchains->PF_TraceLine())
 		g_pRehldsHookchains->PF_TraceLine()->registerHook(DODX_OnTraceLine, HC_PRIORITY_DEFAULT);
 
+	// KTP: Register SV_ActivateServer hook - fires after map entities are spawned.
+	// In extension mode, this replaces ServerActivate_Post for:
+	// 1. Setting g_pFirstEdict and g_bServerActive
+	// 2. Scanning dod_control_point entities (InitObj was missed)
+	if (g_pRehldsHookchains->SV_ActivateServer())
+		g_pRehldsHookchains->SV_ActivateServer()->registerHook(DODX_OnSV_ActivateServer, HC_PRIORITY_DEFAULT);
+
 	// IMessageManager hooks enabled - players will be initialized on-demand
 	// when messages arrive (in DODX_OnMessageHandler)
 
@@ -1309,8 +1446,17 @@ static bool DODX_SetupExtensionHooks()
 // KTP: Begin handler - called once at the start of each message to set up DODX's mPlayer/mState
 static void DODX_OnMsgBegin(int msg_id, int dest, int player_index, edict_t* ed)
 {
-	// KTP: Skip message processing if server is not active (during map change)
-	if (!g_bServerActive)
+	// KTP: Bounds check msg_id before indexing into modMsgs/modMsgsEnd arrays
+	if (msg_id < 0 || msg_id >= MAX_REG_MSGS)
+		return;
+
+	// KTP: Skip message processing if server is not active (during map change).
+	// Exception: InitObj is global CP data sent during ServerActivate and on player
+	// connect. We must process it regardless of g_bServerActive state because:
+	// 1. During boot, g_bServerActive may be false due to changelevel/restart cycles
+	// 2. Client_InitObj doesn't depend on player state or g_pFirstEdict
+	// 3. Processing it early gives us correct CP ordering from the game DLL
+	if (!g_bServerActive && msg_id != gmsgInitObj)
 		return;
 
 	// KTP: Use the player_index passed from the core, which has already been validated
@@ -1371,6 +1517,296 @@ void DODX_RegisterMessageHooks()
 	}
 }
 
+// KTP: BSP entity lump parser — reads point_index keyvalues for dod_control_point entities.
+// The game DLL orders CPs by point_index (1-based) from the BSP entity lump.
+// SetObj cp_index = point_index - 1. FindEntityByClassname iteration order (edict number)
+// does NOT match this ordering, so we must read point_index from the BSP and reorder.
+struct bsp_cp_info {
+	int point_index;
+	float origin_x;
+	float origin_y;
+	float origin_z;
+};
+
+static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
+{
+	const char *mapName = STRING(gpGlobals->mapname);
+
+	// Build path using game directory (MF_BuildPathnameR prepends mod dir)
+	char bspPath[512];
+	MF_BuildPathnameR(bspPath, sizeof(bspPath), "maps/%s.bsp", mapName);
+
+	FILE *fp = fopen(bspPath, "rb");
+	if (!fp)
+	{
+		// Fallback: try relative path (engine may set cwd to game dir)
+		char bspPathRel[256];
+		snprintf(bspPathRel, sizeof(bspPathRel), "maps/%s.bsp", mapName);
+		fp = fopen(bspPathRel, "rb");
+		if (!fp)
+		{
+			MF_Log("[DODX] BSP: Could not open '%s' or '%s'", bspPath, bspPathRel);
+			return 0;
+		}
+		MF_Log("[DODX] BSP: Opened via relative path '%s'", bspPathRel);
+	}
+
+	// GoldSrc BSP v30: 4-byte version, then 15 lump entries (offset + length, 8 bytes each)
+	// Entity lump is lump 0 (first entry, at bytes 4-11)
+	int version;
+	if (fread(&version, 4, 1, fp) != 1 || version != 30)
+	{
+		MF_Log("[DODX] BSP: Invalid version %d (expected 30)", version);
+		fclose(fp);
+		return 0;
+	}
+
+	int entOffset, entLength;
+	if (fread(&entOffset, 4, 1, fp) != 1 || fread(&entLength, 4, 1, fp) != 1)
+	{
+		MF_Log("[DODX] BSP: Failed to read entity lump header");
+		fclose(fp);
+		return 0;
+	}
+
+	if (entLength <= 0 || entLength > 2 * 1024 * 1024)
+	{
+		MF_Log("[DODX] BSP: Entity lump length invalid (%d)", entLength);
+		fclose(fp);
+		return 0;
+	}
+
+	char *entData = (char *)malloc(entLength + 1);
+	if (!entData)
+	{
+		fclose(fp);
+		return 0;
+	}
+
+	fseek(fp, entOffset, SEEK_SET);
+	if ((int)fread(entData, 1, entLength, fp) != entLength)
+	{
+		MF_Log("[DODX] BSP: Failed to read entity lump data");
+		free(entData);
+		fclose(fp);
+		return 0;
+	}
+	entData[entLength] = '\0';
+	fclose(fp);
+
+	// Parse entity lump for dod_control_point entities
+	int cpCount = 0;
+	int totalDCP = 0;
+	char *pos = entData;
+
+	while (*pos && cpCount < maxCPs)
+	{
+		while (*pos && *pos != '{') pos++;
+		if (!*pos) break;
+		pos++;
+
+		char classname[64] = "";
+		int point_index = -1;
+		float origin_x = 0, origin_y = 0, origin_z = 0;
+
+		while (*pos && *pos != '}')
+		{
+			while (*pos && (*pos == ' ' || *pos == '\t' || *pos == '\r' || *pos == '\n')) pos++;
+			if (*pos == '}') break;
+
+			// Read key
+			if (*pos != '"') { pos++; continue; }
+			pos++;
+			char key[64] = "";
+			int ki = 0;
+			while (*pos && *pos != '"') {
+				if (ki < 63) key[ki++] = *pos;
+				pos++;
+			}
+			key[ki] = '\0';
+			if (*pos == '"') pos++;
+
+			while (*pos && (*pos == ' ' || *pos == '\t')) pos++;
+
+			// Read value (may be very long, e.g. wad paths > 500 chars)
+			if (*pos != '"') continue;
+			pos++;
+			char value[256] = "";
+			int vi = 0;
+			while (*pos && *pos != '"') {
+				if (vi < 255) value[vi++] = *pos;
+				pos++;
+			}
+			value[vi] = '\0';
+			if (*pos == '"') pos++;
+
+			if (strcmp(key, "classname") == 0)
+				strncpy(classname, value, 63);
+			else if (strcmp(key, "point_index") == 0)
+				point_index = atoi(value);
+			else if (strcmp(key, "origin") == 0)
+				sscanf(value, "%f %f %f", &origin_x, &origin_y, &origin_z);
+		}
+
+		if (*pos == '}') pos++;
+
+		if (strcmp(classname, "dod_control_point") == 0)
+		{
+			totalDCP++;
+			if (point_index >= 0)
+			{
+				cpInfo[cpCount].point_index = point_index;
+				cpInfo[cpCount].origin_x = origin_x;
+				cpInfo[cpCount].origin_y = origin_y;
+				cpInfo[cpCount].origin_z = origin_z;
+				cpCount++;
+			}
+		}
+	}
+
+	free(entData);
+	MF_Log("[DODX] BSP: Parsed %s — %d dod_control_point, %d with point_index",
+		mapName, totalDCP, cpCount);
+	return cpCount;
+}
+
+// KTP: Initialize CP tracking from entity data (extension mode only)
+// In extension mode, the InitObj message is sent during ServerActivate before
+// our message hooks are installed. This function scans for dod_control_point
+// entities and populates mObjects directly from entity private data, then
+// reorders by BSP point_index to match the game DLL's SetObj cp_index mapping.
+static void DODX_InitCPFromEntities()
+{
+	if (!g_bExtensionMode)
+		return;
+
+	MF_Log("[DODX] CP entity scan starting");
+
+	mObjects.Clear();
+
+	// Use FindEntityByClassname instead of GETEDICT loop — pfnPEntityOfEntIndex
+	// hangs during OnPluginsLoaded in extension mode, but pfnFindEntityByString is safe.
+	edict_t *pEdict = NULL;
+	while ((pEdict = FindEntityByClassname(pEdict, "dod_control_point")) != NULL && mObjects.count < 12)
+	{
+		if (!pEdict->pvPrivateData)
+			continue;
+
+		int idx = mObjects.count;
+		pd_dcp &cpd = GET_CP_PD(pEdict);
+
+		mObjects.obj[idx].pEdict = pEdict;
+		mObjects.obj[idx].index = cpd.flag_id;
+		mObjects.obj[idx].default_owner = cpd.owner;
+		mObjects.obj[idx].owner = cpd.owner;
+		mObjects.obj[idx].visible = 1;
+		mObjects.obj[idx].icon_neutral = cpd.icon_neutral;
+		mObjects.obj[idx].icon_allies = cpd.icon_allies;
+		mObjects.obj[idx].icon_axis = cpd.icon_axis;
+		mObjects.obj[idx].origin_x = cpd.origin_x;
+		mObjects.obj[idx].origin_y = cpd.origin_y;
+		mObjects.obj[idx].areaflags = 0;
+		mObjects.obj[idx].pAreaEdict = NULL;
+		mObjects.count++;
+	}
+
+	if (mObjects.count > 0)
+	{
+		// Reorder mObjects by BSP point_index to match game DLL's SetObj cp_index.
+		// SetObj cp_index = point_index - 1 (point_index is 1-based in the BSP).
+		if (mObjects.count > 1)
+		{
+			bsp_cp_info bspCPs[12];
+			int bspCount = DODX_ReadBSPPointIndices(bspCPs, 12);
+
+			if (bspCount == mObjects.count)
+			{
+				// Sort BSP entries by point_index (ascending) — insertion sort for small N
+				for (int i = 1; i < bspCount; i++)
+				{
+					bsp_cp_info tmp = bspCPs[i];
+					int j = i - 1;
+					while (j >= 0 && bspCPs[j].point_index > tmp.point_index)
+					{
+						bspCPs[j + 1] = bspCPs[j];
+						j--;
+					}
+					bspCPs[j + 1] = tmp;
+				}
+
+				// Match each sorted BSP entry to a scanned entity by origin coordinates.
+				// Origin is unique per CP and available on both BSP and entity.
+				// Targetname can be empty on many maps so it's unreliable for matching.
+				objinfo_t sortedObj[12];
+				bool used[12] = {};
+				bool matched = true;
+
+				for (int si = 0; si < bspCount; si++)
+				{
+					bool found = false;
+					for (int oi = 0; oi < mObjects.count; oi++)
+					{
+						if (used[oi]) continue;
+						// Match by origin (pdata origin matches BSP origin exactly)
+						float dx = mObjects.obj[oi].origin_x - bspCPs[si].origin_x;
+						float dy = mObjects.obj[oi].origin_y - bspCPs[si].origin_y;
+						if (dx > -1.0f && dx < 1.0f && dy > -1.0f && dy < 1.0f)
+						{
+							sortedObj[si] = mObjects.obj[oi];
+							sortedObj[si].index = bspCPs[si].point_index;
+							used[oi] = true;
+							found = true;
+							break;
+						}
+					}
+					if (!found)
+					{
+						matched = false;
+						MF_Log("[DODX] BSP sort: no entity match for point_index=%d origin=(%.0f,%.0f)",
+							bspCPs[si].point_index, bspCPs[si].origin_x, bspCPs[si].origin_y);
+						break;
+					}
+				}
+
+				if (matched)
+				{
+					memcpy(mObjects.obj, sortedObj, sizeof(objinfo_t) * mObjects.count);
+				}
+				else
+				{
+					MF_Log("[DODX] BSP sort failed — using entity scan order (cp names may be wrong)");
+				}
+			}
+			else if (bspCount > 0)
+			{
+				MF_Log("[DODX] BSP CP count (%d) != entity scan count (%d), skipping reorder",
+					bspCount, mObjects.count);
+			}
+			else
+			{
+				MF_Log("[DODX] BSP parse returned 0 CPs — using entity scan order");
+			}
+		}
+
+		MF_Log("[DODX] CP init complete: %d control points", mObjects.count);
+		for (int i = 0; i < mObjects.count; i++)
+		{
+			edict_t *pe = mObjects.obj[i].pEdict;
+			const char *tn = pe ? STRING(pe->v.targetname) : "?";
+			const char *nn = pe ? STRING(pe->v.netname) : "?";
+			MF_Log("[DODX]   CP[%d] point_index=%d owner=%d targetname='%s' netname='%s'",
+				i, mObjects.obj[i].index, mObjects.obj[i].owner, tn, nn);
+		}
+
+		if (iFInitCP >= 0)
+			MF_ExecuteForward(iFInitCP);
+	}
+	else
+	{
+		MF_Log("[DODX] CP entity scan: no dod_control_point entities found");
+	}
+}
+
 // KTP: Cleanup extension mode hooks
 static void DODX_CleanupExtensionHooks()
 {
@@ -1390,7 +1826,15 @@ static void DODX_CleanupExtensionHooks()
 		// Unregister TraceLine hook
 		if (g_pRehldsHookchains->PF_TraceLine())
 			g_pRehldsHookchains->PF_TraceLine()->unregisterHook(DODX_OnTraceLine);
+
+		// Unregister SV_ActivateServer hook
+		if (g_pRehldsHookchains->SV_ActivateServer())
+			g_pRehldsHookchains->SV_ActivateServer()->unregisterHook(DODX_OnSV_ActivateServer);
 	}
+
+	// KTP: Unregister InitObj IMessage hook
+	if (g_pMessageManager && gmsgInitObj > 0)
+		g_pMessageManager->unregisterHook(gmsgInitObj, DODX_OnInitObjMessage);
 
 	// KTP: Unregister module message handlers via new API
 	if (MF_UnregModuleMsgHandler)

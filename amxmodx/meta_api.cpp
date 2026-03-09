@@ -1204,38 +1204,29 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain)
 	// messages during the spawn command - we need to wait until the client is fully spawned
 	if (g_putinserver.length() > 0)
 	{
-		size_t i = 0;
-		while (i < g_putinserver.length())
+		size_t writeIdx = 0;
+		for (size_t i = 0; i < g_putinserver.length(); i++)
 		{
 			int playerIndex = g_putinserver[i];
 
 			// Validate player index
 			if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
-			{
-				g_putinserver.remove(i);
 				continue;
-			}
 
 			CPlayer* pPlayer = GET_PLAYER_POINTER_I(playerIndex);
 			if (!pPlayer || !pPlayer->pEdict || pPlayer->pEdict->free)
-			{
-				g_putinserver.remove(i);
 				continue;
-			}
 
 			// Get the IGameClient to check if fully spawned
 			IGameClient* cl = RehldsSvs ? RehldsSvs->GetClient(playerIndex - 1) : nullptr;  // GetClient uses 0-based index
 			if (!cl)
-			{
-				g_putinserver.remove(i);
 				continue;
-			}
 
 			// Check if client is fully spawned and ready for messages
 			if (!cl->IsSpawned())
 			{
 				// Not spawned yet, keep in queue for next frame
-				i++;
+				g_putinserver[writeIdx++] = playerIndex;
 				continue;
 			}
 
@@ -1244,10 +1235,12 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain)
 			{
 				executeForwards(FF_ClientPutInServer, static_cast<cell>(playerIndex));
 			}
-
-			g_putinserver.remove(i);
-			// Don't increment i since we removed the element
 		}
+		// Compact: only keep entries that weren't processed (still waiting to spawn)
+		if (writeIdx == 0)
+			g_putinserver.clear();
+		else
+			g_putinserver.resize(writeIdx);
 	}
 }
 
@@ -1799,14 +1792,27 @@ void C_ClientCommand(edict_t *pEntity)
 						if (pMenu->pageCallback >= 0)
 							executeForwards(pMenu->pageCallback, static_cast<cell>(pPlayer->index), static_cast<cell>(MENU_BACK), static_cast<cell>(menu));
 
-						pMenu->Display(pPlayer->index, pPlayer->page - 1);
+						// Re-validate: plugin callback may have destroyed this menu
+						pMenu = get_menu_by_id(menu);
+						if (pMenu)
+							pMenu->Display(pPlayer->index, pPlayer->page - 1);
 					} else if (item == MENU_MORE) {
 						if (pMenu->pageCallback >= 0)
 							executeForwards(pMenu->pageCallback, static_cast<cell>(pPlayer->index), static_cast<cell>(MENU_MORE), static_cast<cell>(menu));
 
-						pMenu->Display(pPlayer->index, pPlayer->page + 1);
+						// Re-validate: plugin callback may have destroyed this menu
+						pMenu = get_menu_by_id(menu);
+						if (pMenu)
+							pMenu->Display(pPlayer->index, pPlayer->page + 1);
 					} else {
-						ret = executeForwards(pMenu->func, static_cast<cell>(pPlayer->index), static_cast<cell>(menu), static_cast<cell>(item));
+						// Capture func before execution — menu may be destroyed in callback
+						int menuFunc = pMenu->func;
+						ret = executeForwards(menuFunc, static_cast<cell>(pPlayer->index), static_cast<cell>(menu), static_cast<cell>(item));
+						/**
+						 * No matter what we marked it as executed, since the callback styles are
+						 * entirely different.  After all, this is a backwards compat shim.
+						 */
+						func_was_executed = menuFunc;
 						if (ret & 2)
 						{
 							result = MRES_SUPERCEDE;
@@ -1814,11 +1820,6 @@ void C_ClientCommand(edict_t *pEntity)
 							RETURN_META(MRES_SUPERCEDE);
 						}
 					}
-					/**
-					 * No matter what we marked it as executed, since the callback styles are
-					 * entirely different.  After all, this is a backwards compat shim.
-					 */
-					func_was_executed = pMenu->func;
 				}
 			}
 
@@ -1898,27 +1899,21 @@ void C_StartFrame_Post(void)
 	// Note: This is a fallback, main processing is in SV_Frame_RH
 	if (!g_bRunningWithMetamod && g_putinserver.length() > 0)
 	{
-		size_t i = 0;
-		while (i < g_putinserver.length())
+		size_t writeIdx = 0;
+		for (size_t i = 0; i < g_putinserver.length(); i++)
 		{
 			int playerIndex = g_putinserver[i];
 
 			// Validate player index
 			if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
-			{
-				g_putinserver.remove(i);
 				continue;
-			}
 
 			CPlayer *pPlayer = GET_PLAYER_POINTER_I(playerIndex);
 			edict_t *pEdict = pPlayer ? pPlayer->pEdict : nullptr;
 
 			// Check if player is still valid
 			if (!pPlayer || !pEdict || !pPlayer->initialized)
-			{
-				g_putinserver.remove(i);
 				continue;
-			}
 
 			// Check if player is fully spawned (has FL_CLIENT flag set by engine)
 			// and has a valid classname (not empty)
@@ -1932,12 +1927,16 @@ void C_StartFrame_Post(void)
 					++g_players_num;
 					executeForwards(FF_ClientPutInServer, static_cast<cell>(playerIndex));
 				}
-				g_putinserver.remove(i);
 				continue;
 			}
 
-			i++;
+			// Not spawned yet, keep in queue
+			g_putinserver[writeIdx++] = playerIndex;
 		}
+		if (writeIdx == 0)
+			g_putinserver.clear();
+		else
+			g_putinserver.resize(writeIdx);
 	}
 
 #ifdef MEMORY_TEST
@@ -3003,6 +3002,12 @@ static void KTPAMX_ReloadPlugins()
 	// Clear tasks so they don't fire with stale data
 	g_tasksMngr.clear();
 
+	// Clear frame actions from previous map
+	g_frameActionMngr.clear();
+
+	// Clear menus from previous map (prevents stale menu handler references)
+	ClearMenus();
+
 	// Re-initialize task manager timers for new map
 	g_game_timeleft = g_bmod_dod ? 1.0f : 0.0f;
 	g_tasksMngr.registerTimers(&gpGlobals->time, &mp_timelimit->value, &g_game_timeleft);
@@ -3508,18 +3513,27 @@ static void SV_ClientCommand_RH(IRehldsHook_SV_ClientCommand *chain, edict_t *pE
 						if (pMenu->pageCallback >= 0)
 							executeForwards(pMenu->pageCallback, static_cast<cell>(pPlayer->index), static_cast<cell>(MENU_BACK), static_cast<cell>(menu));
 
-						pMenu->Display(pPlayer->index, pPlayer->page - 1);
+						// Re-validate: plugin callback may have destroyed this menu
+						pMenu = get_menu_by_id(menu);
+						if (pMenu)
+							pMenu->Display(pPlayer->index, pPlayer->page - 1);
 					}
 					else if (item == MENU_MORE)
 					{
 						if (pMenu->pageCallback >= 0)
 							executeForwards(pMenu->pageCallback, static_cast<cell>(pPlayer->index), static_cast<cell>(MENU_MORE), static_cast<cell>(menu));
 
-						pMenu->Display(pPlayer->index, pPlayer->page + 1);
+						// Re-validate: plugin callback may have destroyed this menu
+						pMenu = get_menu_by_id(menu);
+						if (pMenu)
+							pMenu->Display(pPlayer->index, pPlayer->page + 1);
 					}
 					else
 					{
-						ret = executeForwards(pMenu->func, static_cast<cell>(pPlayer->index), static_cast<cell>(menu), static_cast<cell>(item));
+						// Capture func before execution — menu may be destroyed in callback
+						int menuFunc = pMenu->func;
+						ret = executeForwards(menuFunc, static_cast<cell>(pPlayer->index), static_cast<cell>(menu), static_cast<cell>(item));
+						func_was_executed = menuFunc;
 						if (ret & 2)
 						{
 							supercede = true;
@@ -3529,7 +3543,6 @@ static void SV_ClientCommand_RH(IRehldsHook_SV_ClientCommand *chain, edict_t *pE
 							return; // Supercede
 						}
 					}
-					func_was_executed = pMenu->func;
 				}
 			}
 

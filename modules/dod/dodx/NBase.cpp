@@ -491,8 +491,10 @@ static cell AMX_NATIVE_CALL register_cwpn(AMX *amx, cell *params)
 	char *szName = MF_GetAmxString(amx, params[1], 0, &iLen);
 	char *szLogName = MF_GetAmxString(amx, params[3], 0, &iLen);
 
-	strcpy(weaponData[i].name,szName);
-	strcpy(weaponData[i].logname,szLogName);
+	strncpy(weaponData[i].name, szName, sizeof(weaponData[i].name) - 1);
+	weaponData[i].name[sizeof(weaponData[i].name) - 1] = '\0';
+	strncpy(weaponData[i].logname, szLogName, sizeof(weaponData[i].logname) - 1);
+	weaponData[i].logname[sizeof(weaponData[i].logname) - 1] = '\0';
 	weaponData[i].needcheck = true;
 	weaponData[i].melee = params[2] ? true:false;
 	return i;
@@ -716,17 +718,29 @@ id, wpnID, slot, position, totalrds
 */
 static cell AMX_NATIVE_CALL dod_weaponlist(AMX *amx, cell *params) // player
 {
-	if(!weaponlist[params[1]].changeable)
-	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "This Weapon Cannot be Changed");
-		return 0;
-	}
-
 	int id = params[1];
 	int wpnID = params[2];
 	int slot = params[3];
 	int position = params[4];
 	int totalrds = params[5];
+
+	// Bounds check both indices before array access
+	if (id < 0 || id >= WEAPONLIST)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid weapon id %d (max %d)", id, WEAPONLIST - 1);
+		return 0;
+	}
+	if (wpnID < 0 || wpnID >= WEAPONLIST)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid wpnID %d (max %d)", wpnID, WEAPONLIST - 1);
+		return 0;
+	}
+
+	if(!weaponlist[id].changeable)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "This Weapon Cannot be Changed");
+		return 0;
+	}
 
 	UTIL_LogPrintf("ID (%d) WpnID (%d) Slot (%d) Pos (%d) Rounds (%d)", id, wpnID, slot, position, totalrds);
 
@@ -738,7 +752,7 @@ static cell AMX_NATIVE_CALL dod_weaponlist(AMX *amx, cell *params) // player
 		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid Player, Not on Server");
 		return 0;
 	}
-	
+
 	MESSAGE_BEGIN(MSG_ONE, GET_USER_MSG_ID(PLID, "WeaponList", NULL), NULL, pPlayer->pEdict);
 	WRITE_BYTE(weaponlist[wpnID].grp);
 		WRITE_BYTE(totalrds);

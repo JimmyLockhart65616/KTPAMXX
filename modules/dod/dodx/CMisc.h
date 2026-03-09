@@ -74,7 +74,8 @@ class CPlayer
 
 		float savedScore;
 		int lastScore;
-		int sendScore;
+		float sendScore;
+		int lastScoreCP;  // KTP: CP index that triggered this score (-1 = no CP correlation)
 
 		bool ingame;
 		bool bot;

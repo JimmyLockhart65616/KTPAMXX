@@ -434,4 +434,145 @@ native dodx_get_user_angles(id, Float:angles[3]);
  */
 native dodx_set_user_angles(id, Float:angles[3]);
 
+// =============== KTP: Control Point Tracking ===============
+
+/**
+ * Control point data keys for dodx_objective_get_data/dodx_objective_set_data.
+ */
+enum CP_VALUE {
+	CP_edict = 1,
+	CP_area,
+	CP_index,
+	CP_owner,
+	CP_default_owner,
+	CP_visible,
+	CP_icon_neutral,
+	CP_icon_allies,
+	CP_icon_axis,
+	CP_origin_x,
+	CP_origin_y,
+
+	CP_can_touch,
+	CP_pointvalue,
+
+	CP_points_for_cap,
+	CP_team_points,
+
+	CP_model_body_neutral,
+	CP_model_body_allies,
+	CP_model_body_axis,
+
+	// strings
+	CP_name,
+	CP_cap_message,
+	CP_reset_capsound,
+	CP_allies_capsound,
+	CP_axis_capsound,
+	CP_targetname,
+
+	CP_model_neutral,
+	CP_model_allies,
+	CP_model_axis,
+};
+
+/**
+ * Capture area data keys for dodx_area_get_data/dodx_area_set_data.
+ */
+enum CA_VALUE {
+	CA_edict = 1,
+	CA_allies_numcap,
+	CA_axis_numcap,
+	CA_timetocap,
+	CA_can_cap,
+
+	// strings
+	CA_target,
+	CA_sprite,
+};
+
+/**
+ * Called after map control point data is initialized.
+ * Use dodx_objectives_get_num() and dodx_objective_get_data() to query CP state.
+ */
+forward controlpoints_init();
+
+/**
+ * Called when a control point changes ownership.
+ *
+ * @param cp_index    Control point index (0-based)
+ * @param new_owner   New owning team (0=neutral, 1=allies, 2=axis)
+ * @param old_owner   Previous owning team
+ */
+forward dod_control_point_captured(cp_index, new_owner, old_owner);
+
+/**
+ * Called when a player receives score points, enriched with CP context.
+ * Fires alongside client_score but includes which control point triggered the score.
+ *
+ * @param id          Player index
+ * @param score_delta Points earned (positive delta)
+ * @param total_score Player's new total score
+ * @param cp_index    Control point index that triggered the score, or -1 if not CP-related
+ */
+forward dod_score_event(id, score_delta, total_score, cp_index);
+
+/**
+ * Get the number of control points on the current map.
+ *
+ * @return          Number of control points (0 if not yet initialized)
+ */
+native dodx_objectives_get_num();
+
+/**
+ * Get control point data.
+ *
+ * @param index     CP array index (0 to dodx_objectives_get_num()-1)
+ * @param key       CP_VALUE key to query
+ * @param szvalue   Buffer for string values (CP_name, CP_cap_message, etc.)
+ * @param len       Buffer length for string values
+ * @return          Integer value for int keys, 1 for string keys
+ */
+native dodx_objective_get_data(index, CP_VALUE:key, szvalue[] = "", len = 0);
+
+/**
+ * Set control point data.
+ *
+ * @param index     CP array index (0 to dodx_objectives_get_num()-1)
+ * @param key       CP_VALUE key to set
+ * @param ivalue    Integer value for int keys
+ * @param szvalue   String value for string keys
+ * @return          1 on success, 0 on failure
+ */
+native dodx_objective_set_data(index, CP_VALUE:key, ivalue = 0, const szvalue[] = "");
+
+/**
+ * Re-send InitObj message to refresh CP HUD display.
+ *
+ * @param player    Player index (0 = all players)
+ * @return          1 on success, 0 on failure
+ */
+native dodx_objectives_reinit(player = 0);
+
+/**
+ * Get capture area data for a control point.
+ *
+ * @param index     CP array index (0 to dodx_objectives_get_num()-1)
+ * @param key       CA_VALUE key to query
+ * @param szvalue   Buffer for string values
+ * @param len       Buffer length for string values
+ * @return          Integer value for int keys, 1 for string keys, 0 if no area
+ */
+native dodx_area_get_data(index, CA_VALUE:key, szvalue[] = "", len = 0);
+
+/**
+ * Set capture area data for a control point.
+ *
+ * @param index     CP array index (0 to dodx_objectives_get_num()-1)
+ * @param key       CA_VALUE key to set
+ * @param ivalue    Integer value for int keys
+ * @param szvalue   String value for string keys
+ * @return          1 on success, 0 if no area
+ */
+native dodx_area_set_data(index, CA_VALUE:key, ivalue = 0, const szvalue[] = "");
+
 // ==================================================================

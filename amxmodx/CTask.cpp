@@ -184,6 +184,10 @@ CTaskMngr::CTaskMngr()
 	m_pTmr_CurrentTime = NULL;
 	m_pTmr_TimeLimit = NULL;
 	m_pTmr_TimeLeft = NULL;
+	m_bInStartFrame = false;
+	m_bDeferredClear = false;
+	m_ActiveCount = 0;
+	m_FirstFreeHint = 0;
 }
 
 CTaskMngr::~CTaskMngr()
@@ -200,39 +204,50 @@ void CTaskMngr::registerTimers(float *pCurrentTime, float *pTimeLimit, float *pT
 
 void CTaskMngr::registerTask(CPluginMngr::CPlugin *pPlugin, int iFunc, int iFlags, cell iId, float fBase, int iParamsLen, const cell *pParams, int iRepeat)
 {
-	// first, search for free tasks
-	for (auto &task : m_Tasks)
+	// Search for free tasks starting from hint index (avoids O(n) scan from 0)
+	for (size_t idx = m_FirstFreeHint; idx < m_Tasks.length(); idx++)
 	{
+		auto &task = m_Tasks[idx];
 		if (task->isFree() && !task->inExecute())
 		{
 			// found: reuse it
 			task->set(pPlugin, iFunc, iFlags, iId, fBase, iParamsLen, pParams, iRepeat, *m_pTmr_CurrentTime);
+			m_ActiveCount++;
+			m_FirstFreeHint = idx + 1;
 			return;
 		}
 	}
 	// not found: make a new one
 	auto task = ke::AutoPtr<CTask>(new CTask);
-		
+
 	if (!task)
 		return;
-		
+
 	task->set(pPlugin, iFunc, iFlags, iId, fBase, iParamsLen, pParams, iRepeat, *m_pTmr_CurrentTime);
 	m_Tasks.append(ke::Move(task));
+	m_ActiveCount++;
+	m_FirstFreeHint = m_Tasks.length();
 }
 
 int CTaskMngr::removeTasks(int iId, AMX *pAmx)
 {
 	int i = 0;
-	
+	size_t idx = 0;
+
 	for (auto &task : m_Tasks)
 	{
 		if (task->match(iId, pAmx))
 		{
 			task->clear();
+			if (m_ActiveCount > 0)
+				m_ActiveCount--;
+			if (idx < m_FirstFreeHint)
+				m_FirstFreeHint = idx;
 			++i;
 		}
+		idx++;
 	}
-	
+
 	return i;
 }
 
@@ -267,6 +282,10 @@ bool CTaskMngr::taskExists(int iId, AMX *pAmx)
 
 void CTaskMngr::startFrame()
 {
+	if (m_ActiveCount == 0)
+		return;
+
+	m_bInStartFrame = true;
 	auto lastSize = m_Tasks.length();
 	for(auto i = 0u; i < lastSize; i++)
 	{
@@ -275,10 +294,51 @@ void CTaskMngr::startFrame()
 		if (task->isFree())
 			continue;
 		task->executeIfRequired(*m_pTmr_CurrentTime, *m_pTmr_TimeLimit, *m_pTmr_TimeLeft);
+
+		// A task callback (e.g. changelevel via server_exec) may have triggered
+		// clear() which deferred because we're mid-iteration. Stop iterating
+		// since all tasks have been individually cleared and marked free.
+		if (m_bDeferredClear)
+			break;
+
+		// Task completed and self-cleared — update active count and free hint
+		if (task->isFree())
+		{
+			if (m_ActiveCount > 0)
+				m_ActiveCount--;
+			if (i < m_FirstFreeHint)
+				m_FirstFreeHint = i;
+		}
+	}
+	m_bInStartFrame = false;
+
+	if (m_bDeferredClear)
+	{
+		m_bDeferredClear = false;
+		m_Tasks.clear();
 	}
 }
 
 void CTaskMngr::clear()
 {
+	if (m_bInStartFrame)
+	{
+		// A task callback triggered a map change (e.g. server_exec + changelevel).
+		// We can't destroy the vector because executeIfRequired() is still on the
+		// call stack with a reference to one of these CTask objects.
+		// Instead, individually clear each task (frees params, marks free) and
+		// defer the vector destruction until startFrame() finishes.
+		for (auto &task : m_Tasks)
+		{
+			if (!task->isFree())
+				task->clear();
+		}
+		m_ActiveCount = 0;
+		m_FirstFreeHint = 0;
+		m_bDeferredClear = true;
+		return;
+	}
 	m_Tasks.clear();
+	m_ActiveCount = 0;
+	m_FirstFreeHint = 0;
 }

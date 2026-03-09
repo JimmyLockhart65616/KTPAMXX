@@ -68,10 +68,22 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				{
 					const char *str = reinterpret_cast<const char*>(params[i]);
 					cell *tmp;
-					if (!str)
+					// KTP: Catch NULL and invalid low-address pointers (< first page on Linux).
+					if (!str || reinterpret_cast<uintptr_t>(str) < 0x1000)
+					{
+						if (str)
+						{
+							AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in global forward \"%s\" param %d (likely param type mismatch)",
+								(void*)str, m_FuncName, i);
+						}
 						str = "";
-					amx_Allot(amx, (m_ParamTypes[i] == FP_STRING) ? strlen(str) + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
-					amx_SetStringOld(tmp, str, 0, 0);
+					}
+					int strLen = strlen(str);
+					amx_Allot(amx, (m_ParamTypes[i] == FP_STRING) ? strLen + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
+					// Inline unpacked char-to-cell copy (avoids second strlen in amx_SetStringOld)
+					for (int s = 0; s < strLen; s++)
+						tmp[s] = (unsigned char)str[s];
+					tmp[strLen] = 0;
 					physAddrs[i] = tmp;
 				}
 				else if (m_ParamTypes[i] == FP_ARRAY)
@@ -154,8 +166,9 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				}
 				else if (m_ParamTypes[i] == FP_STRINGEX)
 				{
-					// copy back
-					amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
+					// copy back (skip if pointer was invalid - would crash on write)
+					if (static_cast<uintptr_t>(static_cast<unsigned int>(params[i])) >= 0x1000)
+						amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
 					amx_Release(amx, realParams[i]);
 				}
 				else if (m_ParamTypes[i] == FP_ARRAY)
@@ -276,11 +289,25 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		if (m_ParamTypes[i] == FP_STRING || m_ParamTypes[i] == FP_STRINGEX)
 		{
 			const char *str = reinterpret_cast<const char*>(params[i]);
-			if (!str)
-				str = "";
 			cell *tmp;
-			amx_Allot(m_Amx, (m_ParamTypes[i] == FP_STRING) ? strlen(str) + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
-			amx_SetStringOld(tmp, str, 0, 0);
+			// KTP: Catch NULL and invalid low-address pointers (< first page on Linux).
+			// A cell value like 1 reinterpreted as char* gives 0x1 -- passes NULL check
+			// but crashes strlen(). Log the mismatch for diagnosis then default to empty.
+			if (!str || reinterpret_cast<uintptr_t>(str) < 0x1000)
+			{
+				if (str)
+				{
+					AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in SP forward \"%s\" param %d func %d (likely param type mismatch)",
+						(void*)str, m_Name.chars(), i, m_Func);
+				}
+				str = "";
+			}
+			int strLen = strlen(str);
+			amx_Allot(m_Amx, (m_ParamTypes[i] == FP_STRING) ? strLen + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
+			// Inline unpacked char-to-cell copy (avoids second strlen in amx_SetStringOld)
+			for (int s = 0; s < strLen; s++)
+				tmp[s] = (unsigned char)str[s];
+			tmp[strLen] = 0;
 			physAddrs[i] = tmp;
 		}
 		else if (m_ParamTypes[i] == FP_ARRAY)
@@ -357,8 +384,9 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		}
 		else if (m_ParamTypes[i] == FP_STRINGEX)
 		{
-			// copy back
-			amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
+			// copy back (skip if pointer was invalid - would crash on write)
+			if (static_cast<uintptr_t>(static_cast<unsigned int>(params[i])) >= 0x1000)
+				amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
 			amx_Release(m_Amx, realParams[i]);
 		}
 		else if (m_ParamTypes[i] == FP_ARRAY)
@@ -402,7 +430,7 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 
 int CForwardMngr::registerForward(const char *funcName, ForwardExecType et, int numParams, const ForwardParam * paramTypes)
 {
-	// KTP: Dedup — if same function name + exec type + param count exists, return it.
+	// KTP: Dedup -- if same function name + exec type + param count exists, return it.
 	// In extension mode, plugin_init fires on every map change. Multi-forwards like
 	// CreateMultiForward("client_connect", ...) would otherwise accumulate duplicates.
 	for (size_t i = 0; i < m_Forwards.length(); i++)
@@ -431,9 +459,9 @@ int CForwardMngr::registerForward(const char *funcName, ForwardExecType et, int 
 
 int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
-	// KTP: Dedup — if same AMX + function index + param signature exists and is active, return existing handle.
+	// KTP: Dedup -- if same AMX + function index + param signature exists and is active, return existing handle.
 	// In extension mode, plugin_init fires on every map change without clearing forwards.
-	// IMPORTANT: Must also match numParams and paramTypes — the same function can be registered
+	// IMPORTANT: Must also match numParams and paramTypes -- the same function can be registered
 	// as different forward types (e.g., menu callback with FP_CELL vs curl callback with FP_STRING).
 	// Matching only on amx+func causes param type mismatch crashes (str=0x1 segfault in execute).
 	for (size_t i = 0; i < m_SPForwards.length(); i++)
@@ -453,13 +481,16 @@ int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const For
 	if (!m_FreeSPForwards.empty())
 	{
 		retVal = m_FreeSPForwards.front();
+		m_FreeSPForwards.pop();  // KTP: Pop BEFORE early return to avoid stale free list entry
 		pForward = m_SPForwards[retVal >> 1];
 		pForward->Set(func, amx, numParams, paramTypes);
 
 		if (pForward->getFuncsNum() == 0)
+		{
+			pForward->isFree = true;  // KTP: Mark free again since registration failed
+			m_FreeSPForwards.push(retVal);
 			return -1;
-
-		m_FreeSPForwards.pop();
+		}
 	} else {
 		retVal = (m_SPForwards.length() << 1) | 1;
 		pForward = new CSPForward();
@@ -483,9 +514,9 @@ int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const For
 
 int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParams, const ForwardParam *paramTypes)
 {
-	// KTP: Dedup — if same AMX + function name + param signature exists and is active, return existing handle.
+	// KTP: Dedup -- if same AMX + function name + param signature exists and is active, return existing handle.
 	// In extension mode, plugin_init fires on every map change without clearing forwards.
-	// IMPORTANT: Must also match numParams and paramTypes — the same function can be registered
+	// IMPORTANT: Must also match numParams and paramTypes -- the same function can be registered
 	// as different forward types (e.g., menu callback with FP_CELL vs curl callback with FP_STRING).
 	// Matching only on amx+name causes param type mismatch crashes (str=0x1 segfault in execute).
 	for (size_t i = 0; i < m_SPForwards.length(); i++)
@@ -506,13 +537,16 @@ int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParam
 	if (!m_FreeSPForwards.empty())
 	{
 		retVal = m_FreeSPForwards.front();
+		m_FreeSPForwards.pop();  // KTP: Pop BEFORE early return to avoid stale free list entry
 		pForward = m_SPForwards[retVal>>1];			// >>1 because unregisterSPForward pushes the id which contains the sp flag
 		pForward->Set(funcName, amx, numParams, paramTypes);
 
 		if (pForward->getFuncsNum() == 0)
+		{
+			pForward->isFree = true;  // KTP: Mark free again since registration failed
+			m_FreeSPForwards.push(retVal);
 			return -1;
-
-		m_FreeSPForwards.pop();
+		}
 	} else {
 		pForward = new CSPForward();
 

@@ -89,7 +89,8 @@ void CPlayer::PutInServer(){
 
 void CPlayer::Connect(const char* nn,const char* ippp ){
 	bot = IsBot();
-	strcpy(ip,ippp);
+	strncpy(ip, ippp, sizeof(ip) - 1);
+	ip[sizeof(ip) - 1] = '\0';
 	// Strip the port from the ip
 	for (size_t i = 0; i < sizeof(ip); i++)
 	{
@@ -123,6 +124,7 @@ void CPlayer::Init( int pi, edict_t* pe )
 	wpnscount = 0;
 	lastScore = 0;
 	sendScore = 0;
+	lastScoreCP = -1;
 	clearRound = 0.0f;
     pEdict = pe;
     index = pi;
@@ -327,7 +329,8 @@ void CPlayer::killPlayer()
 
 void CPlayer::initModel(char* model)
 {
-	strcpy(sModel.modelclass, (const char*)model);
+	strncpy(sModel.modelclass, (const char*)model, sizeof(sModel.modelclass) - 1);
+	sModel.modelclass[sizeof(sModel.modelclass) - 1] = '\0';
 	sModel.is_model_set = true;
 }
 
@@ -671,5 +674,101 @@ void CMapInfo::Init()
 	detect_allies_paras = 0;
 	detect_allies_country = 0;
 
+}
+
+// *****************************************************
+// class CObjective (ported from dodfun for CP tracking)
+// *****************************************************
+
+void CObjective::SetKeyValue(int index, char *keyname, char *value)
+{
+	if (!obj[index].pEdict || FNullEnt(obj[index].pEdict))
+		return;
+
+	KeyValueData pkvd;
+
+	pkvd.szClassName = (char *)STRING(obj[index].pEdict->v.classname);
+	pkvd.szKeyName = keyname;
+	pkvd.szValue = value;
+	pkvd.fHandled = false;
+
+	MDLL_KeyValue(obj[index].pEdict, &pkvd);
+}
+
+void CObjective::InitObj(int dest, edict_t* ed)
+{
+	if (count <= 0)
+		return;
+
+	MESSAGE_BEGIN(dest, gmsgInitObj, 0, ed);
+	WRITE_BYTE(count);
+	for (int i = 0; i < count; i++)
+	{
+		// KTP: Use ENTINDEX_SAFE for extension mode safety
+		WRITE_SHORT(ENTINDEX_SAFE(obj[i].pEdict));
+		WRITE_BYTE(obj[i].index);
+		WRITE_BYTE(obj[i].owner);
+		WRITE_BYTE(obj[i].visible);
+		WRITE_BYTE(obj[i].icon_neutral);
+		WRITE_BYTE(obj[i].icon_allies);
+		WRITE_BYTE(obj[i].icon_axis);
+		WRITE_COORD(obj[i].origin_x);
+		WRITE_COORD(obj[i].origin_y);
+	}
+	MESSAGE_END();
+}
+
+void CObjective::SetObj(int index)
+{
+	MESSAGE_BEGIN(MSG_ALL, gmsgSetObj);
+	WRITE_BYTE(obj[index].index);
+	WRITE_BYTE(obj[index].owner);
+	WRITE_BYTE(0);
+	MESSAGE_END();
+}
+
+void CObjective::UpdateOwner(int index, int team)
+{
+	if (index < 0 || index >= count)
+		return;
+	if (!obj[index].pEdict || FNullEnt(obj[index].pEdict))
+		return;
+
+	obj[index].owner = team;
+	GET_CP_PD(obj[index].pEdict).owner = team;
+
+	switch (team)
+	{
+		case 0:
+			obj[index].pEdict->v.model = MAKE_STRING(GET_CP_PD(obj[index].pEdict).model_neutral);
+			obj[index].pEdict->v.body = GET_CP_PD(obj[index].pEdict).model_body_neutral;
+			break;
+		case 1:
+			obj[index].pEdict->v.model = MAKE_STRING(GET_CP_PD(obj[index].pEdict).model_allies);
+			obj[index].pEdict->v.body = GET_CP_PD(obj[index].pEdict).model_body_allies;
+			break;
+		case 2:
+			obj[index].pEdict->v.model = MAKE_STRING(GET_CP_PD(obj[index].pEdict).model_axis);
+			obj[index].pEdict->v.body = GET_CP_PD(obj[index].pEdict).model_body_axis;
+			break;
+	}
+	mObjects.SetObj(index);
+}
+
+void CObjective::Sort()
+{
+	objinfo_t temp;
+	for (int j = 0; j < count - 1; j++)
+	{
+		for (int i = 0; i < count - 1; i++)
+		{
+			if (obj[i].index > obj[i + 1].index)
+			{
+				temp = obj[i + 1];
+				obj[i + 1] = obj[i];
+				obj[i] = temp;
+			}
+		}
+	}
 }
 

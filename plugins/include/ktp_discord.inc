@@ -10,6 +10,10 @@
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.3 (2026-03-01)
+ *   * FIXED: Removed Pawn WRITEFUNCTION discard callback — fails under memory pressure (curl error 23)
+ *   * CHANGED: Let KTPAmxxCurl module auto-buffer responses in C++ (no callback needed)
+ *
  * v1.3.2 (2026-02-25)
  *   * FIXED: Duplicate audit messages when discord_channel_id_admin matches an audit channel ID
  *   + ADDED: Audit channel dedup — same channel ID is never added twice to audit array
@@ -85,7 +89,7 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.3.2"
+#define KTP_DISCORD_VERSION "1.3.3"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
@@ -662,9 +666,6 @@ stock ktp_discord_curl_post(const url[], const payload[])
     // Use persistent headers (created once at config load, never freed per-request)
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, g_ktpDiscordCurlHeaders);
 
-    // Discard response body (prevents relay responses from appearing in server console)
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, "ktp_discord_curl_discard");
-
     // Set POST data (COPYPOSTFIELDS copies the data, safe even if payload buffer is reused)
     curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, payload);
 
@@ -673,15 +674,6 @@ stock ktp_discord_curl_post(const url[], const payload[])
 
     // Perform request asynchronously
     curl_easy_perform(curl, "ktp_discord_curl_callback");
-}
-
-/**
- * Discard write callback — prevents curl from dumping HTTP response body to server console.
- * Returns size*nmemb to tell curl all bytes were handled.
- */
-public ktp_discord_curl_discard(const data[], const size, const nmemb)
-{
-    return size * nmemb;
 }
 
 /**

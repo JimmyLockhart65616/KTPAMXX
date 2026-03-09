@@ -100,7 +100,11 @@ void Client_ObjScore(void* mValue)
 		if ( (pPlayer->lastScore = score - (int)(pPlayer->savedScore)) && isModuleActive() )
 		{
 			pPlayer->updateScore(pPlayer->current,pPlayer->lastScore);
-			pPlayer->sendScore = (int)(gpGlobals->time + 0.25f);
+			pPlayer->sendScore = gpGlobals->time + 0.25f;
+			// KTP: Mark as pending CP resolution. ObjScore fires BEFORE SetObj in DoD,
+			// so g_lastCapturedCP isn't set yet. The CP index will be resolved in
+			// PreThink when sendScore fires (~0.2s later, after SetObj has arrived).
+			pPlayer->lastScoreCP = -2;  // -2 = pending resolution
 		}
 		pPlayer->savedScore = score;
 		break;
@@ -446,6 +450,122 @@ void Client_Object_End(void* mValue)
 
 		if(!mPlayer->object.carrying)
 			mPlayer->object.pEdict = NULL;
+	}
+}
+
+// KTP: Control Point tracking - ported from dodfun module
+// Parses InitObj message containing all CP data for the map
+void Client_InitObj(void* mValue)
+{
+	static int num;
+
+	// No mDest filter — accept InitObj from any source:
+	// MSG_BROADCAST (0) during ServerActivate, MSG_ONE (1) on player connect,
+	// MSG_ALL (2) in some configurations. InitObj is global CP data that
+	// doesn't depend on the target player context.
+
+	switch (mState++)
+	{
+	case 0:
+		num = 0;
+		{
+			int newCount = *(int*)mValue;
+			// In extension mode, entity scan populates mObjects during SV_ActivateServer.
+			// Post-boot InitObj messages are unreliable (count=0 empty, count=1 partial).
+			// Skip ALL InitObj processing if entity scan already populated data.
+			if (mObjects.count > 0)
+			{
+				mState = 999; // Skip all remaining params (no case matches)
+				return;
+			}
+			mObjects.count = newCount;
+		}
+		if (mObjects.count == 0)
+			mObjects.Clear();
+		// Clamp to array size
+		if (mObjects.count > 12)
+			mObjects.count = 12;
+		break;
+	case 1:
+		if (num < 12)
+			mObjects.obj[num].pEdict = GETEDICT(*(int*)mValue);
+		break;
+	case 2:
+		if (num < 12)
+			mObjects.obj[num].index = *(int*)mValue;
+		break;
+	case 3:
+		if (num < 12)
+		{
+			mObjects.obj[num].default_owner = *(int*)mValue;
+			mObjects.obj[num].owner = mObjects.obj[num].default_owner;
+		}
+		break;
+	case 4:
+		if (num < 12)
+			mObjects.obj[num].visible = *(int*)mValue;
+		break;
+	case 5:
+		if (num < 12)
+			mObjects.obj[num].icon_neutral = *(int*)mValue;
+		break;
+	case 6:
+		if (num < 12)
+			mObjects.obj[num].icon_allies = *(int*)mValue;
+		break;
+	case 7:
+		if (num < 12)
+			mObjects.obj[num].icon_axis = *(int*)mValue;
+		break;
+	case 8:
+		if (num < 12)
+			mObjects.obj[num].origin_x = *(float*)mValue;
+		break;
+	case 9:
+		if (num < 12)
+			mObjects.obj[num].origin_y = *(float*)mValue;
+		mState = 1;
+		num++;
+		if (num == mObjects.count)
+		{
+			// Do NOT sort — InitObj order matches SetObj index system
+			MF_Log("[DODX] InitObj: parsed %d control points from message", mObjects.count);
+			if (iFInitCP >= 0)
+				MF_ExecuteForward(iFInitCP);
+		}
+		break;
+	}
+}
+
+// KTP: Control Point ownership change - ported from dodfun module
+// Parses SetObj message (cp_index, new_owner, unused_byte)
+void Client_SetObj(void* mValue)
+{
+	static int id;
+
+	switch (mState++)
+	{
+	case 0:
+		id = *(int*)mValue;
+		break;
+	case 1:
+	{
+		int newOwner = *(int*)mValue;
+		if (id >= 0 && id < mObjects.count)
+		{
+			int oldOwner = mObjects.obj[id].owner;
+			mObjects.obj[id].owner = newOwner;
+			// Track last CP capture for ObjScore correlation
+			if (newOwner != oldOwner)
+			{
+				g_lastCapturedCP = id;
+				g_lastCapturedTime = gpGlobals->time;
+				if (iFCPCaptured >= 0)
+					MF_ExecuteForward(iFCPCaptured, id, newOwner, oldOwner);
+			}
+		}
+		break;
+	}
 	}
 }
 

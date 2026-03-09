@@ -63,21 +63,26 @@ private:
 
 	/*** CTaskMngr priv members ***/
 	ke::Vector<ke::AutoPtr<CTask>> m_Tasks;
-	
+
 	float *m_pTmr_CurrentTime;
 	float *m_pTmr_TimeLimit;
 	float *m_pTmr_TimeLeft;
+
+	bool m_bInStartFrame;		// true while iterating tasks in startFrame()
+	bool m_bDeferredClear;		// set when clear() called during startFrame()
+	size_t m_ActiveCount;		// number of non-free tasks (avoids iterating when 0)
+	size_t m_FirstFreeHint;		// hint index for free-slot scan in registerTask()
 public:
 	CTaskMngr();
 	~CTaskMngr();
 
 	void registerTimers(float *pCurrentTime, float *pTimeLimit, float *pTimeLeft);	// The timers will always point to the right value
 	void registerTask(CPluginMngr::CPlugin *pPlugin, int iFunc, int iFlags, cell iId, float fBase, int iParamsLen, const cell *pParams, int iRepeat);
-	
+
 	int removeTasks(int iId, AMX *pAmx);											// remove all tasks that match the id and amx
 	int changeTasks(int iId, AMX *pAmx, float fNewBase);							// change all tasks that match the id and amx
 	bool taskExists(int iId, AMX *pAmx);
-	
+
 	void startFrame();
 	void clear();
 };

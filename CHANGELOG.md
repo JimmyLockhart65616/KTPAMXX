@@ -5,6 +5,115 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.14] - 2026-03-05
+
+### Fixed
+
+#### Core AMXX - amx_ExecPerf Hot Path Optimization
+
+`amx_ExecPerf()` called `g_plugins.findPluginFast(amx)` on every AMX execution call, even when performance logging was disabled (the default). Moved the plugin lookup inside the `amxmodx_perflog->value > 0.0f` branch so the common path (profiling off) goes straight to `amx_Exec()` with only a single float comparison.
+
+#### Core AMXX - g_putinserver O(n) Removal Replaced with Compact Pattern
+
+`SV_Frame_RH` and `C_StartFrame_Post` both used `g_putinserver.remove(i)` which shifts all remaining elements on every removal — O(n) per removal, O(n²) worst case during peak player joins. Replaced with a single-pass compact pattern: valid entries are written to `writeIdx`, then the vector is resized once at the end. All removals are now O(1).
+
+#### Core AMXX - Extension Mode Missing ClearMenus and FrameAction Cleanup
+
+`KTPAMX_ReloadPlugins()` (extension mode map change) did not call `ClearMenus()` or `g_frameActionMngr.clear()`, causing menu state and frame actions from the previous map to persist. This could lead to stale menu handler references across map changes. Both are now cleared before plugin re-initialization, matching the Metamod mode cleanup path.
+
+#### DODX Module - DODX_OnMsgBegin Missing Bounds Check
+
+`DODX_OnMsgBegin()` indexed into `modMsgs[msg_id]` and `modMsgsEnd[msg_id]` without validating `msg_id` against `MAX_REG_MSGS`. A corrupt or out-of-range message ID could cause an out-of-bounds array read. Added bounds check matching the existing validation in `DODX_OnMessageHandler`.
+
+#### DODX Module - dod_weaponlist Missing wpnID Bounds Check
+
+`dod_weaponlist` native used `wpnID` (params[2]) to index into `weaponlist[]` array without validating it was in range `[0, WEAPONLIST)`. Also added bounds check on `params[1]` before its use as a `weaponlist[]` index. Prevents out-of-bounds reads from plugin calls with invalid weapon IDs.
+
+#### DODX Module - Grenade Tracking Leak on Map Change
+
+`g_grenades` linked list was not cleared in `DODX_OnChangelevel()`. Grenade entries holding edict pointers from the previous map survived the map change, creating stale pointer references. Added `g_grenades.clear()` to the changelevel handler.
+
+#### DODX Module - Team Scores Not Reset on Map Change
+
+`AlliesScore` and `AxisScore` were not reset in `DODX_OnChangelevel()`. Plugins reading `dod_get_team_score()` early on a new map (before the first TeamScore message) would get stale values from the previous map. Both are now zeroed on map change.
+
+#### DODX Module - Buffer Overflow Protection (6 strcpy → strncpy)
+
+Multiple `strcpy` calls in DODX wrote to fixed-size buffers without length validation:
+- `CPlayer::Connect()` — `ip[32]` buffer (CMisc.cpp)
+- `CPlayer::initModel()` — `modelclass[64]` buffer (CMisc.cpp)
+- `register_cwpn` — `name[32]` and `logname[16]` buffers (NBase.cpp)
+- `dodx_objective_set_data` — `cap_message[256]`, `model_neutral[256]`, `model_allies[256]`, `model_axis[256]` fields (NCP.cpp)
+- `dodx_area_set_data` — `hud_sprite[256]` field (NCP.cpp)
+
+All replaced with `strncpy` + explicit null termination.
+
+#### Core AMXX - Forward String Parameter Double-strlen Eliminated
+
+`CForward::execute()` and `CSPForward::execute()` called `strlen(str)` for `amx_Allot` sizing, then `amx_SetStringOld()` called `strlen()` again internally to copy the string. Replaced `amx_SetStringOld` with an inlined unpacked char-to-cell copy loop using the pre-computed length, eliminating the redundant `strlen` on every string parameter in every forward call.
+
+#### Core AMXX - Task Manager Free-Slot Scan and startFrame Optimizations
+
+Three improvements to `CTaskMngr`:
+- **Active count tracking:** Added `m_ActiveCount` to skip `startFrame()` iteration entirely when no tasks are registered (common during warmup/idle periods)
+- **Free-slot hint index:** Added `m_FirstFreeHint` so `registerTask()` starts scanning for free slots from the last-known position instead of index 0, reducing O(n) to amortized O(1) for sequential registrations
+- **Self-clear tracking:** `startFrame()` now decrements `m_ActiveCount` and updates the free hint when tasks complete and self-clear, keeping the counters accurate without requiring CTask to call back into the manager
+
+#### DODX Module - sendScore Float Precision Fix
+
+`sendScore` was declared as `int` but used as a time comparison against `gpGlobals->time` (float). The `(int)` cast at assignment truncated the target time, causing the score forward to fire with 0–1.25s delay instead of a consistent 0.25s. Changed `sendScore` from `int` to `float` and removed the truncating cast.
+
+#### DODX Module - CHECK_PLAYERRANGE Rejects Index 0
+
+`CHECK_PLAYERRANGE` macro allowed player index 0 (the world entity), which would access `players[0]` — a summary/unused slot, not a real player. Changed the lower bound check from `x < 0` to `x < 1`.
+
+#### DODX Module - loadRank Buffer Overflow Protection
+
+`RankSystem::loadRank()` read player name and unique ID from the rank file into fixed 64-byte buffers without clamping the length read from file. A corrupted rank file with a length field ≥64 would overflow the buffer. Added length clamping to `sizeof(buffer) - 1` and explicit null termination after each read.
+
+## [2.6.13] - 2026-03-04
+
+### Fixed
+
+#### Core AMXX - CTaskMngr Use-After-Free on Changelevel During Task Callback
+
+`CTaskMngr::startFrame()` iterates tasks and calls `executeIfRequired()`, which runs plugin callbacks. If a plugin callback triggers a synchronous changelevel (via `server_cmd` + `server_exec`), `KTPAMX_ReloadPlugins()` calls `g_tasksMngr.clear()` which destroys the `m_Tasks` vector — while the executing task's `CTask::executeIfRequired()` is still on the call stack. When execution returns, `CTask::clear()` at line 148 calls `delete[]` on a dangling `m_pParams` pointer, crashing with `free(): invalid pointer`.
+
+- Added `m_bInStartFrame` / `m_bDeferredClear` flags to `CTaskMngr`
+- When `clear()` is called during `startFrame()`, tasks are individually cleared (params freed, marked free) but the vector is NOT destroyed
+- `startFrame()` breaks iteration on deferred clear, then destroys the vector after the loop exits safely
+- The executing task returns to `executeIfRequired()`, sees `isFree() == true` at line 135, and returns without double-freeing
+- Confirmed via gdb analysis of New York 2 core dump (2026-03-04): crash at `CTask.cpp:66` during `startFrame` → `executeIfRequired` → `clear`
+
+#### Core AMXX - New Menu Handler Use-After-Free
+
+In both Metamod and extension mode `ClientCommand` handlers, the `pMenu` pointer was used after `executeForwards()` without re-validation. If a plugin's menu callback destroyed the menu (via `menu_destroy`), `pMenu` became a dangling pointer.
+
+- **MENU_BACK/MENU_MORE paths:** After `executeForwards(pMenu->pageCallback)`, re-validate with `get_menu_by_id(menu)` before calling `pMenu->Display()`
+- **Normal item path:** Capture `pMenu->func` into local `menuFunc` before `executeForwards()`, preventing access to potentially freed memory
+- Applied to both Metamod (`C_ClientCommand`) and extension mode (`SV_ClientCommand_RH`) code paths
+
+## [2.6.12] - 2026-03-03
+
+### Fixed
+
+#### Core AMXX - Forward Execute Invalid Pointer Crash Prevention
+
+`CForward::execute()` and `CSPForward::execute()` in `CForward.cpp` only checked for NULL string pointers before calling `strlen()`. When a forward parameter type mismatch caused a cell value (e.g., player index `1`) to be reinterpreted as `const char*`, the resulting pointer `0x1` passed the NULL check but crashed on `strlen()`.
+
+- Both execute methods now reject pointers below `0x1000` (first page, always unmapped on Linux)
+- Logs a WARNING with forward name, parameter index, function ID, and the bad pointer value for diagnosis
+- Defaults to empty string instead of crashing
+- STRINGEX cleanup paths also guarded to prevent crash when copying back to an invalid address
+- Confirmed via gdb analysis of 2 Atlanta core dumps (2026-03-02): both crashed at `CForward.cpp:282` with `str = 0x1`
+
+#### Core AMXX - SP Forward Free List Reuse Bug
+
+Both `registerSPForward()` overloads in `CForward.cpp` had a bug where the free list entry was popped AFTER an early-return check. When `pForward->Set()` succeeded but `getFuncsNum() == 0`, the function returned `-1` without popping from the free list. The slot was left with `isFree = false` (set by `Set()`) but still queued in `m_FreeSPForwards`, causing the slot to be reused later with potentially stale parameter types.
+
+- Moved `m_FreeSPForwards.pop()` before the early-return check
+- On failed registration, properly re-marks the slot as free and pushes it back to the free list
+
 ## [2.6.11] - 2026-02-25
 
 ### Fixed
@@ -825,6 +934,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 
 | Version | Date | Description |
 |---------|------|-------------|
+| 2.6.13 | 2026-03-04 | CTaskMngr use-after-free on changelevel during task callback, new menu handler use-after-free |
+| 2.6.12 | 2026-03-03 | Forward execute invalid pointer crash prevention, SP forward free list reuse bug fix |
 | 2.6.11 | 2026-02-25 | SP forward dedup crash fix, pvPrivateData null checks, CRank infinite loop fix, cvar null guard |
 | 2.6.10 | 2026-02-17 | Extension mode subsystem dedup: flat plugin_init time across map changes |
 | 2.6.9 | 2026-02-01 | DODX runtime pdata offset detection for Ubuntu 22.04/24.04 |
@@ -846,6 +957,8 @@ See [AMX Mod X releases](https://github.com/alliedmodders/amxmodx/releases) for 
 | 2.0.0 | 2025-12-04 | Major release: ReHLDS extension mode, KTP branding, client_cvar_changed |
 | 1.10.0 | - | Base fork from AMX Mod X |
 
+[2.6.13]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.13
+[2.6.12]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.12
 [2.6.11]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.11
 [2.6.10]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.10
 [2.6.9]: https://github.com/afraznein/KTPAMXX/releases/tag/v2.6.9

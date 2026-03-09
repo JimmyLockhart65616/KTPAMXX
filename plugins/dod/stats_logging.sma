@@ -15,6 +15,8 @@
 #include <amxmodx>
 #include <dodx>
 
+#define PLUGIN_VERSION "1.10.1"
+
 new g_pingSum[MAX_PLAYERS + 1]
 new g_pingCount[MAX_PLAYERS + 1]
 
@@ -23,7 +25,7 @@ new g_pingCount[MAX_PLAYERS + 1]
 new g_matchId[64]
 
 public plugin_init() {
-  register_plugin("Stats Logging",AMXX_VERSION_STR,"AMXX Dev Team")
+  register_plugin("Stats Logging",PLUGIN_VERSION,"AMXX Dev Team")
 
   // KTP: Don't call "log on" - it causes log rotation
   // Logging should be enabled via sv_logfile 1 in server.cfg
@@ -53,7 +55,8 @@ stock log_player_stats(id) {
   new iUserid = get_user_userid(id)
 
   get_user_info(id, "team", szTeam, charsmax(szTeam))
-  szTeam[0] -= 32
+  if (szTeam[0])
+    szTeam[0] -= 32
 
   get_user_name(id, szName, charsmax(szName))
   get_user_authid(id, szAuthid, charsmax(szAuthid))
@@ -97,12 +100,14 @@ public client_death(killer, victim, wpnindex, hitplace, TK) {
   get_user_name(killer, szKillerName, charsmax(szKillerName))
   get_user_authid(killer, szKillerAuthid, charsmax(szKillerAuthid))
   get_user_info(killer, "team", szKillerTeam, charsmax(szKillerTeam))
-  szKillerTeam[0] -= 32
+  if (szKillerTeam[0])
+    szKillerTeam[0] -= 32
 
   get_user_name(victim, szVictimName, charsmax(szVictimName))
   get_user_authid(victim, szVictimAuthid, charsmax(szVictimAuthid))
   get_user_info(victim, "team", szVictimTeam, charsmax(szVictimTeam))
-  szVictimTeam[0] -= 32
+  if (szVictimTeam[0])
+    szVictimTeam[0] -= 32
 
   xmod_get_wpnlogname(wpnindex, szWeapon, charsmax(szWeapon))
 
@@ -118,10 +123,14 @@ public client_death(killer, victim, wpnindex, hitplace, TK) {
 }
 
 public client_disconnected(id) {
-  if ( is_user_bot(id) || !is_user_connected(id) || !isDSMActive() )
-    return PLUGIN_CONTINUE
-
+  // Always remove the ping task, regardless of connection state or stats pause.
+  // The repeating task must be cleaned up to prevent orphaned tasks that spam
+  // errors when the slot is reused by a new player.
   remove_task( id )
+  g_pingSum[ id ] = g_pingCount[ id ] = 0
+
+  if ( is_user_bot(id) || !isDSMActive() )
+    return PLUGIN_CONTINUE
 
   // KTP: Get current match ID for HLStatsX integration
   dodx_get_match_id(g_matchId, charsmax(g_matchId))
@@ -134,7 +143,8 @@ public client_disconnected(id) {
   new iUserid = get_user_userid(id)
 
   get_user_info(id, "team", szTeam, charsmax(szTeam))
-  szTeam[0] -= 32
+  if (szTeam[0])
+    szTeam[0] -= 32
 
   get_user_name(id, szName, charsmax(szName))
   get_user_authid(id, szAuthid, charsmax(szAuthid))
@@ -159,12 +169,18 @@ public client_disconnected(id) {
 
 public client_putinserver(id) {
   if ( !is_user_bot( id ) ){
+    // Remove any stale task from a previous connection on this slot
+    remove_task( id )
     g_pingSum[ id ] = g_pingCount[ id ] = 0
     set_task( 19.5 , "getPing" , id , "" , 0 , "b" )
   }
 }
 
 public getPing( id ) {
+  if ( !is_user_connected( id ) ) {
+    remove_task( id )
+    return
+  }
   new iPing, iLoss
   get_user_ping( id , iPing, iLoss)
   g_pingSum[ id ] += iPing
@@ -172,7 +188,7 @@ public getPing( id ) {
 }
 
 isDSMActive(){
-  if ( get_cvar_num("dodstats_pause") ) 
+  if ( get_cvar_num("dodstats_pause") )
     return 0
   return 1
 }
