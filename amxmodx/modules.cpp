@@ -461,7 +461,7 @@ int CheckModules(AMX *amx, char error[128])
 			const char *type = "Module/Library";
 			if (expect == LibType_Class)
 				type = "Module/Library Class";
-			sprintf(error, "%s \"%s\" required for plugin. Check modules.ini.", type, buffer);
+			snprintf(error, 128, "%s \"%s\" required for plugin. Check modules.ini.", type, buffer);
 			return 0;
 		}
 	}
@@ -1030,6 +1030,13 @@ void detachReloadModules()
 		}
 		moduleIter++;
 	}
+
+	// KTP: Clear stale function pointers from unloaded .so memory.
+	// These are defined later in this file, so we call helper functions.
+	extern void Module_ClearFrameCallbacks();
+	extern void Module_ClearMsgHandlers();
+	Module_ClearFrameCallbacks();
+	Module_ClearMsgHandlers();
 }
 
 // Get the number of running modules
@@ -1391,7 +1398,11 @@ float MNF_GetPlayerFrags(int id)
 	if (id < 1 || id > gpGlobals->maxClients)
 		return 0.0f;
 
-	return GET_PLAYER_POINTER_I(id)->pEdict->v.frags;
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(id);
+	if (!pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0.0f;
+
+	return pPlayer->pEdict->v.frags;
 }
 
 int MNF_IsPlayerConnecting(int id)
@@ -1409,7 +1420,11 @@ int MNF_IsPlayerHLTV(int id)
 	if (id < 1 || id > gpGlobals->maxClients)
 		return 0;
 
-	return (GET_PLAYER_POINTER_I(id)->pEdict->v.flags & FL_PROXY) ? 1 : 0;
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(id);
+	if (!pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	return (pPlayer->pEdict->v.flags & FL_PROXY) ? 1 : 0;
 }
 
 float MNF_GetPlayerArmor(int id)
@@ -1417,7 +1432,11 @@ float MNF_GetPlayerArmor(int id)
 	if (id < 1 || id > gpGlobals->maxClients)
 		return 0.0f;
 
-	return (GET_PLAYER_POINTER_I(id)->pEdict->v.armorvalue);
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(id);
+	if (!pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0.0f;
+
+	return pPlayer->pEdict->v.armorvalue;
 }
 
 float MNF_GetPlayerHealth(int id)
@@ -1425,7 +1444,11 @@ float MNF_GetPlayerHealth(int id)
 	if (id < 1 || id > gpGlobals->maxClients)
 		return 0;
 
-	return (GET_PLAYER_POINTER_I(id)->pEdict->v.health);
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(id);
+	if (!pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	return pPlayer->pEdict->v.health;
 }
 
 cell MNF_RealToCell(REAL x)
@@ -1604,6 +1627,12 @@ ke::Vector<ke::AutoPtr<func_s>> g_functions;
 
 // KTP: Module frame callbacks for modules that need per-frame processing (like cURL async)
 ke::Vector<MODULEFRAMEFUNC> g_moduleFrameCallbacks;
+
+// KTP: Called from detachReloadModules to clear stale frame callback pointers
+void Module_ClearFrameCallbacks()
+{
+	g_moduleFrameCallbacks.clear();
+}
 
 void MNF_RegModuleFrameFunc(MODULEFRAMEFUNC func)
 {
@@ -1856,7 +1885,16 @@ void* MNF_GetGameDllFuncs()
 }
 
 // KTP: Get user message ID by name for modules (works in extension mode)
-// This allows modules to look up message IDs without calling pfnRegUserMsg directly
+// This allows modules to look up message IDs without calling pfnRegUserMsg directly.
+//
+// IMPORTANT - Call timing requirement:
+// In extension mode, REG_USER_MSG(name, -1) returns existing message IDs only because
+// KTP-ReHLDS deduplicates registrations. However, this only works AFTER the game DLL has
+// registered its messages during GameDLLInit. Calling from AMXX_Attach (which fires during
+// KTPAMXX initialization, before game DLL message registration) will return 0.
+//
+// Modules MUST call this from AMXX_PluginsLoaded or later — never from AMXX_Attach.
+// A return value of 0 means the message was not found (not yet registered or invalid name).
 int MNF_GetUserMsgId(const char *name)
 {
 	if (!name || !*name)
@@ -1889,6 +1927,14 @@ typedef void (*ModuleMsgBeginHandler)(int msg_id, int dest, int player_index, ed
 static ModuleMsgBeginHandler g_ModuleMsgBeginHandlers[MAX_REG_MSGS][MAX_MODULE_MSG_HANDLERS];
 static ModuleMsgHandler g_ModuleMsgHandlers[MAX_REG_MSGS][MAX_MODULE_MSG_HANDLERS];
 static ModuleMsgHandler g_ModuleMsgEndHandlers[MAX_REG_MSGS][MAX_MODULE_MSG_HANDLERS];
+
+// KTP: Called from detachReloadModules to clear stale message handler pointers
+void Module_ClearMsgHandlers()
+{
+	memset(g_ModuleMsgBeginHandlers, 0, sizeof(g_ModuleMsgBeginHandlers));
+	memset(g_ModuleMsgHandlers,      0, sizeof(g_ModuleMsgHandlers));
+	memset(g_ModuleMsgEndHandlers,   0, sizeof(g_ModuleMsgEndHandlers));
+}
 
 // Forward declaration from meta_api.cpp
 void InstallMessageHook(int msg_id);

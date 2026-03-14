@@ -5,11 +5,16 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.3.2
- * DATE: 2026-02-25
+ * VERSION: 1.3.4
+ * DATE: 2026-03-12
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.4 (2026-03-12)
+ *   * FIXED: Embed description truncated to 383 chars — escapedDesc[384] local buffer too small
+ *   * CHANGED: Embed functions now use global g_ktpDiscordEscapedBuf[2200] for description
+ *   * CHANGED: g_ktpDiscordPayloadBuf increased from 1024 to 3072 for full embed payloads
+ *
  * v1.3.3 (2026-03-01)
  *   * FIXED: Removed Pawn WRITEFUNCTION discard callback — fails under memory pressure (curl error 23)
  *   * CHANGED: Let KTPAmxxCurl module auto-buffer responses in C++ (no callback needed)
@@ -89,7 +94,7 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.3.3"
+#define KTP_DISCORD_VERSION "1.3.4"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
@@ -136,8 +141,8 @@ new curl_slist:g_ktpDiscordCurlHeaders = SList_Empty;
 new g_ktpDiscordAuthHeader[192];
 
 // Reusable buffers (to avoid stack overflow)
-new g_ktpDiscordEscapedBuf[512];
-new g_ktpDiscordPayloadBuf[1024];
+new g_ktpDiscordEscapedBuf[2200];
+new g_ktpDiscordPayloadBuf[3072];
 
 // ============================================================================
 // CONFIGURATION LOADING
@@ -531,10 +536,10 @@ stock bool:ktp_discord_send_embed_to(channelType, const title[], const descripti
         return false;
     }
 
-    // Escape strings
-    new escapedTitle[128], escapedDesc[384];
+    // Escape strings (use global buffer for description to avoid stack overflow)
+    new escapedTitle[128];
     ktp_discord_escape_json(title, escapedTitle, charsmax(escapedTitle));
-    ktp_discord_escape_json(description, escapedDesc, charsmax(escapedDesc));
+    ktp_discord_escape_json(description, g_ktpDiscordEscapedBuf, charsmax(g_ktpDiscordEscapedBuf));
 
     // Get server info for footer
     new serverName[64], mapName[32];
@@ -547,7 +552,7 @@ stock bool:ktp_discord_send_embed_to(channelType, const title[], const descripti
     // Build embed payload (use channelId camelCase, embeds at top level to match relay API)
     formatex(g_ktpDiscordPayloadBuf, charsmax(g_ktpDiscordPayloadBuf),
         "{^"channelId^":^"%s^",^"embeds^":[{^"title^":^"%s^",^"description^":^"%s^",^"color^":%d,^"footer^":{^"text^":^"%s - %s^"}}]}",
-        channelId, escapedTitle, escapedDesc, color, escapedServer, mapName);
+        channelId, escapedTitle, g_ktpDiscordEscapedBuf, color, escapedServer, mapName);
 
     ktp_discord_send_raw(g_ktpDiscordPayloadBuf);
     return true;
@@ -565,10 +570,10 @@ stock ktp_discord_send_embed_audit(const title[], const description[], color = K
 {
     if (!g_ktpDiscordEnabled || g_ktpDiscordAuditChannelCount == 0) return 0;
 
-    // Escape strings once
-    new escapedTitle[128], escapedDesc[384];
+    // Escape strings once (use global buffer for description to avoid stack overflow)
+    new escapedTitle[128];
     ktp_discord_escape_json(title, escapedTitle, charsmax(escapedTitle));
-    ktp_discord_escape_json(description, escapedDesc, charsmax(escapedDesc));
+    ktp_discord_escape_json(description, g_ktpDiscordEscapedBuf, charsmax(g_ktpDiscordEscapedBuf));
 
     // Get server info
     new serverName[64], mapName[32];
@@ -585,7 +590,7 @@ stock ktp_discord_send_embed_audit(const title[], const description[], color = K
         // Build embed payload for this channel (use channelId camelCase, embeds at top level)
         formatex(g_ktpDiscordPayloadBuf, charsmax(g_ktpDiscordPayloadBuf),
             "{^"channelId^":^"%s^",^"embeds^":[{^"title^":^"%s^",^"description^":^"%s^",^"color^":%d,^"footer^":{^"text^":^"%s - %s^"}}]}",
-            g_ktpDiscordAuditChannels[i], escapedTitle, escapedDesc, color, escapedServer, mapName);
+            g_ktpDiscordAuditChannels[i], escapedTitle, g_ktpDiscordEscapedBuf, color, escapedServer, mapName);
 
         ktp_discord_send_raw(g_ktpDiscordPayloadBuf);
         sent++;

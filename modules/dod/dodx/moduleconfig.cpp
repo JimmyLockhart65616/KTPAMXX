@@ -1142,9 +1142,10 @@ static void DODX_OnChangelevel(IVoidHookChain<const char *, const char *> *chain
 	// Clear grenade tracking — edict pointers become stale after map change
 	g_grenades.clear();
 
-	// Reset team scores — stale values from previous map shouldn't leak into new map
-	AlliesScore = 0;
-	AxisScore = 0;
+	// NOTE: Do NOT reset AlliesScore/AxisScore here.
+	// KTPMatchHandler reads scores during its changelevel hook (save_first_half_scores).
+	// If we zero them here, the plugin reads 0-0 instead of the actual half score.
+	// Scores are zeroed in DODX_OnSV_ActivateServer instead (after plugin hooks have run).
 
 	// Call original to perform the changelevel
 	chain->callNext(s1, s2);
@@ -1155,6 +1156,11 @@ static void DODX_OnChangelevel(IVoidHookChain<const char *, const char *> *chain
 // and scans for dod_control_point entities (since InitObj message was missed).
 static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 {
+	// KTP: Reset team scores for new map. Done here (not in OnChangelevel) because
+	// KTPMatchHandler reads scores during its changelevel hook for half-time save.
+	AlliesScore = 0;
+	AxisScore = 0;
+
 	// KTP: Set up g_pFirstEdict and g_bServerActive BEFORE chain->callNext().
 	// Entities are already spawned (SV_SpawnServer ran before SV_ActivateServer).
 	if (gpGlobals && gpGlobals->maxEntities > 0)
@@ -1461,7 +1467,7 @@ static void DODX_OnMsgBegin(int msg_id, int dest, int player_index, edict_t* ed)
 
 	// KTP: Use the player_index passed from the core, which has already been validated
 	// This is more reliable than recalculating from edict
-	if (player_index >= 1 && player_index <= gpGlobals->maxClients)
+	if (gpGlobals && player_index >= 1 && player_index <= gpGlobals->maxClients)
 	{
 		mPlayerIndex = player_index;
 		mPlayer = GET_PLAYER_POINTER_I(mPlayerIndex);
@@ -1854,13 +1860,62 @@ static void DODX_CleanupExtensionHooks()
 
 #if defined(__linux__) || defined(__APPLE__)
 // KTP: Runtime detection of pdata offset for grenade ammo
-// Called from NBase.cpp when first grenade operation is performed
-// Probes memory at +4 and +5 offsets to find which one contains valid grenade count
+// Uses a two-phase write-then-verify approach:
 //
-// Detection strategy:
-// 1. Look for a value 1-10 at the expected grenade offset
-// 2. Check if the same value appears at offset_2 and offset_3 (they should match)
-// 3. If +4 matches, use +4; if +5 matches, use +5; otherwise default to +4
+// Phase 1 (first grenade set): Write the requested count to BOTH +4 and +5 offsets.
+//   This ensures the correct offset gets the right value regardless of which is right.
+//   The wrong offset writes to harmless padding/unused fields.
+//   Returns the offset to use for phase 1 writes (0 = special "write both" mode).
+//
+// Phase 2 (second grenade set): Read back from both offsets. The game DLL's spawn
+//   logic runs between phase 1 and phase 2 (or the phase 1 write itself persists at
+//   the correct offset). The offset whose values survived is the correct one.
+//
+// This avoids the timing problem where pdata isn't initialized at first spawn.
+
+// Phase 1: Write to both offsets, mark pending verification
+void DODX_PdataWriteBoth(edict_t* pEdict, int grenadeType, int count)
+{
+	if (!pEdict || !pEdict->pvPrivateData)
+		return;
+
+	int* pData = (int*)pEdict->pvPrivateData;
+
+	int base1, base2, base3;
+	if (grenadeType == 13 || grenadeType == 36) // DODW_HANDGRENADE / MILLS_BOMB
+	{
+		base1 = PDOFFSET_BASE_HANDGRENADE_1;
+		base2 = PDOFFSET_BASE_HANDGRENADE_2;
+		base3 = PDOFFSET_BASE_HANDGRENADE_3;
+	}
+	else if (grenadeType == 14) // DODW_STICKGRENADE
+	{
+		base1 = PDOFFSET_BASE_STICKGRENADE_1;
+		base2 = PDOFFSET_BASE_STICKGRENADE_2;
+		base3 = PDOFFSET_BASE_STICKGRENADE_3;
+	}
+	else
+		return;
+
+	// Write to +4 offsets
+	pData[base1 + 4] = count;
+	pData[base2 + 4] = count;
+	pData[base3 + 4] = count;
+
+	// Write to +5 offsets
+	pData[base1 + 5] = count;
+	pData[base2 + 5] = count;
+	pData[base3 + 5] = count;
+
+	static bool s_loggedPhase1 = false;
+	if (!s_loggedPhase1)
+	{
+		MF_PrintSrvConsole("[DODX] Pdata Phase 1: Writing grenades to both +4 and +5 offsets for auto-detection\n");
+		s_loggedPhase1 = true;
+	}
+}
+
+// Phase 2: Verify which offset is correct by reading back values
 void DODX_DetectPdataOffset(edict_t* pEdict)
 {
 	if (g_bPdataOffsetDetected || !pEdict || !pEdict->pvPrivateData)
@@ -1868,56 +1923,51 @@ void DODX_DetectPdataOffset(edict_t* pEdict)
 
 	int* pData = (int*)pEdict->pvPrivateData;
 
-	// Try +4 offset (Ubuntu 24.04)
-	int offset4_1 = PDOFFSET_BASE_HANDGRENADE_1 + 4;
-	int offset4_2 = PDOFFSET_BASE_HANDGRENADE_2 + 4;
-	int offset4_3 = PDOFFSET_BASE_HANDGRENADE_3 + 4;
+	// Probe ALL grenade families (hand, stick, mills) — not just handgrenades.
+	// If the first set_grenade_ammo call was for stickgrenades, only stick offsets
+	// were written in Phase 1. Probing only handgrenade offsets would read
+	// uninitialized data and fail detection.
+	static const int bases[][3] = {
+		{ PDOFFSET_BASE_HANDGRENADE_1,  PDOFFSET_BASE_HANDGRENADE_2,  PDOFFSET_BASE_HANDGRENADE_3  },
+		{ PDOFFSET_BASE_STICKGRENADE_1, PDOFFSET_BASE_STICKGRENADE_2, PDOFFSET_BASE_STICKGRENADE_3 },
+	};
 
-	// Try +5 offset (Ubuntu 22.04)
-	int offset5_1 = PDOFFSET_BASE_HANDGRENADE_1 + 5;
-	int offset5_2 = PDOFFSET_BASE_HANDGRENADE_2 + 5;
-	int offset5_3 = PDOFFSET_BASE_HANDGRENADE_3 + 5;
-
-	int val4_1 = pData[offset4_1];
-	int val4_2 = pData[offset4_2];
-	int val4_3 = pData[offset4_3];
-
-	int val5_1 = pData[offset5_1];
-	int val5_2 = pData[offset5_2];
-	int val5_3 = pData[offset5_3];
-
-	// Check if +4 offset has valid matching values
-	bool valid4 = (val4_1 >= 1 && val4_1 <= 10 && val4_1 == val4_2 && val4_2 == val4_3);
-
-	// Check if +5 offset has valid matching values
-	bool valid5 = (val5_1 >= 1 && val5_1 <= 10 && val5_1 == val5_2 && val5_2 == val5_3);
-
-	if (valid4 && !valid5)
+	int score4 = 0, score5 = 0;
+	for (int fam = 0; fam < 2; fam++)
 	{
-		g_iLinuxPdataOffsetAdjust = 4;
-		MF_Log("[DODX] Detected pdata offset +4 (Ubuntu 24.04 style) - grenades=%d at offsets %d/%d/%d",
-			val4_1, offset4_1, offset4_2, offset4_3);
+		for (int loc = 0; loc < 3; loc++)
+		{
+			int v4 = pData[bases[fam][loc] + 4];
+			int v5 = pData[bases[fam][loc] + 5];
+			if (v4 >= 1 && v4 <= 10) score4++;
+			if (v5 >= 1 && v5 <= 10) score5++;
+		}
 	}
-	else if (valid5 && !valid4)
+
+	if (score5 > score4 && score5 >= 2)
 	{
 		g_iLinuxPdataOffsetAdjust = 5;
-		MF_Log("[DODX] Detected pdata offset +5 (Ubuntu 22.04 style) - grenades=%d at offsets %d/%d/%d",
-			val5_1, offset5_1, offset5_2, offset5_3);
+		g_bPdataOffsetDetected = true;
+		MF_PrintSrvConsole("[DODX] Auto-detected pdata offset +5 (score +5=%d vs +4=%d out of 6)\n", score5, score4);
 	}
-	else if (valid4 && valid5)
+	else if (score4 > score5 && score4 >= 2)
 	{
-		// Both valid - prefer +4 as it's the newer standard
-		// This shouldn't happen in practice since the offsets don't overlap meaningfully
 		g_iLinuxPdataOffsetAdjust = 4;
-		MF_Log("[DODX] Both offsets valid, using +4 (Ubuntu 24.04 style)");
+		g_bPdataOffsetDetected = true;
+		MF_PrintSrvConsole("[DODX] Auto-detected pdata offset +4 (score +4=%d vs +5=%d out of 6)\n", score4, score5);
+	}
+	else if (score4 == score5 && score4 >= 2)
+	{
+		// Tied with sufficient data - default to +4
+		g_iLinuxPdataOffsetAdjust = 4;
+		g_bPdataOffsetDetected = true;
+		MF_PrintSrvConsole("[DODX] Auto-detected pdata offset +4 (tied %d/%d, defaulting to +4)\n", score4, score5);
 	}
 	else
 	{
-		// Neither valid - keep default +4 and log warning
-		MF_Log("[DODX] Warning: Could not auto-detect pdata offset (val4=%d/%d/%d val5=%d/%d/%d), using +4",
-			val4_1, val4_2, val4_3, val5_1, val5_2, val5_3);
+		// Not enough data yet - defer detection, try again on next operation
+		// Do NOT set g_bPdataOffsetDetected - will retry on next grenade op
+		return;
 	}
-
-	g_bPdataOffsetDetected = true;
 }
 #endif

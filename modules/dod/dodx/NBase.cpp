@@ -15,11 +15,9 @@
 #include "amxxmodule.h"
 #include "dodx.h"
 
-#define WEAPONLIST 71
-
 /* Weapon names aren't send in WeaponList message in DoD */
-weaponlist_s weaponlist[] = 
-{ 
+weaponlist_s weaponlist[] =
+{
 	{ 0,     0,	  0,	false}, // 0,
 	{ -1,    0,	 -1,	true }, // DODW_AMERKNIFE = 1,
 	{ -1,    0,	 -1,	true }, // DODW_GERKNIFE,
@@ -63,6 +61,8 @@ weaponlist_s weaponlist[] =
 	{ 40,    0,	  0,	false}, // DODW_MORTAR,
 	{ 41,    0,	  0,	false}, // DODW_K43_BUTT,
 };
+
+#define WEAPONLIST_SIZE (sizeof(weaponlist) / sizeof(weaponlist[0]))
 
 // from id to name 3 params id, name, len
 static cell AMX_NATIVE_CALL get_weapon_name(AMX *amx, cell *params)
@@ -543,9 +543,6 @@ static cell AMX_NATIVE_CALL cwpn_dmg(AMX *amx, cell *params)
 
 	pVic->pEdict->v.dmg_inflictor = NULL;
 
-	if(!pAtt)
-		pAtt = pVic;
-
 	if(pAtt->index != pVic->index)
 		pAtt->saveHit(pVic , weapon , dmg, aim);
 
@@ -725,14 +722,14 @@ static cell AMX_NATIVE_CALL dod_weaponlist(AMX *amx, cell *params) // player
 	int totalrds = params[5];
 
 	// Bounds check both indices before array access
-	if (id < 0 || id >= WEAPONLIST)
+	if (id < 0 || id >= (int)WEAPONLIST_SIZE)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid weapon id %d (max %d)", id, WEAPONLIST - 1);
+		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid weapon id %d (max %d)", id, (int)WEAPONLIST_SIZE - 1);
 		return 0;
 	}
-	if (wpnID < 0 || wpnID >= WEAPONLIST)
+	if (wpnID < 0 || wpnID >= (int)WEAPONLIST_SIZE)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid wpnID %d (max %d)", wpnID, WEAPONLIST - 1);
+		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid wpnID %d (max %d)", wpnID, (int)WEAPONLIST_SIZE - 1);
 		return 0;
 	}
 
@@ -983,18 +980,24 @@ static cell AMX_NATIVE_CALL dodx_set_grenade_ammo(AMX *amx, cell *params)
 	if (!pPlayer->ingame || !pPlayer->pEdict || !pPlayer->pEdict->pvPrivateData)
 		return 0;
 
-#if defined(__linux__) || defined(__APPLE__)
-	// Auto-detect pdata offset on first grenade operation
-	if (!g_bPdataOffsetDetected)
-		DODX_DetectPdataOffset(pPlayer->pEdict);
-#endif
-
 	int grenadeType = params[2];
 	int count = params[3];
 
 	// Clamp count to reasonable range
 	if (count < 0) count = 0;
 	if (count > 10) count = 10;
+
+#if defined(__linux__) || defined(__APPLE__)
+	if (!g_bPdataOffsetDetected)
+	{
+		// Phase 1: Offset not yet determined. Write to BOTH +4 and +5 offsets
+		// to ensure the correct one gets the value. Then try to detect.
+		DODX_PdataWriteBoth(pPlayer->pEdict, grenadeType, count);
+		// Try to detect now (may defer if data is insufficient)
+		DODX_DetectPdataOffset(pPlayer->pEdict);
+		return 1;
+	}
+#endif
 
 	switch (grenadeType)
 	{
@@ -1153,7 +1156,9 @@ static cell AMX_NATIVE_CALL dodx_give_grenade(AMX *amx, cell *params)
 	// Spawn the entity using game DLL function
 	pGameDll->pfnSpawn(pWeapon);
 
-	// Remember solid state before touch
+	// Remember solid state AFTER spawn but BEFORE touch — pfnSpawn changes
+	// solid (e.g. SOLID_NOT -> SOLID_TRIGGER), so capturing before spawn
+	// would make the post-touch comparison always differ, leaking entities
 	int oldSolid = pWeapon->v.solid;
 
 	// Touch the player to pick it up using game DLL function

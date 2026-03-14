@@ -94,17 +94,13 @@ void LogEventsMngr::CLogEvent::registerFilter(char* filter)
 void LogEventsMngr::setLogString(const char* frmt, va_list& vaptr)
 {
 	++logCounter;
-	int len = vsnprintf(logString, 255, frmt, vaptr);
-	
-	if (len == - 1)
-	{
-		len = 255;
-		logString[len] = 0;
-	}
-	
-	if (len)
-		logString[--len] = 0;
-	
+	int len = vsnprintf(logString, sizeof(logString), frmt, vaptr);
+
+	// POSIX: len >= sizeof means truncation; MSVC: -1 means truncation
+	if (len < 0 || len >= (int)sizeof(logString))
+		len = sizeof(logString) - 1;
+
+	logString[len] = 0;
 	logArgc = 0;
 }
 
@@ -113,19 +109,15 @@ void LogEventsMngr::setLogString(const char* frmt, ...)
 	++logCounter;
 	va_list logArgPtr;
 	va_start(logArgPtr, frmt);
-	int len = vsnprintf(logString, 255, frmt, logArgPtr);
-	
-	if (len == - 1)
-	{
-		len = 255;
-		logString[len] = 0;
-	}
-	
+	int len = vsnprintf(logString, sizeof(logString), frmt, logArgPtr);
+
+	// POSIX: len >= sizeof means truncation; MSVC: -1 means truncation
+	if (len < 0 || len >= (int)sizeof(logString))
+		len = sizeof(logString) - 1;
+
+	logString[len] = 0;
 	va_end(logArgPtr);
-	
-	if (len)
-		logString[--len] = 0;
-	
+
 	logArgc = 0;
 }
 

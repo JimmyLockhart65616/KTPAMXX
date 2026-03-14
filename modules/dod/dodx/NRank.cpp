@@ -155,7 +155,7 @@ static cell AMX_NATIVE_CALL get_user_wrstats(AMX *amx, cell *params) /* 4 param 
 	// KTP: Safety check - verify player is valid before accessing stats
 	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
 		return 0;
-	if (pPlayer->weaponsLife[weapon].shots){
+	if (pPlayer->weaponsRnd[weapon].shots){
 		cell *cpStats = MF_GetAmxAddr(amx,params[3]);
 		cell *cpBodyHits = MF_GetAmxAddr(amx,params[4]);
 		Stats* stats = &pPlayer->weaponsRnd[weapon];

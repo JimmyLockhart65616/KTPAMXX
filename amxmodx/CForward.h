@@ -86,6 +86,8 @@ class CForward
 	AMXForwardList m_Funcs;
 	ForwardParam m_ParamTypes[FORWARD_MAX_PARAMS];
 
+	friend class CForwardMngr;
+
 public:
 	CForward(const char *name, ForwardExecType et, int numParams, const ForwardParam * paramTypes);
 	CForward() {}		// leaves everything unitialized'

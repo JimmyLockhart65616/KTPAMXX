@@ -104,7 +104,7 @@ int CPluginMngr::loadPluginsFromFile(const char* filename, bool warn)
 				ptr++;
 			}
 		}
-		sscanf(line, "%s %s", pluginName, debug);
+		sscanf(line, "%255s %255s", pluginName, debug);
 
 		if (!isalnum(*pluginName))
 		{
@@ -759,7 +759,7 @@ void CPluginMngr::CALMFromFile(const char *file)
 		UTIL_TrimRight(rline);
 
 		pluginName[0] = '\0';
-		sscanf(rline, "%s", pluginName);
+		sscanf(rline, "%255s", pluginName);
 
 		/* HACK: see if there's a 'disabled' coming up
 		 * new block for scopying flexibility

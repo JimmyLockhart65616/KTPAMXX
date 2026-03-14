@@ -29,8 +29,9 @@ fi
 
 # Check for 32-bit build support
 if ! dpkg --print-foreign-architectures | grep -q i386; then
-    echo "WARNING: 32-bit architecture support may not be enabled"
-    echo "You may need to run: sudo dpkg --add-architecture i386 && sudo apt-get update"
+    echo "ERROR: 32-bit (i386) architecture support is not enabled."
+    echo "Fix: sudo dpkg --add-architecture i386 && sudo apt-get update && sudo apt-get install -y gcc-multilib g++-multilib"
+    exit 1
 fi
 
 echo "All required tools found!"
@@ -151,30 +152,6 @@ if [ -f "$BINARY_PATH" ]; then
             mkdir -p "$DEPLOY_DIR/dod/addons/ktpamx/modules"
             cp "$DODX_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/modules/"
             echo "  -> Copied dodx_ktp_i386.so"
-        fi
-
-        # Deploy Fun module if built
-        FUN_PATH="obj-linux/packages/base/addons/ktpamx/modules/fun_ktp_i386.so"
-        if [ -f "$FUN_PATH" ]; then
-            mkdir -p "$DEPLOY_DIR/dod/addons/ktpamx/modules"
-            cp "$FUN_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/modules/"
-            echo "  -> Copied fun_ktp_i386.so"
-        fi
-
-        # Deploy Engine module if built
-        ENGINE_PATH="obj-linux/packages/base/addons/ktpamx/modules/engine_ktp_i386.so"
-        if [ -f "$ENGINE_PATH" ]; then
-            mkdir -p "$DEPLOY_DIR/dod/addons/ktpamx/modules"
-            cp "$ENGINE_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/modules/"
-            echo "  -> Copied engine_ktp_i386.so"
-        fi
-
-        # Deploy FakeMeta module if built
-        FAKEMETA_PATH="obj-linux/packages/base/addons/ktpamx/modules/fakemeta_ktp_i386.so"
-        if [ -f "$FAKEMETA_PATH" ]; then
-            mkdir -p "$DEPLOY_DIR/dod/addons/ktpamx/modules"
-            cp "$FAKEMETA_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/modules/"
-            echo "  -> Copied fakemeta_ktp_i386.so"
         fi
 
         # Deploy stats_logging plugin if it exists

@@ -137,6 +137,10 @@ void Client_CurWeapon(void* mValue)
 			if (!mPlayer->pEdict || mPlayer->pEdict->free)
 				break;
 
+			// KTP: Bounds check - iId must be a valid weapon index
+			if (iId < 0 || iId >= DODMAX_WEAPONS)
+				break;
+
 			int iClip = *(int*)mValue;
 
 			mPlayer->old = mPlayer->current;

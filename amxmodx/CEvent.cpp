@@ -246,7 +246,7 @@ int EventsMngr::registerEvent(CPluginMngr::CPlugin* plugin, int func, int flags,
 
 void EventsMngr::parserInit(int msg_type, float* timer, CPlayer* pPlayer, int index)
 {
-	if (msg_type < 0 || msg_type > MAX_AMX_REG_MSG)
+	if (msg_type < 0 || msg_type >= MAX_AMX_REG_MSG)
 		return;
 
 	m_ParseNotDone = false;

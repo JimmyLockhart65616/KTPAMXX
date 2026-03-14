@@ -5,6 +5,196 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.2] - 2026-03-13
+
+### Fixed
+
+#### CLogEvent Second Overload Last-Char Trim (CLogEvent.cpp)
+The variadic `setLogString` overload still had the old `logString[--len] = 0` trim that was correctly removed from the first (va_list) overload. Every log event written through `AlertMessage_RH` in extension mode had its last character silently dropped (typically the closing `"` on DoD log events), which could break `register_logevent` filter matching.
+
+#### MessageHook_Handler Null Chain Propagation (meta_api.cpp)
+When `msg` was null, the handler called `chain->callNext(null)` which would propagate null into downstream hooks that dereference `msg`. Changed to return immediately without calling the chain.
+
+#### Say/Say_team Prefix List Separation (meta_api.cpp)
+Registered `say_team` prefix before `say` to prevent prefix list merging. `findPrefix` uses `strncmp` with the prefix's own length, so `"say"` (len 3) matched `"say_team"` causing both to share one list (~199 entries). Now separated: ~119 `say` + ~80 `say_team`.
+
+---
+
+## [2.7.1] - 2026-03-13
+
+### Critical — SP Forward Null Deref (CForward.cpp)
+`CSPForward::execute` crashed if `findPluginFast(m_Amx)` returned null (plugin unloaded while forward handle still live). Added null check before dereference.
+
+### Critical — MessageHook_Handler Null Check Order (meta_api.cpp)
+Null check on `msg` occurred after `chain->callNext(msg)` — crash if msg was null inside the chain. Moved null check before callNext.
+
+### Critical — Extension Mode Map-Change Memory Leaks (meta_api.cpp)
+`KTPAMX_ReloadPlugins` was missing `g_xvars.clear()`, `g_vault.clear()`, and `ClearPluginLibraries()`. Xvar IDs accumulated without dedup each map change (stale cross-plugin variable access). Plugin-registered native trampolines leaked mmap'd memory per map change.
+
+### Critical — DODX `dod_weaponlist` Array OOB (NBase.cpp)
+Bounds check used `WEAPONLIST` (hardcoded 71) but the `weaponlist[]` array only has 42 entries. Indices 42-70 accessed uninitialized memory. Replaced with `WEAPONLIST_SIZE` computed from actual array size.
+
+### Critical — Event `parserInit` Off-By-One (CEvent.cpp)
+Guard used `msg_type > MAX_AMX_REG_MSG` (should be `>=`). Allowed access one past end of `m_Events[]` array.
+
+### Fixed
+
+#### DODX Shot Double-Counting Disabled (CMisc.cpp)
+`CheckShotFired()` button-based shot detection ran in PreThink alongside `CurWeapon` message handler clip-decrement detection. Every shot was counted twice in extension mode, inflating HLStatsX accuracy stats. Disabled button-based path — CurWeapon handler is authoritative in both modes.
+
+#### `SV_CheckConsistencyResponse_RH` Player Guard (meta_api.cpp)
+Added `pPlayer->initialized` check before firing `FF_InconsistentFile` forward. Prevents plugin handlers from accessing uninitialized player state during connection handshake.
+
+#### `dodx_give_grenade` Entity Leak (NBase.cpp)
+`oldSolid` was captured before `pfnSpawn` which changes `.solid`. Post-touch comparison was always false, so failed pickups never cleaned up the entity. Moved capture to after spawn.
+
+#### `_FORTIFY_SOURCE=2` Debug Build Fix (AMBuildScript)
+Moved `-D_FORTIFY_SOURCE=2` into the optimization block. GCC requires `-O1+` for FORTIFY; without it, `-Werror` fails debug builds.
+
+#### `CLogEvent` Truncation Handling (CLogEvent.cpp)
+Used full `sizeof(logString)` instead of hardcoded 255. Fixed POSIX truncation detection (returns would-be length, not -1). Removed unnecessary last-character trim.
+
+#### `C_ClientConnect_Post` Bounds Check (meta_api.cpp)
+Added ENTINDEX bounds check before `GET_PLAYER_POINTER`. Prevents crash if Metamod passes entity 0 or out-of-range entity.
+
+#### `DODX_OnMsgBegin` gpGlobals Guard (moduleconfig.cpp)
+Added null guard on `gpGlobals` before accessing `->maxClients`. Prevents crash if message fires before DODX extension hooks are initialized.
+
+#### `CALMFromFile` sscanf Width (CPlugin.cpp)
+`sscanf("%s")` into `pluginName[256]` changed to `"%255s"`.
+
+#### `srvcmd.cpp` strtol Validation (srvcmd.cpp)
+`strtol` end-pointer check was dead code (`!pEnd` — strtol never returns NULL). Fixed to check for no-digits-parsed and trailing garbage.
+
+## [2.7.0] - 2026-03-13
+
+### Critical — JIT/ASM32 Re-Enabled
+The Pawn JIT compiler and x86 ASM dispatcher were disabled since the initial KTP fork (`AMBuilder` lines 7-9 commented out with "KTP DEBUG" label). All plugins were executing through the slow C interpreter instead of native x86 JIT-compiled code. Re-enabled `JIT`, `ASM32` defines and `amxexecn.asm`, `amxjitsn.asm` assembly files. Significant performance improvement expected for all plugin callbacks.
+
+### Critical — Security Hardening Flags
+Added compiler and linker hardening flags to `configure_linux` in `AMBuildScript`:
+- `-fstack-protector-strong` — stack canary protection for local buffers
+- `-D_FORTIFY_SOURCE=2` — compile-time and runtime bounds checking on libc functions
+- `-Wl,-z,relro -Wl,-z,now` — full RELRO (GOT read-only after dynamic linking)
+
+### Critical — Module SDK `rewriteNativeLists` Double-Free (CModule.cpp)
+`MNF_OverrideNatives` called more than once (multiple modules across map loads) appended the same index to `m_DestroyableIndexes` without dedup. On `clear()`, the destructor loop called `delete[]` on the same index twice. Added dedup check before appending.
+
+### Critical — `detachReloadModules` Stale Pointers (modules.cpp)
+After `detachReloadModules()`, `g_moduleFrameCallbacks` and the three message handler arrays (`g_ModuleMsgBeginHandlers`, `g_ModuleMsgHandlers`, `g_ModuleMsgEndHandlers`) retained function pointers into unmapped `.so` memory. Added `Module_ClearFrameCallbacks()` and `Module_ClearMsgHandlers()` cleanup functions called from `detachReloadModules`.
+
+### Critical — DODX `saveKill`/`saveHit` Bounds Checks (CMisc.cpp)
+`wweapon` used as index into `weapons[]`, `weaponsLife[]`, `weaponsRnd[]`, `weaponData[]` without validation. `bbody` (hitgroup) indexed `bodyHits[8]` without bounds check. Added clamping: `wweapon` to `[0, DODMAX_WEAPONS)`, `bbody` to `[0, 7]`.
+
+### Critical — DODX `Client_CurWeapon` Bounds Check (usermsg.cpp)
+`iId` from network message used as direct array index into `weaponData[]` and `weapons[]` without range check. Added `break` guard for out-of-range values.
+
+### Critical — `C_ClientCvarChanged` Missing Guard (meta_api.cpp)
+`pfnClientCvarChanged` fired `client_cvar_changed` forward without checking `pPlayer->initialized` or `pPlayer->ingame`. Cvar responses during reconnect/map-change could crash plugin handlers. Added `initialized && ingame` guard before `executeForwards`.
+
+### Fixed
+
+#### Pass-Through Hooks Disabled (meta_api.cpp)
+`ExecuteServerStringCmd_RH` and `Steam_GSBUpdateUserData_RH` were registered unconditionally but did nothing except call the chain. Every client command went through extra function call overhead for zero functionality. Commented out registration and function definitions.
+
+#### `sscanf` Unbounded Writes (CCmd.cpp, CPlugin.cpp)
+`Command::Command()` used `sscanf("%s %s")` into `char[64]` buffers — changed to `"%63s %63s"`. `loadPluginsFromFile` used `"%s"` into `char[256]` — changed to `"%255s"`.
+
+#### `C_StartFrame_Post` Dead Code Guard (meta_api.cpp)
+The `g_putinserver` processing block in `C_StartFrame_Post` was dead code in extension mode. Replaced `#if 0` with runtime guard `!g_bRehldsExtensionInit` so it only runs under Metamod.
+
+#### `g_szPreviousMap` Dead Variable Removed (meta_api.cpp)
+Written in three places, read nowhere. Removed declaration and all write sites.
+
+#### Module SDK Null/Free Edict Guards (modules.cpp)
+`MNF_GetPlayerFrags`, `MNF_GetPlayerHealth`, `MNF_GetPlayerArmor`, `MNF_IsPlayerHLTV` accessed `pPlayer->pEdict->v` without null/free checks. Added guards returning 0 on null or freed edicts.
+
+#### `sprintf` Overflow in `CheckModules` (modules.cpp)
+`sprintf(error, ...)` into `char[128]` with no length limit. Changed to `snprintf(error, 128, ...)`.
+
+#### DODX `get_user_wrstats` Wrong Guard (NRank.cpp)
+Guard checked `pPlayer->weaponsLife[weapon].shots` (life stats) but function copies from `pPlayer->weaponsRnd[weapon]` (round stats). Changed guard to `weaponsRnd`.
+
+#### DODX `Scoping()` Global vs `this` (CMisc.cpp)
+Member function `CPlayer::Scoping()` accessed `mPlayer->current` (global message state pointer) instead of `this->current`. Fixed all three references.
+
+#### DODX `cwpn_dmg` Dead Null Check (NBase.cpp)
+`pAtt` dereferenced before null check — guard was unreachable. Removed dead `if(!pAtt) pAtt = pVic` block.
+
+#### Forward Dedup Missing Param Types (CForward.cpp, CForward.h)
+Multi-forward dedup matched on name + execType + numParams only. Two forwards with same name/count but different param types would collide. Added `memcmp` on `m_ParamTypes` array to match SP forward dedup behavior.
+
+#### Dual `g_putinserver` Processing Guard (meta_api.cpp)
+Both `C_StartFrame_Post` and `SV_Frame_RH` could process the `g_putinserver` queue in extension mode. `C_StartFrame_Post` now guarded to only run under Metamod.
+
+### Build System
+- 32-bit architecture check changed from warning to hard `exit 1` (`build_linux.sh`)
+- Removed dead deploy blocks for fun/engine/fakemeta modules (`build_linux.sh`)
+- Removed fun/engine/fakemeta from CLAUDE.md build output table
+
+## [2.6.18] - 2026-03-12
+
+### Fixed
+
+#### DODX Module - Pdata Detection Log Spam
+`DODX_PdataWriteBoth` and `DODX_DetectPdataOffset` called `MF_Log` (synchronous `fprintf`) on every grenade set call during the detection phase. On map load with KTPPracticeMode active and players spawning, this generated dozens of synchronous log writes during an already high-load window. Changed Phase 1 to log once via `MF_PrintSrvConsole`, removed per-call Phase 2 probe logging, and kept only the final detection result output.
+
+#### DODX Module - Stickgrenade-First Detection Failure
+`DODX_DetectPdataOffset` only probed handgrenade offsets, but Phase 1 writes go to whichever grenade family was requested. If the first `dodx_set_grenade_ammo` call was for stickgrenades (Axis players), the handgrenade offsets were never written, causing detection to read uninitialized data and defer indefinitely. Now probes both handgrenade and stickgrenade families, scoring across all 6 locations.
+
+#### DODX Module - Tied Score Tiebreaker Simplification
+The old consistency tiebreaker compared per-location value equality, but those local variables no longer exist after the multi-family probe rewrite. Simplified to default to +4 on tied scores, which matches the historical Ubuntu 22.04 behavior.
+
+#### Stats Logging - Flush Task Registration in Hookchain Context
+`stats_logging.sma` registered its repeating buffer flush task in `plugin_init`, which fires from within a ReHLDS hookchain handler in extension mode. `set_task` with repeating flag intermittently fails to register in this context (~10% failure rate). Moved task registration to `plugin_cfg`, which fires later and outside the hookchain. Without this fix, headshot kill events could accumulate in the buffer and never flush until the next map change.
+
+#### Core AMXX - Dead Code Removal
+Removed `KTPAMX_ServerDeactivate()` and `KTPAMX_ServerDeactivatePost()` — superseded by `SV_InactivateClients_RH` hook in v2.6.15 but left in the file. The old functions contained an older disconnect loop that manually zeroed player fields instead of calling `pPlayer->Disconnect()`, creating a maintenance hazard.
+
+## [2.6.17] - 2026-03-11
+
+### Fixed
+
+#### DODX Module - Team Score Zeroed Before Halftime Save
+
+`DODX_OnChangelevel` reset `AlliesScore` and `AxisScore` to 0 before KTPMatchHandler's changelevel hook could read them. This caused `save_first_half_scores()` to always save 0-0, breaking score carry-forward into the second half. Every match since v2.6.15 reported 0-0 at halftime regardless of actual score.
+
+Moved score zeroing from `DODX_OnChangelevel` (pre-changelevel) to `DODX_OnSV_ActivateServer` (post-map-load), so plugin hooks can read the actual scores during the changelevel transition before they're cleared for the new map.
+
+## [2.6.16] - 2026-03-11
+
+### Fixed
+
+#### DODX Module - Pdata Offset Auto-Detection Rewrite
+
+The pdata offset auto-detection for grenade ammo operations failed on first player spawn because the game DLL hadn't initialized the player's private data yet. The old logic required all 3 grenade memory locations to contain matching valid values (1-10), but at spawn time they were uninitialized (all zeros), causing detection to fail silently and lock in the wrong default (+4).
+
+Replaced with a two-phase write-then-verify approach:
+- **Phase 1** (first grenade set call): Writes the requested count to BOTH +4 and +5 offsets, ensuring the correct one gets the right value regardless of which is correct
+- **Phase 2** (second grenade set call): Reads back from both offsets and scores each by how many of the 3 locations contain valid values (1-10). The higher-scoring offset wins, with a minimum threshold of 2/3
+- If neither offset has sufficient data, detection defers and retries on the next grenade operation instead of locking in a wrong answer
+
+This eliminates the need for manual `pdata_offset` configuration in `dodx.ini` — the correct offset is determined automatically based on the actual game DLL binary and server environment.
+
+## [2.6.15] - 2026-03-11
+
+### Fixed
+
+#### Core AMXX - Extension Mode Lifecycle Gaps
+
+`plugin_end` and `client_disconnect` forwards were not firing before map transitions in extension mode. This caused memory leaks and missing cleanup on every map change:
+- `modules_callPluginsUnloading()` now called before plugin re-initialization, allowing modules (ReAPI) to clear hookchain vectors that are 100% plugin-owned
+- Data handles (Arrays, Tries, DataPacks) properly freed between maps
+- HUD sync objects, dynamic admins, and cvar manager state cleaned up
+- Grenade and auth caches cleared on reload
+
+#### Core AMXX - Plugin Re-initialization Deduplication
+
+Subsystem registrations accumulated on every map change because `plugin_init` re-ran without clearing prior state. Clearing was unsafe (segfaults) because C++ modules register state during `AMXX_Attach` that must persist. Fixed with dedup-at-registration for all subsystems:
+- Commands, SP forwards, multi-forwards, events, log events, messages, menus
+- `setCmdType()` changed to return bool, preventing secondary list accumulation
+- Result: `plugin_init` flat at ~0.9ms regardless of map changes (was growing to 107ms+)
+
 ## [2.6.14] - 2026-03-05
 
 ### Fixed

@@ -34,7 +34,7 @@ CmdMngr::Command::Command(CPluginMngr::CPlugin* pplugin, const char* pcmd, const
 {
 	char szCmd[64], szArg[64];
 	*szCmd = 0; *szArg = 0;
-	sscanf(pcmd, "%s %s", szCmd, szArg);
+	sscanf(pcmd, "%63s %63s", szCmd, szArg);
 	command = szCmd;
 	argument = szArg;
 	plugin = pplugin;

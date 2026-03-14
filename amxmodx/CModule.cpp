@@ -134,7 +134,17 @@ void CModule::rewriteNativeLists(AMX_NATIVE_INFO *list)
 			rlist[newlist.length()].func = NULL;
 			rlist[newlist.length()].name = NULL;
 			m_Natives[i] = rlist;
-			m_DestroyableIndexes.append(i);
+			bool alreadyTracked = false;
+			for (size_t d = 0; d < m_DestroyableIndexes.length(); d++)
+			{
+				if (m_DestroyableIndexes[d] == i)
+				{
+					alreadyTracked = true;
+					break;
+				}
+			}
+			if (!alreadyTracked)
+				m_DestroyableIndexes.append(i);
 		}
 	}
 }

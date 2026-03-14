@@ -272,7 +272,7 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		return 0;
 
 	CPluginMngr::CPlugin *pPlugin = g_plugins.findPluginFast(m_Amx);
-	if (!pPlugin->isExecutable(m_Func))
+	if (!pPlugin || !pPlugin->isExecutable(m_Func))
 		return 0;
 
 	m_InExec = true;
@@ -430,15 +430,18 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 
 int CForwardMngr::registerForward(const char *funcName, ForwardExecType et, int numParams, const ForwardParam * paramTypes)
 {
-	// KTP: Dedup -- if same function name + exec type + param count exists, return it.
+	// KTP: Dedup -- if same function name + exec type + param count + param types exists, return it.
 	// In extension mode, plugin_init fires on every map change. Multi-forwards like
 	// CreateMultiForward("client_connect", ...) would otherwise accumulate duplicates.
+	// IMPORTANT: Must also match paramTypes -- the same forward name could theoretically be
+	// registered with different param signatures; matching on name/count alone would collide.
 	for (size_t i = 0; i < m_Forwards.length(); i++)
 	{
 		CForward *fwd = m_Forwards[i];
 		if (fwd && fwd->getExecType() == et &&
 			fwd->getParamsNum() == numParams &&
-			!strcmp(fwd->getFuncName(), funcName))
+			!strcmp(fwd->getFuncName(), funcName) &&
+			memcmp(fwd->m_ParamTypes, paramTypes, numParams * sizeof(ForwardParam)) == 0)
 		{
 			return (int)(i << 1);
 		}

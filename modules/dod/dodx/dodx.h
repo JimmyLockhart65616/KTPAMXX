@@ -101,7 +101,9 @@ enum
 	extern bool g_bPdataOffsetDetected;
 	extern bool g_bPdataOffsetForced;
 
-	// Detection function - call from NBase.cpp before grenade operations
+	// Phase 1: Write to both +4 and +5 offsets when offset is unknown
+	void DODX_PdataWriteBoth(edict_t* pEdict, int grenadeType, int count);
+	// Phase 2: Detect correct offset by scoring which has valid values
 	void DODX_DetectPdataOffset(edict_t* pEdict);
 
 	// Macros that use runtime offset adjustment

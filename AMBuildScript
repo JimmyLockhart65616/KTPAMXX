@@ -204,7 +204,6 @@ class AMXXConfig(object):
       '-Wno-unused',
       '-Wno-switch',
       '-Wno-format',
-      '-Wno-format-security',
       '-m32',
     ]
     cxx.cxxflags += [
@@ -264,6 +263,8 @@ class AMXXConfig(object):
 
     if builder.options.opt == '1':
       cxx.cflags += ['-O2']
+      # FORTIFY_SOURCE requires optimization (-O1+) to work; GCC errors with -Werror otherwise
+      cxx.cflags += ['-D_FORTIFY_SOURCE=2']
 
   def configure_msvc(self, cxx):
     if builder.options.debug == '1':
@@ -326,6 +327,15 @@ class AMXXConfig(object):
       cxx.linkflags  += ['-lgcc_eh']
     if cxx.like('gcc'):
       self.stdcxx_path = self.invokeCompiler(['-m32', '-print-file-name=' + 'libstdc++.a'])[0]
+
+    # KTP security hardening flags
+    cxx.cflags += [
+      '-fstack-protector-strong',  # Stack smashing protection (covers more cases than -fstack-protector)
+    ]
+    cxx.linkflags += [
+      '-Wl,-z,relro',  # Mark GOT read-only after dynamic linking (partial RELRO)
+      '-Wl,-z,now',    # Resolve all symbols at load time, enabling full RELRO
+    ]
 
   def configure_mac(self, cxx):
     cxx.defines += ['OSX', '_OSX', 'POSIX']

@@ -75,9 +75,9 @@ void amx_command()
 			char *pEnd;
 			auto id = strtol(CMD_ARGV(2), &pEnd, 10);
 
-			if (!pEnd)
+			if (pEnd == CMD_ARGV(2) || (pEnd && *pEnd != '\0'))
 			{
-				print_srvconsole("Invalid plugin index %i.\n", id);
+				print_srvconsole("Invalid plugin index: %s\n", CMD_ARGV(2));
 				return;
 			}
 

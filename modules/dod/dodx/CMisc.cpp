@@ -162,6 +162,9 @@ void CPlayer::saveKill(CPlayer* pVictim, int wweapon, int hhs, int ttk){
 	if ( ignoreBots(pEdict,pVictim->pEdict) )
 		return;
 
+	if ( wweapon < 0 || wweapon >= DODMAX_WEAPONS )
+		wweapon = 0;
+
 	if ( pVictim->index == index )
 	{ // killed self
 		pVictim->weapons[0].deaths++;
@@ -234,6 +237,12 @@ void CPlayer::saveHit(CPlayer* pVictim, int wweapon, int ddamage, int bbody){
 
 	if ( ignoreBots(pEdict,pVictim->pEdict) )
 		return;
+
+	if ( wweapon < 0 || wweapon >= DODMAX_WEAPONS )
+		wweapon = 0;
+
+	if ( bbody < 0 || bbody >= 8 )
+		bbody = 0;
 
 	pVictim->attackers[index].hits++;
 	pVictim->attackers[index].damage += ddamage;
@@ -401,9 +410,10 @@ void CPlayer::PreThink()
 
 	wpns_bitfield = pEdict->v.weapons & ~(1<<31);
 
-	// KTP: Check for shot fired (extension mode shot tracking)
-	// Only in extension mode since message-based tracking works in metamod mode
-	CheckShotFired();
+	// KTP: CheckShotFired() DISABLED — CurWeapon message handler (usermsg.cpp)
+	// tracks shots via clip decrement and works in both Metamod and extension mode.
+	// Running both paths double-counts every shot, inflating accuracy stats.
+	// CheckShotFired();
 }
 
 // KTP: Shot detection for extension mode via button state tracking
@@ -534,11 +544,11 @@ void CPlayer::Scoping(int value)
 	// This is when the scope is dropped from the eye
 	case 0:
 		// Is this an initial call
-		if(mPlayer->current == 0)
+		if(this->current == 0)
 			return;
 
 		//			SKar					Spring					SFG42						SEnfield
-		if((mPlayer->current == 6 || mPlayer->current == 9 || mPlayer->current == 32 || mPlayer->current == 35) && is_scoped)
+		if((this->current == 6 || this->current == 9 || this->current == 32 || this->current == 35) && is_scoped)
 		{
 			is_scoped = false;
 			do_scoped = true;
@@ -549,7 +559,7 @@ void CPlayer::Scoping(int value)
 	// This is when the scope is put up to the eye
 	case 20:
 		//			SKar					Spring					SFG42						SEnfield
-		if((mPlayer->current == 6 || mPlayer->current == 9 || mPlayer->current == 32 || mPlayer->current == 35) && !is_scoped)
+		if((this->current == 6 || this->current == 9 || this->current == 32 || this->current == 35) && !is_scoped)
 		{
 			is_scoped = true;
 			do_scoped = true;

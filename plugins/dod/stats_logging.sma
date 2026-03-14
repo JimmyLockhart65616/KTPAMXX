@@ -15,7 +15,18 @@
 #include <amxmodx>
 #include <dodx>
 
-#define PLUGIN_VERSION "1.10.1"
+#define PLUGIN_VERSION "1.11.0"
+
+// KTP: Buffered logging to avoid synchronous file I/O during postthink.
+// client_death fires inside SV_RunCmd postthink phase — a single log_message()
+// call can stall the frame 26-122ms due to synchronous fwrite. Instead, we
+// append to a memory buffer and flush periodically from a set_task callback.
+#define LOG_BUFFER_MAX_ENTRIES 32
+#define LOG_BUFFER_LINE_LEN 512
+#define LOG_BUFFER_FLUSH_INTERVAL 5.0
+
+new g_logBuffer[LOG_BUFFER_MAX_ENTRIES][LOG_BUFFER_LINE_LEN]
+new g_logBufferCount = 0
 
 new g_pingSum[MAX_PLAYERS + 1]
 new g_pingCount[MAX_PLAYERS + 1]
@@ -30,6 +41,44 @@ public plugin_init() {
   // KTP: Don't call "log on" - it causes log rotation
   // Logging should be enabled via sv_logfile 1 in server.cfg
   // The "log on" command will close and reopen the log file, breaking file writes
+}
+
+public plugin_cfg() {
+  // KTP: Start periodic flush for buffered log entries.
+  // Registered in plugin_cfg (not plugin_init) because plugin_init fires from
+  // within a hookchain handler in extension mode, where set_task with repeating
+  // flag intermittently fails to register (~10% failure rate).
+  set_task(LOG_BUFFER_FLUSH_INTERVAL, "flush_log_buffer_task", .flags="b")
+}
+
+public plugin_end() {
+  // KTP: Flush any remaining buffered log entries before map change
+  flush_log_buffer()
+}
+
+// KTP: Append a formatted log line to the memory buffer instead of writing to disk.
+// If the buffer is full, flush immediately to avoid data loss.
+stock buffer_log(const line[]) {
+  if (g_logBufferCount >= LOG_BUFFER_MAX_ENTRIES)
+    flush_log_buffer()
+
+  copy(g_logBuffer[g_logBufferCount], LOG_BUFFER_LINE_LEN - 1, line)
+  g_logBufferCount++
+}
+
+// KTP: Flush all buffered log entries to disk. Called from set_task and plugin_end.
+public flush_log_buffer_task() {
+  flush_log_buffer()
+}
+
+stock flush_log_buffer() {
+  if (g_logBufferCount <= 0)
+    return
+
+  for (new i = 0; i < g_logBufferCount; i++)
+    log_message("%s", g_logBuffer[i])
+
+  g_logBufferCount = 0
 }
 
 // KTP: Forward handler for dod_stats_flush(id)
@@ -114,10 +163,16 @@ public client_death(killer, victim, wpnindex, hitplace, TK) {
   new iKillerUserid = get_user_userid(killer)
   new iVictimUserid = get_user_userid(victim)
 
-  log_message("^"%s<%d><%s><%s>^" triggered ^"headshot_kill^" against ^"%s<%d><%s><%s>^" with ^"%s^"",
+  // KTP: Buffer headshot_kill log instead of writing to disk synchronously.
+  // client_death fires inside SV_RunCmd postthink — synchronous I/O here
+  // stalls the entire frame 26-122ms. Buffer and flush later.
+  new szLine[LOG_BUFFER_LINE_LEN]
+  formatex(szLine, charsmax(szLine),
+    "^"%s<%d><%s><%s>^" triggered ^"headshot_kill^" against ^"%s<%d><%s><%s>^" with ^"%s^"",
     szKillerName, iKillerUserid, szKillerAuthid, szKillerTeam,
     szVictimName, iVictimUserid, szVictimAuthid, szVictimTeam,
     szWeapon)
+  buffer_log(szLine)
 
   return PLUGIN_CONTINUE
 }
