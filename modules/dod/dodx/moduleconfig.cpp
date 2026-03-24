@@ -306,7 +306,9 @@ void ServerDeactivate()
 		g_rank.clear();
 	}
 
-	g_rank.saveRank( MF_BuildPathname("%s",get_localinfo("dodstats") ) );
+	// KTP: Skip rank save in extension mode (rank system is unused, avoids unnecessary file I/O)
+	if (!g_bExtensionMode)
+		g_rank.saveRank( MF_BuildPathname("%s",get_localinfo("dodstats") ) );
 
 	// clear custom weapons info
 	for ( i=DODMAX_WEAPONS-DODMAX_CUSTOMWPNS;i<DODMAX_WEAPONS;i++)
@@ -941,23 +943,10 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	if (!gpGlobals)
 		return;
 
-	// KTP: Extension mode initialization - calculate g_pFirstEdict and set g_bServerActive
-	// In metamod mode, ServerActivate_Post handles this. In extension mode, we do it here on first valid player.
+	// KTP: In extension mode, g_pFirstEdict is set by DODX_OnSV_ActivateServer.
+	// If it failed for any reason, bail out rather than attempting unsafe fallback init.
 	if (g_bExtensionMode && !g_pFirstEdict)
-	{
-		// Calculate first edict from this player's edict
-		// We need to figure out this player's index first using engine function
-		int tmpIndex = ENTINDEX(pEntity);
-		if (tmpIndex >= 1 && tmpIndex <= gpGlobals->maxClients)
-		{
-			g_pFirstEdict = pEntity - tmpIndex;
-			g_bServerActive = true;
-
-			// Initialize all player slots now that we have g_pFirstEdict
-			for (int i = 1; i <= gpGlobals->maxClients; ++i)
-				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
-		}
-	}
+		return;
 
 	// KTP: Skip if server is not active (during map change)
 	if (!g_bServerActive)

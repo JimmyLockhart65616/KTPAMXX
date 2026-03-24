@@ -229,6 +229,16 @@ native dodx_set_match_id(const matchId[]);
 native dodx_get_match_id(output[], maxlen);
 
 /**
+ * Pause or unpause stats collection.
+ * When paused, kills/damage/shots are not accumulated in DODX stats.
+ * Used by KTPMatchHandler to filter round-freeze kills during matches.
+ *
+ * @param paused    1 to pause, 0 to resume
+ * @return          1 on success
+ */
+native dodx_set_stats_paused(paused);
+
+/**
  * Set player's team name in private data.
  * This affects server-side logs but NOT the scoreboard column
  * (DoD client hardcodes "Allies"/"Axis" team names).

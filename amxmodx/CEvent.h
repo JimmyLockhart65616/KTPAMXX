@@ -81,6 +81,7 @@ public:
 		};
 
 		cond_t *m_Conditions;
+		int m_HandleId;				// KTP: cached handle ID for O(1) dedup lookup
 
 	public:
 		// constructors & destructors
@@ -89,6 +90,8 @@ public:
 
 		inline CPluginMngr::CPlugin* getPlugin();
 		inline int getFunction();
+		inline int getHandleId() { return m_HandleId; }
+		inline void setHandleId(int id) { m_HandleId = id; }
 		void registerFilter(char* filter);			// add a condition
 		void setForwardState(ForwardState value);
 	};

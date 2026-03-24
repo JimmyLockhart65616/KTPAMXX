@@ -456,6 +456,9 @@ extern cvar_t* dodstats_reset;
 extern cvar_t* dodstats_rankbots;
 extern cvar_t* dodstats_pause;
 
+// KTP: Plugin-controlled stats pause (for round-freeze filtering)
+extern bool g_bStatsPaused;
+
 extern weapon_t weaponData[DODMAX_WEAPONS];
 extern traceVault traceData[MAX_TRACE];
 

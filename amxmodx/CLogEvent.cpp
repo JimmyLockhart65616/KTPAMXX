@@ -176,15 +176,10 @@ int LogEventsMngr::registerLogEvent(CPluginMngr::CPlugin* plugin, int func, int 
 	{
 		if (ev->getPlugin() == plugin && ev->getFunction() == func)
 		{
-			// Find the handle for this existing log event
-			for (size_t h = 1; h <= LogEventHandles.size(); h++)
-			{
-				auto* hook = LogEventHandles.lookup(h);
-				if (hook && hook->m_logevent == ev)
-				{
-					return (int)h;
-				}
-			}
+			// KTP: Return cached handle ID directly (O(1) instead of O(n) scan)
+			int cachedHandle = ev->getHandleId();
+			if (cachedHandle > 0)
+				return cachedHandle;
 		}
 	}
 
@@ -204,6 +199,7 @@ int LogEventsMngr::registerLogEvent(CPluginMngr::CPlugin* plugin, int func, int 
 		return 0;
 	}
 
+	logevent->setHandleId(handle);  // KTP: cache handle for O(1) dedup lookup
 	*d = logevent;
 
 	return handle;

@@ -85,16 +85,19 @@ public:
 					if (forward != -1)
 					{
 						unregisterSPForward(forward);
+					}
 
-						m_Forwards.remove(forward);
+					// KTP fix: remove by correct index (i), not by forward ID value
+					// ke::Vector::remove(size_t) removes at position — the original code
+					// passed the forward ID which was implicitly cast to size_t, removing
+					// at a random position instead of the matched entry
+					m_Forwards.remove(i);
 
+					if (fwd != -1)
 						return true;
-					}
-					else
-					{
-						// -1 could be in here more than once
-						m_Forwards.remove(forward);
-					}
+
+					// -1 could be in here more than once, keep scanning
+					--i;
 				}
 			}
 		}

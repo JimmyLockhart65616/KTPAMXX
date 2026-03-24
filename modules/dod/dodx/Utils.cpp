@@ -143,8 +143,16 @@ bool ignoreBots (edict_t *pEnt, edict_t *pOther)
 	return false;
 }
 
+// KTP: Plugin-controlled stats pause (for round-freeze filtering)
+// When true, isModuleActive() returns false — kills, damage, shots not tracked
+bool g_bStatsPaused = false;
+
 bool isModuleActive()
 {
+	// KTP: Plugin-controlled pause (round-freeze filtering)
+	if (g_bStatsPaused)
+		return false;
+
 	// KTP: Use cached cvar pointer instead of CVAR_GET_FLOAT string lookup
 	// CVAR_GET_FLOAT crashes in extension mode PreThink hooks
 	if (dodstats_pause && (int)dodstats_pause->value)

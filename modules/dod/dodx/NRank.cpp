@@ -479,6 +479,15 @@ static cell AMX_NATIVE_CALL dodx_get_match_id(AMX *amx, cell *params)
 	return MF_SetAmxString(amx, params[1], g_szMatchId, params[2]);
 }
 
+// KTP: Native: dodx_set_stats_paused(bool paused)
+// Pause/unpause stats collection (for round-freeze filtering).
+// When paused, isModuleActive() returns false — kills, damage, shots not tracked.
+static cell AMX_NATIVE_CALL dodx_set_stats_paused(AMX *amx, cell *params)
+{
+	g_bStatsPaused = (params[1] != 0);
+	return 1;
+}
+
 AMX_NATIVE_INFO stats_Natives[] = {
 	{ "get_stats",      get_stats},
 	{ "get_statsnum",   get_statsnum},
@@ -497,6 +506,7 @@ AMX_NATIVE_INFO stats_Natives[] = {
 	{ "dodx_reset_all_stats",  dodx_reset_all_stats },
 	{ "dodx_set_match_id",     dodx_set_match_id },
 	{ "dodx_get_match_id",     dodx_get_match_id },
+	{ "dodx_set_stats_paused", dodx_set_stats_paused },
 
 	{ NULL, NULL }
 };

@@ -41,6 +41,10 @@ void CPlayer::Disconnect()
 	object.carrying = false;
 	object.do_forward = false;
 
+	// KTP fix: check edict validity before accessing - can be freed during crash/map-change
+	if (!pEdict || pEdict->free)
+		return;
+
 	if ( ignoreBots(pEdict) || !isModuleActive() ) // ignore if he is bot and bots rank is disabled or module is paused
 		return;
 

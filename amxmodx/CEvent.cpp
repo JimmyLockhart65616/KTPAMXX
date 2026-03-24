@@ -53,6 +53,7 @@ EventsMngr::ClEvent::ClEvent(CPluginMngr::CPlugin* plugin, int func, int flags)
 	m_Stamp = 0.0f;
 	m_Done = false;
 	m_State = FSTATE_ACTIVE;
+	m_HandleId = 0;  // KTP: set after EventHandles.create()
 
 	m_Conditions = NULL;
 }
@@ -215,15 +216,10 @@ int EventsMngr::registerEvent(CPluginMngr::CPlugin* plugin, int func, int flags,
 		auto& existing = m_Events[msgid][i];
 		if (existing->getPlugin() == plugin && existing->getFunction() == func)
 		{
-			// Find the handle for this existing event by scanning EventHandles
-			for (size_t h = 1; h <= EventHandles.size(); h++)
-			{
-				auto* hook = EventHandles.lookup(h);
-				if (hook && hook->m_event == existing.get())
-				{
-					return (int)h;
-				}
-			}
+			// KTP: Return cached handle ID directly (O(1) instead of O(n) scan)
+			int cachedHandle = existing->getHandleId();
+			if (cachedHandle > 0)
+				return cachedHandle;
 		}
 	}
 
@@ -236,6 +232,7 @@ int EventsMngr::registerEvent(CPluginMngr::CPlugin* plugin, int func, int flags,
 		return 0;
 	}
 
+	event->setHandleId(handle);  // KTP: cache handle for O(1) dedup lookup
 	m_Events[msgid].append(ke::Move(event));
 
 	// KTP: Install message hook for extension mode

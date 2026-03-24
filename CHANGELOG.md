@@ -5,6 +5,30 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.4] - 2026-03-24
+
+### Fixed
+
+#### Message Hook RemoveHook Wrong Index (messages.h)
+`RegisteredMessage::RemoveHook` called `m_Forwards.remove(forward)` where `forward` is the SP forward ID value. `ke::Vector::remove(size_t)` treats the argument as a position index, so this removed at position `forward` (a random index) instead of position `i` (the matched entry). Stale forward IDs accumulated in the hook vector on every map change cycle of `register_message`/`unregister_message`. Fixed to use `m_Forwards.remove(i)`.
+
+#### Client_ObjScore Stale Player Pointer (DODX usermsg.cpp)
+`Client_ObjScore` used a `static CPlayer*` across message parse states without revalidation at case 1. If the edict was freed between case 0 and case 1 (possible during extension mode message dispatch), `pPlayer->savedScore` would read corrupt memory. Added validity recheck (`ingame`, `pEdict`, `pEdict->free`) at the top of case 1.
+
+#### PreThink Fallback Init Removed (DODX moduleconfig.cpp)
+`DODX_OnPlayerPreThink` had a fallback `g_pFirstEdict` initialization using `ENTINDEX()` that could run if `DODX_OnSV_ActivateServer` failed. `ENTINDEX` is an engine call that may not be safe during early-stage init. Replaced with a hard guard (`if (!g_pFirstEdict) return;`) since `DODX_OnSV_ActivateServer` is the proper init path.
+
+#### CPlayer::Disconnect Missing Edict Free Check (DODX CMisc.cpp)
+`Disconnect()` called `ignoreBots(pEdict)` without first checking if the edict was freed. During crash/map-change sequences, `pEdict->free` can be set before `ClientDisconnect` fires, causing `ignoreBots` to dereference freed entity flags. Added `if (!pEdict || pEdict->free) return;` guard.
+
+#### Event/LogEvent Dedup O(n) Reverse-Lookup Eliminated (CEvent.cpp, CLogEvent.cpp)
+Event and log event dedup scanned the full `EventHandles`/`LogEventHandles` table to recover the handle ID for a duplicate registration. Added `m_HandleId` field to `ClEvent` and `CLogEvent`, cached at creation time, enabling O(1) handle lookup during dedup.
+
+#### Rank Save Skipped in Extension Mode (DODX moduleconfig.cpp)
+`ServerDeactivate` called `g_rank.saveRank()` unconditionally, performing unnecessary file I/O in extension mode where the rank system is unused. Added `if (!g_bExtensionMode)` guard.
+
+---
+
 ## [2.7.2] - 2026-03-13
 
 ### Fixed

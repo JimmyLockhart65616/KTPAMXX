@@ -94,7 +94,9 @@ void Client_ObjScore(void* mValue)
 			pPlayer = GET_PLAYER_POINTER_I(playerIdx);
 		break;
 	case 1:
-		if (!pPlayer)
+		// KTP fix: revalidate player pointer - edict could have been freed
+		// between case 0 and case 1 if a callback triggered during message dispatch
+		if (!pPlayer || !pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
 			break;
 		score = *(int*)mValue;
 		if ( (pPlayer->lastScore = score - (int)(pPlayer->savedScore)) && isModuleActive() )

@@ -100,13 +100,16 @@ public:
 		ForwardState m_State;
 
 		CLogEvent *next;
-		CLogEvent(CPluginMngr::CPlugin *p, int f, LogEventsMngr* ppp) : plugin(p), func(f), filters(nullptr), parent(ppp), m_State(FSTATE_ACTIVE), next(nullptr) {}
+		int m_HandleId;  // KTP: cached handle ID for O(1) dedup lookup
+		CLogEvent(CPluginMngr::CPlugin *p, int f, LogEventsMngr* ppp) : plugin(p), func(f), filters(nullptr), parent(ppp), m_State(FSTATE_ACTIVE), next(nullptr), m_HandleId(0) {}
 		~CLogEvent();
 	public:
 		inline CPluginMngr::CPlugin *getPlugin() { return plugin; }
 		void registerFilter(char* filter);
 		void setForwardState(ForwardState value);
 		inline int getFunction() { return func; }
+		inline int getHandleId() { return m_HandleId; }
+		inline void setHandleId(int id) { m_HandleId = id; }
 	};
 
 private:
