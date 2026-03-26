@@ -289,11 +289,14 @@ void CTaskMngr::startFrame()
 	auto lastSize = m_Tasks.length();
 	for(auto i = 0u; i < lastSize; i++)
 	{
-		auto &task = m_Tasks[i];
+		// NOTE: Do NOT cache m_Tasks[i] as a reference across executeIfRequired().
+		// The callback may call set_task() → registerTask() → m_Tasks.append(),
+		// which can reallocate the vector's internal buffer, invalidating any
+		// reference/pointer into the old buffer. Always re-index after the callback.
 
-		if (task->isFree())
+		if (m_Tasks[i]->isFree())
 			continue;
-		task->executeIfRequired(*m_pTmr_CurrentTime, *m_pTmr_TimeLimit, *m_pTmr_TimeLeft);
+		m_Tasks[i]->executeIfRequired(*m_pTmr_CurrentTime, *m_pTmr_TimeLimit, *m_pTmr_TimeLeft);
 
 		// A task callback (e.g. changelevel via server_exec) may have triggered
 		// clear() which deferred because we're mid-iteration. Stop iterating
@@ -302,7 +305,7 @@ void CTaskMngr::startFrame()
 			break;
 
 		// Task completed and self-cleared — update active count and free hint
-		if (task->isFree())
+		if (m_Tasks[i]->isFree())
 		{
 			if (m_ActiveCount > 0)
 				m_ActiveCount--;

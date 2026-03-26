@@ -27,6 +27,14 @@ Event and log event dedup scanned the full `EventHandles`/`LogEventHandles` tabl
 #### Rank Save Skipped in Extension Mode (DODX moduleconfig.cpp)
 `ServerDeactivate` called `g_rank.saveRank()` unconditionally, performing unnecessary file I/O in extension mode where the rank system is unused. Added `if (!g_bExtensionMode)` guard.
 
+#### CTaskMngr::startFrame Use-After-Realloc (CTask.cpp)
+`startFrame()` cached `auto &task = m_Tasks[i]` as a reference, then called `task->executeIfRequired()`. If the callback called `set_task()` → `registerTask()` → `m_Tasks.append()`, the vector's internal buffer could reallocate, invalidating the cached reference. Subsequent `task->isFree()` read freed memory. Fixed by re-indexing `m_Tasks[i]` after each callback instead of caching a reference.
+
+### Added
+
+#### `dodx_set_stats_paused` Native (DODX NRank.cpp, Utils.cpp)
+New native `dodx_set_stats_paused(bool paused)` allows plugins to pause/unpause DODX stats collection. When paused, `isModuleActive()` returns false — kills, damage, shots, and ObjScore are not tracked. Used by KTPMatchHandler for round-freeze filtering (pause stats during freeze time, unpause on round live).
+
 ---
 
 ## [2.7.2] - 2026-03-13
