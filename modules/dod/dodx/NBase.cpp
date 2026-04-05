@@ -1074,6 +1074,43 @@ static cell AMX_NATIVE_CALL dodx_set_user_noclip(AMX *amx, cell *params)
 	return 1;
 }
 
+// KTP: Get player movetype (for diagnostics — no engine module in extension mode)
+// dodx_get_user_movetype(id)
+// Returns: movetype value (3=WALK, 8=NOCLIP, etc.) or -1 on error
+static cell AMX_NATIVE_CALL dodx_get_user_movetype(AMX *amx, cell *params)
+{
+	int index = params[1];
+	if (index < 1 || index > gpGlobals->maxClients)
+		return -1;
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->pEdict)
+		return -1;
+
+	return pPlayer->pEdict->v.movetype;
+}
+
+// KTP: Diagnostic — check why CHECK_PLAYER fails for a player index
+// dodx_debug_player_state(id)
+// Returns bitmask: bit0=ingame, bit1=pEdict!=null, bit2=!free, bit3=!FNullEnt
+// A fully valid player returns 15 (0xF). 0 means completely uninitialized.
+static cell AMX_NATIVE_CALL dodx_debug_player_state(AMX *amx, cell *params)
+{
+	int index = params[1];
+	if (index < 1 || index > gpGlobals->maxClients)
+		return -1;
+
+	CPlayer* pPlayer = GET_PLAYER_POINTER_I(index);
+	int result = 0;
+
+	if (pPlayer->ingame)       result |= 1;
+	if (pPlayer->pEdict)       result |= 2;
+	if (pPlayer->pEdict && !pPlayer->pEdict->free)      result |= 4;
+	if (pPlayer->pEdict && !FNullEnt(pPlayer->pEdict))   result |= 8;
+
+	return result;
+}
+
 // KTP: Send AmmoX message to update client HUD
 // dodx_send_ammox(id, ammo_slot, count)
 // ammo_slot: 9 = hand grenade/mills bomb, 11 = stick grenade
@@ -1319,6 +1356,8 @@ AMX_NATIVE_INFO base_Natives[] =
 
 	// KTP: Noclip control (extension mode compatible)
 	{"dodx_set_user_noclip", dodx_set_user_noclip},
+	{"dodx_get_user_movetype", dodx_get_user_movetype},
+	{"dodx_debug_player_state", dodx_debug_player_state},
 	{"dodx_send_ammox", dodx_send_ammox},
 
 	// KTP: Give grenade weapon (for practice mode infinite grenades)

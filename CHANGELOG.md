@@ -5,6 +5,25 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.5] - 2026-04-04
+
+### Fixed
+
+#### DODX Extension Mode: CPlayer Uninitialized on First Map (moduleconfig.cpp)
+In extension mode, `g_pFirstEdict` and `g_bServerActive` were set by the `SV_ActivateServer` hook. However, this hook was registered during `DODX_SetupExtensionHooks()` (called from `OnAmxxAttach`), which runs AFTER the server has already activated for the first map. The hook only fired on subsequent map changes. On the first map, `g_pFirstEdict` stayed NULL, causing `DODX_OnPlayerPreThink` to bail out before initializing any `CPlayer` structs. All DODX natives (`dodx_set_user_noclip`, `dodx_give_grenade`, `dodx_set_grenade_ammo`, etc.) silently returned 0 because `CHECK_PLAYER` saw `ingame=false`. Added fallback initialization in `DODX_SetupExtensionHooks` that reads `INDEXENT(0)` directly. Also fixed `FNullEnt` check on world edict (index 0 is valid, not null).
+
+#### DODX Extension Mode: Player Init Blocked by Stats Pause (moduleconfig.cpp)
+`DODX_OnPlayerPreThink` checked `isModuleActive()` before initializing players. When stats collection was paused (`g_bStatsPaused` or `dodstats_pause` cvar), new players were never marked `ingame`, permanently breaking all DODX natives for them. Moved player initialization before the `isModuleActive()` gate — player tracking must work regardless of stats pause state.
+
+### Added
+
+#### DODX Natives: `dodx_get_user_movetype`, `dodx_debug_player_state` (NBase.cpp, dodx.inc)
+New diagnostic natives for extension mode where the engine module is unavailable:
+- `dodx_get_user_movetype(id)` — returns player movetype (3=WALK, 8=NOCLIP)
+- `dodx_debug_player_state(id)` — returns CPlayer state bitmask (ingame/edict/free/nullent)
+
+---
+
 ## [2.7.4] - 2026-03-24
 
 ### Fixed

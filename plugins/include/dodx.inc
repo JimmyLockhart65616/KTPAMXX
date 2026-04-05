@@ -341,6 +341,22 @@ native dodx_get_grenade_ammo(id, grenade_type);
 native dodx_set_user_noclip(id, noclip);
 
 /**
+ * Get player movetype. Replaces engine module entity_get_int(id, EV_INT_movetype)
+ * for extension mode where the engine module is not available.
+ *
+ * @param id         Player index
+ * @return           Movetype value (3=WALK, 8=NOCLIP, etc.) or -1 on error
+ */
+native dodx_get_user_movetype(id);
+
+/**
+ * Debug: check CPlayer state flags for a player index.
+ * Returns bitmask: bit0=ingame, bit1=pEdict, bit2=!free, bit3=!FNullEnt
+ * A fully valid player returns 15 (0xF).
+ */
+native dodx_debug_player_state(id);
+
+/**
  * Send AmmoX message to update client HUD ammo display.
  * Use this after modifying grenade ammo to sync the client HUD.
  *

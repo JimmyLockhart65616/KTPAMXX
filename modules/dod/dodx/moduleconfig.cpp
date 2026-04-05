@@ -928,52 +928,44 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	// Call original first
 	chain->callNext(pEntity, time);
 
-	// Post-hook logic
-	if (!isModuleActive())
-		return;
-
+	// Post-hook logic — basic safety checks that must pass regardless of stats state
 	if (!pEntity || pEntity->free)
 		return;
 
-	// Verify this is a valid player
 	if (!(pEntity->v.flags & FL_CLIENT))
 		return;
 
-	// KTP: Safety check - gpGlobals must be valid
 	if (!gpGlobals)
 		return;
 
-	// KTP: In extension mode, g_pFirstEdict is set by DODX_OnSV_ActivateServer.
-	// If it failed for any reason, bail out rather than attempting unsafe fallback init.
 	if (g_bExtensionMode && !g_pFirstEdict)
 		return;
 
-	// KTP: Skip if server is not active (during map change)
 	if (!g_bServerActive)
 		return;
 
-	// KTP: g_pFirstEdict must be set before we can do index calculations
 	if (!g_pFirstEdict)
 		return;
 
-	// KTP: Use ENTINDEX_SAFE which uses pointer arithmetic instead of engine call
 	int index = ENTINDEX_SAFE(pEntity);
 	if (index < 1 || index > gpGlobals->maxClients)
 		return;
 
 	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
 
-	// KTP: In extension mode, initialize player on first PreThink call
-	// This replaces ClientPutInServer_Post which doesn't fire in extension mode
+	// KTP: In extension mode, initialize player on first PreThink call.
+	// This replaces ClientPutInServer_Post which doesn't fire in extension mode.
+	// MUST happen BEFORE the isModuleActive() check — player tracking (ingame flag,
+	// pEdict pointer) must work even when stats collection is paused. Otherwise
+	// natives like dodx_set_user_noclip, dodx_give_grenade etc. fail because
+	// CHECK_PLAYER sees ingame=false.
 	if (!pPlayer->ingame && g_bExtensionMode)
 	{
-		// Initialize player struct if not done yet
 		if (!pPlayer->pEdict)
 		{
 			pPlayer->Init(index, pEntity);
 		}
 
-		// Mark as ingame and setup stats
 		pPlayer->bot = (pEntity->v.flags & FL_FAKECLIENT) ? true : false;
 		pPlayer->PutInServer();
 	}
@@ -981,6 +973,10 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	{
 		return;
 	}
+
+	// Stats tracking — skip if module is paused (round-freeze, dodstats_pause cvar)
+	if (!isModuleActive())
+		return;
 
 	pPlayer->PreThink();
 
@@ -1432,8 +1428,30 @@ static bool DODX_SetupExtensionHooks()
 	if (g_pRehldsHookchains->SV_ActivateServer())
 		g_pRehldsHookchains->SV_ActivateServer()->registerHook(DODX_OnSV_ActivateServer, HC_PRIORITY_DEFAULT);
 
-	// IMessageManager hooks enabled - players will be initialized on-demand
-	// when messages arrive (in DODX_OnMessageHandler)
+	// KTP: Initialize g_pFirstEdict NOW as fallback.
+	// The SV_ActivateServer hook fires on map changes, but on the FIRST map load
+	// the server has already activated BEFORE this module registers its hooks.
+	// Without this, g_pFirstEdict stays NULL until the first map change, breaking
+	// all player tracking (PreThink bails out, CHECK_PLAYER fails, natives return 0).
+	if (!g_pFirstEdict)
+	{
+		edict_t *pWorld = NULL;
+		if (gpGlobals && gpGlobals->maxEntities > 0)
+			pWorld = INDEXENT(0);
+		else if (g_engfuncs.pfnPEntityOfEntIndex)
+			pWorld = g_engfuncs.pfnPEntityOfEntIndex(0);
+
+		// NOTE: Do NOT use FNullEnt — edict 0 IS the world entity (index 0 is valid)
+		if (pWorld)
+		{
+			g_pFirstEdict = pWorld;
+			g_bServerActive = true;
+
+			int maxCl = gpGlobals ? gpGlobals->maxClients : 32;
+			for (int i = 1; i <= maxCl; i++)
+				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
+		}
+	}
 
 	return true;
 }
