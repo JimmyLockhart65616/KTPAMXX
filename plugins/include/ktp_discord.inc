@@ -5,11 +5,18 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.3.4
- * DATE: 2026-03-12
+ * VERSION: 1.3.5
+ * DATE: 2026-04-13
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.5 (2026-04-13)
+ *   * FIXED: 164ms spike on first Discord request — new curl handle created per request
+ *     triggered DNS + TLS handshake every time. Added CONNECTTIMEOUT (2s),
+ *     TCP_KEEPALIVE, and DNS_CACHE_TIMEOUT (5min) to curl options.
+ *   + ADDED: ktp_discord_prewarm() — fires /health GET at config load to
+ *     establish TLS connection before any admin action needs it.
+ *
  * v1.3.4 (2026-03-12)
  *   * FIXED: Embed description truncated to 383 chars — escapedDesc[384] local buffer too small
  *   * CHANGED: Embed functions now use global g_ktpDiscordEscapedBuf[2200] for description
@@ -279,6 +286,9 @@ stock bool:ktp_discord_load_config()
 
         // Initialize persistent curl headers (created once, reused for all requests)
         ktp_discord_init_headers();
+
+        // Pre-warm TLS connection to avoid 164ms handshake spike on first admin action
+        ktp_discord_prewarm();
 
         log_amx("[KTP Discord] Loaded %d keys, %d audit channels from %s",
                 loadedCount, g_ktpDiscordAuditChannelCount, path);
@@ -649,6 +659,37 @@ stock ktp_discord_init_headers()
 }
 
 /**
+ * Pre-warm the TLS connection to the Discord relay.
+ * Fires a lightweight health check request so the DNS + TCP + TLS handshake
+ * happens during plugin load (not during admin actions like .changemap).
+ * Call once after ktp_discord_init_headers().
+ */
+stock ktp_discord_prewarm()
+{
+    if (!g_ktpDiscordEnabled || !g_ktpDiscordRelayUrl[0]) return;
+
+    // Build health check URL by replacing /reply with /health
+    new healthUrl[256];
+    copy(healthUrl, charsmax(healthUrl), g_ktpDiscordRelayUrl);
+    new pos = containi(healthUrl, "/reply");
+    if (pos != -1)
+        copy(healthUrl[pos], charsmax(healthUrl) - pos, "/health");
+
+    new CURL:curl = curl_easy_init();
+    if (!curl) return;
+
+    curl_easy_setopt(curl, CURLOPT_URL, healthUrl);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1);
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);
+
+    // GET request (no POST data)
+    curl_easy_perform(curl, "ktp_discord_curl_callback");
+}
+
+/**
  * Internal: Perform a POST request using AMXX curl module
  *
  * @param url       URL to POST to
@@ -674,8 +715,15 @@ stock ktp_discord_curl_post(const url[], const payload[])
     // Set POST data (COPYPOSTFIELDS copies the data, safe even if payload buffer is reused)
     curl_easy_setopt(curl, CURLOPT_COPYPOSTFIELDS, payload);
 
-    // Set timeout (5 seconds)
+    // Set timeout (5 seconds total, 2 seconds for connect)
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 5);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2);
+
+    // Enable TCP keepalive to maintain persistent connections
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1);
+
+    // Cache DNS results for 5 minutes (avoids re-resolution blocking)
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);
 
     // Perform request asynchronously
     curl_easy_perform(curl, "ktp_discord_curl_callback");

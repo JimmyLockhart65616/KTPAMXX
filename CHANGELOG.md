@@ -5,6 +5,15 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.6] - 2026-04-13
+
+### Fixed
+
+#### ktp_discord.inc: 164ms TLS Handshake Spike on First Discord Request
+Every Discord request created a new curl handle (`curl_easy_init`), establishing a fresh DNS + TCP + TLS connection each time. On cold connections to the Cloud Run relay, this blocked the main thread for 100-164ms. Added `CURLOPT_CONNECTTIMEOUT` (2s), `CURLOPT_TCP_KEEPALIVE`, and `CURLOPT_DNS_CACHE_TIMEOUT` (5min) to all curl requests. Added `ktp_discord_prewarm()` that fires a lightweight `/health` GET at config load to establish the TLS connection before any admin action needs it.
+
+---
+
 ## [2.7.5] - 2026-04-04
 
 ### Fixed
