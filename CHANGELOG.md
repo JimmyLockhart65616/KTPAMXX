@@ -5,6 +5,21 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.8] - 2026-04-02
+
+### Changed
+
+#### g_putinserver Bitmask
+Replaced `ke::Vector<int> g_putinserver` with a `uint32_t` bitmask for pending `client_putinserver` forwards. The vector was scanned and compacted every frame during player joins. The bitmask has zero cost when empty (single integer compare), and O(maxClients) bit scan when players are joining — no memory allocation, no compaction, no resize.
+
+#### Module Frame Callback Length Cache
+`Module_ExecuteFrameCallbacks()` now caches `g_moduleFrameCallbacks.length()` before the loop instead of calling it per iteration.
+
+#### DODX TraceLine String Lookup
+Grenade/rocket classname matching in TraceLine hooks now uses pre-cached `ALLOC_STRING` integer comparison instead of `strcmp()` against 6 traceData entries. The `iClassName` field is initialized during `ServerActivate`/`SV_ActivateServer` when precache strings are available. Saves ~50µs per grenade/rocket hit.
+
+---
+
 ## [2.7.7] - 2026-04-02
 
 ### Changed

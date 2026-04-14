@@ -34,12 +34,13 @@
 
 #define MAX_TRACE	6
 
-struct traceVault 
+struct traceVault
 {
 	char szName[16];
 	int iId;
 	int iAction;
 	float fDel;
+	int iClassName;  // KTP: Cached ALLOC_STRING result for integer comparison instead of strcmp
 };
 
 #define ACT_NADE_NONE		(0)
