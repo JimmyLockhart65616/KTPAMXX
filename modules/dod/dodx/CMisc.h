@@ -171,21 +171,24 @@ class CPlayer
 // *****************************************************
 // class Grenades
 // *****************************************************
-class Grenades // : public CObject
+// KTP: Fixed-size pool replaces linked list — no per-grenade allocation, O(n) scan with small n
+class Grenades
 {
+  static const int MAX_GRENADES = 32;
   struct Obj
   {
     CPlayer* player;
     edict_t* grenade;
     float time;
     int type;
-    Obj* next;
-  } *head;
-
+    bool active;
+  };
+  Obj pool[MAX_GRENADES];
+  int count;
 
 public:
-	Grenades() { head = 0; }
-	~Grenades() { clear(); }
+	Grenades() : count(0) { clear(); }
+	~Grenades() {}
 	void put(edict_t* grenade, float time, int type, CPlayer* player);
 	bool find(edict_t* enemy, CPlayer** p, int& type);
 	void clear();

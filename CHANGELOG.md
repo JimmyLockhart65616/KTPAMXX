@@ -5,6 +5,21 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.9] - 2026-04-02
+
+### Changed
+
+#### Event Vault Pre-allocation
+`EventsMngr::NextParam()` no longer dynamically grows the parse vault with `new`/`delete`/`memcpy` on every resize. The vault is now pre-allocated to 32 entries on first use (game messages have at most ~16 parameters). Eliminates allocation churn during high-frequency message parsing at 1000Hz.
+
+#### WeaponsCheck XOR Bitwise Loop
+`CPlayer::WeaponsCheck()` no longer iterates through all 42 weapon slots per player per frame. Uses XOR to find only changed bits, then `__builtin_ctz` to iterate only those weapons. Reduces from 42 iterations to ~2-3 on average (typical weapon pickup/drop). Grenade slots masked out with a static bitmask instead of per-iteration if-chain.
+
+#### Grenade Object Pool
+`Grenades` class replaced linked list (`new Obj` per throw, `delete` on expiry, O(n) pointer-chasing scan) with a fixed-size 32-entry pool. Zero allocation at runtime, cache-friendly linear scan, automatic expiry marking on find(). Pool size of 32 far exceeds any realistic concurrent grenade count.
+
+---
+
 ## [2.7.8] - 2026-04-02
 
 ### Changed
