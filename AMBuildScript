@@ -262,7 +262,10 @@ class AMXXConfig(object):
     ]
 
     if builder.options.opt == '1':
-      cxx.cflags += ['-O2']
+      cxx.cflags += ['-O3']
+      cxx.cflags += ['-march=native', '-mtune=native']
+      cxx.cflags += ['-flto', '-fno-math-errno']
+      cxx.linkflags += ['-flto']
       # FORTIFY_SOURCE requires optimization (-O1+) to work; GCC errors with -Werror otherwise
       cxx.cflags += ['-D_FORTIFY_SOURCE=2']
 

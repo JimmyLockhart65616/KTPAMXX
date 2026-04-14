@@ -5,6 +5,18 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.7] - 2026-04-02
+
+### Changed
+
+#### Compiler Optimizations
+- `-O3` replaces `-O2` for aggressive inlining and loop unrolling
+- `-march=native -mtune=native` enables SSE4.2, AVX, BMI instructions on server hardware
+- `-flto` (link-time optimization) enables cross-translation-unit inlining for hot paths (AMX execution, native dispatch, DODX stats processing)
+- `-fno-math-errno` eliminates redundant errno stores after math calls
+
+---
+
 ## [2.7.6] - 2026-04-13
 
 ### Fixed
