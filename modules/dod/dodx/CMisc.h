@@ -34,13 +34,12 @@
 
 #define MAX_TRACE	6
 
-struct traceVault
+struct traceVault 
 {
 	char szName[16];
 	int iId;
 	int iAction;
 	float fDel;
-	int iClassName;  // KTP: Cached ALLOC_STRING result for integer comparison instead of strcmp
 };
 
 #define ACT_NADE_NONE		(0)
@@ -171,24 +170,21 @@ class CPlayer
 // *****************************************************
 // class Grenades
 // *****************************************************
-// KTP: Fixed-size pool replaces linked list — no per-grenade allocation, O(n) scan with small n
-class Grenades
+class Grenades // : public CObject
 {
-  static const int MAX_GRENADES = 32;
   struct Obj
   {
     CPlayer* player;
     edict_t* grenade;
     float time;
     int type;
-    bool active;
-  };
-  Obj pool[MAX_GRENADES];
-  int count;
+    Obj* next;
+  } *head;
+
 
 public:
-	Grenades() : count(0) { clear(); }
-	~Grenades() {}
+	Grenades() { head = 0; }
+	~Grenades() { clear(); }
 	void put(edict_t* grenade, float time, int type, CPlayer* player);
 	bool find(edict_t* enemy, CPlayer** p, int& type);
 	void clear();

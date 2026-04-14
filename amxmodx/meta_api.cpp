@@ -71,9 +71,7 @@ extern ke::Vector<CAdminData *> DynamicAdmins;
 CLog g_log;
 CForwardMngr g_forwards;
 ke::Vector<ke::AutoPtr<CPlayer *>> g_auth;
-// KTP: Pending client_putinserver forwards — bitmask of player indices waiting to spawn
-// Bit N corresponds to player index N+1. Zero cost when no players joining.
-static uint32_t g_putinserver_mask = 0;
+ke::Vector<int> g_putinserver;  // KTP: Pending client_putinserver forwards (stores player indices)
 ke::Vector<ke::AutoPtr<ForceObject>> g_forcemodels;
 ke::Vector<ke::AutoPtr<ForceObject>> g_forcesounds;
 ke::Vector<ke::AutoPtr<ForceObject>> g_forcegeneric;
@@ -830,7 +828,7 @@ void C_ServerDeactivate_Post()
 	CoreCfg.Clear();
 
 	g_auth.clear();
-	g_putinserver_mask = 0;  // KTP: Clear pending putinserver bitmask
+	g_putinserver.clear();  // KTP: Clear pending putinserver list
 	g_commands.clear();
 	g_forcemodels.clear();
 	g_forcesounds.clear();
@@ -1172,8 +1170,7 @@ void SV_Spawn_f_RH(IRehldsHook_SV_Spawn_f *chain)
 		// KTP: Queue the client_putinserver forward for next frame
 		// We cannot call it directly here because the client is not fully spawned yet
 		// and plugins may try to send network messages (like client_print) which will crash
-		if (index >= 1 && index <= 32)
-			g_putinserver_mask |= (1u << (index - 1));
+		g_putinserver.append(index);
 	}
 }
 
@@ -1213,37 +1210,48 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain)
 		CoreCfg.OnMapConfigTimer();
 	}
 
-	// Process pending client_putinserver forwards (bitmask — zero cost when empty)
-	if (g_putinserver_mask)
+	// Process pending client_putinserver forwards
+	// These are queued from SV_Spawn_f_RH because the client isn't ready for network
+	// messages during the spawn command - we need to wait until the client is fully spawned
+	if (g_putinserver.length() > 0)
 	{
-		for (int i = 0; i < gpGlobals->maxClients; i++)
+		size_t writeIdx = 0;
+		for (size_t i = 0; i < g_putinserver.length(); i++)
 		{
-			if (!(g_putinserver_mask & (1u << i)))
+			int playerIndex = g_putinserver[i];
+
+			// Validate player index
+			if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
 				continue;
 
-			int playerIndex = i + 1;
 			CPlayer* pPlayer = GET_PLAYER_POINTER_I(playerIndex);
 			if (!pPlayer || !pPlayer->pEdict || pPlayer->pEdict->free)
-			{
-				g_putinserver_mask &= ~(1u << i);  // Invalid, clear bit
 				continue;
-			}
 
-			IGameClient* cl = RehldsSvs ? RehldsSvs->GetClient(i) : nullptr;
+			// Get the IGameClient to check if fully spawned
+			IGameClient* cl = RehldsSvs ? RehldsSvs->GetClient(playerIndex - 1) : nullptr;  // GetClient uses 0-based index
 			if (!cl)
+				continue;
+
+			// Check if client is fully spawned and ready for messages
+			if (!cl->IsSpawned())
 			{
-				g_putinserver_mask &= ~(1u << i);
+				// Not spawned yet, keep in queue for next frame
+				g_putinserver[writeIdx++] = playerIndex;
 				continue;
 			}
 
-			if (!cl->IsSpawned())
-				continue;  // Not ready yet, keep bit set
-
-			// Client is spawned - fire the forward and clear bit
-			g_putinserver_mask &= ~(1u << i);
+			// Client is spawned - fire the forward
 			if (FF_ClientPutInServer >= 0)
+			{
 				executeForwards(FF_ClientPutInServer, static_cast<cell>(playerIndex));
+			}
 		}
+		// Compact: only keep entries that weren't processed (still waiting to spawn)
+		if (writeIdx == 0)
+			g_putinserver.clear();
+		else
+			g_putinserver.resize(writeIdx);
 	}
 }
 
@@ -1910,28 +1918,33 @@ void C_StartFrame_Post(void)
 	}
 
 	// KTP: Process pending client_putinserver forwards (Metamod mode only).
-	// In extension mode, g_putinserver_mask is processed by SV_Frame_RH.
-	if (!g_bRehldsExtensionInit && g_putinserver_mask)
+	// In extension mode, g_putinserver is processed exclusively by SV_Frame_RH
+	// (the ReHLDS per-frame hook). Guarding on !g_bRehldsExtensionInit prevents
+	// dual-processing if both code paths are ever active simultaneously.
+	if (!g_bRehldsExtensionInit && g_putinserver.length() > 0)
 	{
-		for (int i = 0; i < gpGlobals->maxClients && i < 32; i++)
+		size_t writeIdx = 0;
+		for (size_t i = 0; i < g_putinserver.length(); i++)
 		{
-			if (!(g_putinserver_mask & (1u << i)))
+			int playerIndex = g_putinserver[i];
+
+			// Validate player index
+			if (playerIndex < 1 || playerIndex > gpGlobals->maxClients)
 				continue;
 
-			int playerIndex = i + 1;
 			CPlayer *pPlayer = GET_PLAYER_POINTER_I(playerIndex);
 			edict_t *pEdict = pPlayer ? pPlayer->pEdict : nullptr;
 
+			// Check if player is still valid
 			if (!pPlayer || !pEdict || !pPlayer->initialized)
-			{
-				g_putinserver_mask &= ~(1u << i);
 				continue;
-			}
 
+			// Check if player is fully spawned (has FL_CLIENT flag set by engine)
+			// and has a valid classname (not empty)
 			if ((pEdict->v.flags & FL_CLIENT) &&
 				pEdict->v.classname && STRING(pEdict->v.classname)[0] != '\0')
 			{
-				g_putinserver_mask &= ~(1u << i);
+				// Player is spawned, fire the forward if not already ingame
 				if (!pPlayer->ingame)
 				{
 					pPlayer->PutInServer();
@@ -1940,8 +1953,14 @@ void C_StartFrame_Post(void)
 				}
 				continue;
 			}
-			// Not spawned yet, keep bit set
+
+			// Not spawned yet, keep in queue
+			g_putinserver[writeIdx++] = playerIndex;
 		}
+		if (writeIdx == 0)
+			g_putinserver.clear();
+		else
+			g_putinserver.resize(writeIdx);
 	}
 
 #ifdef MEMORY_TEST
@@ -2990,7 +3009,7 @@ static void KTPAMX_ReloadPlugins()
 	// Dynamic natives persist safely since the AMX instances are not reloaded.
 	g_grenades.clear();
 	g_auth.clear();
-	g_putinserver_mask = 0;
+	g_putinserver.clear();
 
 	// Execute plugin_init and plugin_cfg for the new map
 	// Plugins are still loaded, we just fire the forwards so they can reinitialize

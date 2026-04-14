@@ -1666,8 +1666,7 @@ void MNF_UnregModuleFrameFunc(MODULEFRAMEFUNC func)
 
 void Module_ExecuteFrameCallbacks()
 {
-	size_t count = g_moduleFrameCallbacks.length();
-	for (size_t i = 0; i < count; i++)
+	for (size_t i = 0; i < g_moduleFrameCallbacks.length(); i++)
 	{
 		if (g_moduleFrameCallbacks[i])
 			g_moduleFrameCallbacks[i]();

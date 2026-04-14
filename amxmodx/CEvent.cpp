@@ -75,17 +75,42 @@ EventsMngr::ClEvent::~ClEvent()
 
 void EventsMngr::NextParam()
 {
-	// KTP: Pre-allocate vault to max size on first use — no dynamic growth needed.
-	// Game messages have at most ~16 parameters. Avoids new/delete/memcpy churn at 1000Hz.
-	const int VAULT_SIZE = 32;
+	const int INITIAL_PARSEVAULT_SIZE = 32;
 
 	if (m_ParsePos < m_ParseVaultSize)
 		return;
 
-	if (!m_ParseVault)
+	MsgDataEntry *tmp = NULL;
+	int tmpSize = 0;
+	
+	if (m_ParseVault)
 	{
-		m_ParseVaultSize = VAULT_SIZE;
-		m_ParseVault = new MsgDataEntry[VAULT_SIZE];
+		// copy to tmp
+		tmp = new MsgDataEntry[m_ParseVaultSize];
+		
+		if (!tmp)
+		{
+			return;		// :TODO: Error report !!
+		}
+		
+		memcpy(tmp, m_ParseVault, m_ParseVaultSize * sizeof(MsgDataEntry));
+		tmpSize = m_ParseVaultSize;
+		delete [] m_ParseVault;
+		m_ParseVault = NULL;
+	}
+
+	if (m_ParseVaultSize > 0)
+		m_ParseVaultSize *= 2;
+	else
+		m_ParseVaultSize = INITIAL_PARSEVAULT_SIZE;
+
+	m_ParseVault = new MsgDataEntry[m_ParseVaultSize];
+	
+	if (tmp)
+	{
+		memcpy(m_ParseVault, tmp, tmpSize * sizeof(MsgDataEntry));
+		delete [] tmp;
+		tmp = NULL;
 	}
 }
 
