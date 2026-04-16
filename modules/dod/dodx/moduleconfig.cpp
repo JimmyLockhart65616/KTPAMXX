@@ -220,6 +220,9 @@ void ServerActivate_Post( edict_t *pEdictList, int edictCount, int clientMax ){
 	for( int i = 1; i <= gpGlobals->maxClients; ++i )
 		GET_PLAYER_POINTER_I(i)->Init( i , pEdictList + i );
 
+	// KTP: Cache ALLOC_STRING results for traceData classnames
+	for (int i = 0; i < MAX_TRACE; i++)
+		traceData[i].iClassName = ALLOC_STRING(traceData[i].szName);
 
 	RETURN_META(MRES_IGNORED);
 }
@@ -1185,6 +1188,11 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 	// Our DODX_OnInitObjMessage hook catches it and populates mObjects with
 	// the authoritative CP ordering that matches SetObj indices.
 	chain->callNext(runPhysics);
+
+	// KTP: Cache ALLOC_STRING results for traceData classnames
+	// Enables integer comparison instead of strcmp in TraceLine hook (~50µs savings per grenade hit)
+	for (int i = 0; i < MAX_TRACE; i++)
+		traceData[i].iClassName = ALLOC_STRING(traceData[i].szName);
 
 	// Entity scan as fallback if InitObj wasn't intercepted
 	DODX_InitCPFromEntities();

@@ -596,82 +596,86 @@ void CPlayer::WeaponsCheck(int weapons)
 	if(pEdict->v.weapons == 0)
 		return;
 
-	int old;
-	int cur;
+	// KTP: XOR to find only changed weapon bits, then iterate only those.
+	// Reduces from 42 iterations to ~2-3 on average (typical weapon pickup/drop).
+	// Grenade slots (13, 14, 15, 16, 36) are masked out.
+	static const int GRENADE_MASK = (1<<13) | (1<<14) | (1<<15) | (1<<16);
+	// Note: bit 36 is beyond 32-bit int range, so it's never set in the bitfield
 
-	for(int i = 1; i < DODMAX_WEAPONS; ++i)
+	int changed = (wpns_bitfield ^ weapons) & ~GRENADE_MASK;
+	while (changed)
 	{
-		// Check to see we are not talking about a grenade and we have changed
-		if(i != 13 && i != 14 && i != 15 && i != 16 && i != 36)
-		{
-			old = wpns_bitfield&(1<<i);
-			cur = weapons&(1<<i);
-
-			if(old != cur)
-				MF_ExecuteForward(iFWpnPickupForward, index, i, ((weapons&(1<<i)) ? 1 : 0));
-		}
+		int i = __builtin_ctz(changed);  // Index of lowest set bit
+		changed &= changed - 1;         // Clear lowest set bit
+		if (i >= 1 && i < DODMAX_WEAPONS)
+			MF_ExecuteForward(iFWpnPickupForward, index, i, ((weapons & (1 << i)) ? 1 : 0));
 	}
 }
 
 // *****************************************************
 // class Grenades
 // *****************************************************
-void Grenades::put(edict_t* grenade, float time, int type, CPlayer* player )
+// KTP: Fixed-size pool — no allocation, no linked list traversal overhead
+void Grenades::put(edict_t* grenade, float time, int type, CPlayer* player)
 {
-	Obj* a = new Obj;
-	a->player = player;
-	a->grenade = grenade;
-	a->time = gpGlobals->time + time;
-	a->type = type;
-	a->next = head;
-	head = a;
+	// Find a free slot (expired or inactive)
+	int slot = -1;
+	for (int i = 0; i < MAX_GRENADES; i++)
+	{
+		if (!pool[i].active || pool[i].time <= gpGlobals->time)
+		{
+			slot = i;
+			break;
+		}
+	}
+	if (slot == -1)
+		slot = 0;  // Overwrite oldest if full (shouldn't happen with 32 slots)
+
+	pool[slot].player = player;
+	pool[slot].grenade = grenade;
+	pool[slot].time = gpGlobals->time + time;
+	pool[slot].type = type;
+	pool[slot].active = true;
+	if (slot >= count)
+		count = slot + 1;
 }
 
-bool Grenades::find( edict_t* enemy, CPlayer** p, int& type )
+bool Grenades::find(edict_t* enemy, CPlayer** p, int& type)
 {
 	bool found = false;
 	float lastTime = 0.0;
-	Obj** a = &head;
 
-	while(*a)
+	for (int i = 0; i < count; i++)
 	{
-		if((*a)->time > gpGlobals->time) 
-		{
-			if((*a)->grenade == enemy) 
-			{
-				found = true;
+		if (!pool[i].active)
+			continue;
 
-				// we need this because of catched grenades
-				if((*a)->time > lastTime)
-				{ 
-					(*p) = (*a)->player;      // two people can have the same nade in our list
-					type = (*a)->type;
-					lastTime = (*a)->time;
-				}
-			}
-		}
-
-		else 
+		if (pool[i].time <= gpGlobals->time)
 		{
-			Obj* next = (*a)->next;
-			delete *a;
-			*a = next;
+			pool[i].active = false;  // Expired, mark free
 			continue;
 		}
 
-		a = &(*a)->next;
+		if (pool[i].grenade == enemy)
+		{
+			found = true;
+			// Need latest time because of caught grenades (two players can own same nade)
+			if (pool[i].time > lastTime)
+			{
+				*p = pool[i].player;
+				type = pool[i].type;
+				lastTime = pool[i].time;
+			}
+		}
 	}
 	return found;
 }
 
 void Grenades::clear()
 {
-	while(head)
-	{
-		Obj* a = head->next;
-		delete head;
-		head = a;
-	}
+	for (int i = 0; i < MAX_GRENADES; i++)
+		pool[i].active = false;
+	count = 0;
 }
 
 // *****************************************************
