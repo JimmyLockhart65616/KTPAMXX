@@ -5,6 +5,18 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.10] - 2026-04-16
+
+### Fixed
+
+#### TraceLine iClassName Comparison Broken
+Reverted `iClassName` integer comparison back to `strcmp` in both Metamod and extension mode TraceLine hooks. `ALLOC_STRING` does NOT intern/deduplicate strings in GoldSrc — two calls with the same text (e.g. `ALLOC_STRING("grenade")` in DODX vs the game DLL's own allocation) produce different `string_t` offsets, so the integer comparison never matched. This broke the `dod_grenade_explosion` forward, which meant practice mode grenade refill on explosion stopped working.
+
+#### v2.7.8/v2.7.9 Code Changes Restored
+All code optimizations from v2.7.8 and v2.7.9 were lost during the AmxxCurl CMake migration rollback (2026-04-14). Restored: g_putinserver bitmask, module frame callback cache, event vault pre-allocation, WeaponsCheck XOR, grenade object pool.
+
+---
+
 ## [2.7.9] - 2026-04-02
 
 ### Changed
