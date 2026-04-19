@@ -14,6 +14,13 @@
 
 #include "amxxmodule.h"
 #include "dodx.h"
+#include <string.h>
+
+// KTP: Per-victim "client_death already fired this frame" gate.
+// The Damage hook fires iFDeath when a tracked attacker damages a victim to <=0 HP.
+// DeathMsg always fires (incl. suicide / world-kill / fall). We need DeathMsg to
+// cover the no-Damage cases without double-firing for the normal kill flow.
+static float g_lastDeathReportTime[33] = {0};
 
 void Client_ResetHUD_End(void* mValue)
 {
@@ -321,6 +328,8 @@ void Client_Health_End(void* mValue)
 	{
 		pAttacker->saveKill(mPlayer,weapon,( aim == 1 ) ? 1:0 ,TA);
 		MF_ExecuteForward( iFDeath, pAttacker->index, mPlayer->index, weapon, aim, TA );
+		if (mPlayer->index >= 1 && mPlayer->index < 33)
+			g_lastDeathReportTime[mPlayer->index] = gpGlobals ? gpGlobals->time : 0.0f;
 	}
 }
 
@@ -460,7 +469,21 @@ void Client_Object_End(void* mValue)
 }
 
 // KTP: Control Point tracking - ported from dodfun module
-// Parses InitObj message containing all CP data for the map
+// Parses InitObj message containing all CP data for the map.
+//
+// Two modes of operation, decided in case 0:
+//   1. mObjects.count == 0 — Metamod path. Use InitObj as the sole source.
+//   2. mObjects.count > 0  — Extension-mode path. Entity scan ran first and
+//      populated mObjects (and resolved pAreaEdict pairings via the lazy
+//      GET_CAPTURE_AREA macro). InitObj from the DLL carries the *correct*
+//      cp ordering — entity-scan order isn't guaranteed to match SetObj id.
+//      First matching InitObj (newCount == mObjects.count) reorders mObjects
+//      to DLL order while preserving each CP's resolved pAreaEdict, then
+//      re-fires iFInitCP so the SMA rebuilds its name cache in the new order.
+static objinfo_t s_initObjScanSnapshot[12];  // Saved entity-scan entries for area pairing
+static int s_initObjScanSnapshotCount = 0;
+static bool s_initObjReorderMode = false;    // True while consuming InitObj to reorder
+
 void Client_InitObj(void* mValue)
 {
 	static int num;
@@ -474,21 +497,36 @@ void Client_InitObj(void* mValue)
 	{
 	case 0:
 		num = 0;
+		s_initObjReorderMode = false;
 		{
 			int newCount = *(int*)mValue;
-			// In extension mode, entity scan populates mObjects during SV_ActivateServer.
-			// Post-boot InitObj messages are unreliable (count=0 empty, count=1 partial).
-			// Skip ALL InitObj processing if entity scan already populated data.
+			MF_Log("[DODX] InitObj case 0: newCount=%d mObjects.count=%d finalized=%d",
+				newCount, mObjects.count, g_cpOrderingFinalized ? 1 : 0);
+
 			if (mObjects.count > 0)
 			{
-				mState = 999; // Skip all remaining params (no case matches)
-				return;
+				// Already finalized OR partial/stale message — skip.
+				if (g_cpOrderingFinalized || newCount != mObjects.count)
+				{
+					MF_Log("[DODX] InitObj: skipped (finalized=%d, newCount=%d, existing=%d)",
+						g_cpOrderingFinalized ? 1 : 0, newCount, mObjects.count);
+					mState = 999;
+					return;
+				}
+
+				// Snapshot entity-scan results so we can rebuild pAreaEdict
+				// pairings after reordering.
+				s_initObjScanSnapshotCount = mObjects.count;
+				for (int i = 0; i < s_initObjScanSnapshotCount && i < 12; i++)
+					s_initObjScanSnapshot[i] = mObjects.obj[i];
+				s_initObjReorderMode = true;
+				mObjects.Clear();
 			}
+
 			mObjects.count = newCount;
 		}
 		if (mObjects.count == 0)
 			mObjects.Clear();
-		// Clamp to array size
 		if (mObjects.count > 12)
 			mObjects.count = 12;
 		break;
@@ -534,8 +572,40 @@ void Client_InitObj(void* mValue)
 		num++;
 		if (num == mObjects.count)
 		{
-			// Do NOT sort — InitObj order matches SetObj index system
-			MF_Log("[DODX] InitObj: parsed %d control points from message", mObjects.count);
+			if (s_initObjReorderMode)
+			{
+				// Carry forward each CP's pAreaEdict pairing from the snapshot
+				// (matched by edict pointer — the only stable identifier).
+				for (int i = 0; i < mObjects.count; i++)
+				{
+					for (int j = 0; j < s_initObjScanSnapshotCount; j++)
+					{
+						if (mObjects.obj[i].pEdict &&
+						    mObjects.obj[i].pEdict == s_initObjScanSnapshot[j].pEdict)
+						{
+							mObjects.obj[i].pAreaEdict = s_initObjScanSnapshot[j].pAreaEdict;
+							mObjects.obj[i].areaflags  = s_initObjScanSnapshot[j].areaflags;
+							break;
+						}
+					}
+				}
+
+				g_cpOrderingFinalized = true;
+				s_initObjReorderMode = false;
+				MF_Log("[DODX] InitObj: reordered %d CPs to DLL order", mObjects.count);
+				for (int i = 0; i < mObjects.count; i++)
+				{
+					edict_t *pe = mObjects.obj[i].pEdict;
+					const char *tn = pe ? STRING(pe->v.targetname) : "?";
+					MF_Log("[DODX]   CP[%d] index=%d owner=%d targetname='%s'",
+						i, mObjects.obj[i].index, mObjects.obj[i].owner, tn);
+				}
+			}
+			else
+			{
+				MF_Log("[DODX] InitObj: parsed %d control points from message", mObjects.count);
+			}
+
 			if (iFInitCP >= 0)
 				MF_ExecuteForward(iFInitCP);
 		}
@@ -597,6 +667,69 @@ void Client_PStatus(void* mValue)
 				MF_ExecuteForward(iFSpawnForward, playerIdx);
 			break;
 		}
+	}
+}
+
+// KTP: DeathMsg user message handler.
+// Format: BYTE killer_index, BYTE victim_index, STRING weapon_logname.
+// DeathMsg fires for every death — including suicides via "kill" console,
+// world deaths (fall, drown, kill triggers) where no Damage message is sent.
+// Damage hook already fires iFDeath for normal kills, so dedup against
+// g_lastDeathReportTime to avoid double-firing for the same death.
+void Client_DeathMsg(void* mValue)
+{
+	static int killerIdx;
+	static int victimIdx;
+
+	switch (mState++)
+	{
+	case 0:
+		killerIdx = *(int*)mValue;
+		break;
+	case 1:
+		victimIdx = *(int*)mValue;
+		break;
+	case 2:
+	{
+		const char *weaponName = (const char *)mValue;
+		if (!gpGlobals) break;
+
+		int maxClients = gpGlobals->maxClients;
+		if (maxClients < 1 || maxClients > 32) break;
+
+		if (victimIdx < 1 || victimIdx > maxClients) break;
+
+		// Dedup: skip if Damage hook already fired iFDeath for this victim
+		// in the current frame (within ~0.1s tolerance for engine timing jitter).
+		float now = gpGlobals->time;
+		if (now - g_lastDeathReportTime[victimIdx] < 0.1f)
+			break;
+
+		// Resolve weapon name to wpnindex (matches xmod_get_wpnlogname behavior).
+		int weapon = 0;
+		if (weaponName && weaponName[0])
+		{
+			for (int i = 0; i < DODMAX_WEAPONS; i++)
+			{
+				if (strcmp(weaponName, weaponData[i].logname) == 0)
+				{
+					weapon = i;
+					break;
+				}
+			}
+		}
+
+		// killer 0 (world) is left as-is; the SMA already remaps killer<1 to victim
+		// to mark it as a suicide.
+		if (killerIdx < 0) killerIdx = 0;
+		if (killerIdx > maxClients) killerIdx = 0;
+
+		int aim = 0;   // No hitplace info on DeathMsg
+		int TA = 0;    // Teamkill flag — Damage hook owns the proper detection
+		MF_ExecuteForward(iFDeath, killerIdx, victimIdx, weapon, aim, TA);
+		g_lastDeathReportTime[victimIdx] = now;
+		break;
+	}
 	}
 }
 
