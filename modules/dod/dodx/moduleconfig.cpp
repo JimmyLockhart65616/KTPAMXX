@@ -1748,7 +1748,10 @@ static void DODX_InitCPFromEntities()
 
 			if (bspCount == mObjects.count)
 			{
-				// Diagnostic: dump entity origins before match attempt
+#ifdef DODX_DEBUG_CP_INIT
+				// Diagnostic: dump entity origins + BSP entries before match attempt.
+				// Enable via -DDODX_DEBUG_CP_INIT=1 at build time when investigating
+				// CP-ordering issues. Default off in prod to avoid ~12 lines/map noise.
 				for (int oi = 0; oi < mObjects.count; oi++)
 				{
 					edict_t *pe = mObjects.obj[oi].pEdict;
@@ -1761,6 +1764,7 @@ static void DODX_InitCPFromEntities()
 					MF_Log("[DODX] BSP sort: bsp[%d] point_index=%d origin=(%.0f,%.0f)",
 						bi, bspCPs[bi].point_index, bspCPs[bi].origin_x, bspCPs[bi].origin_y);
 				}
+#endif
 
 				// Sort BSP entries by point_index (ascending) — insertion sort for small N
 				for (int i = 1; i < bspCount; i++)
