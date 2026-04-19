@@ -500,8 +500,10 @@ void Client_InitObj(void* mValue)
 		s_initObjReorderMode = false;
 		{
 			int newCount = *(int*)mValue;
+#ifdef DODX_DEBUG_CP_INIT
 			MF_Log("[DODX] InitObj case 0: newCount=%d mObjects.count=%d finalized=%d",
 				newCount, mObjects.count, g_cpOrderingFinalized ? 1 : 0);
+#endif
 
 			if (mObjects.count > 0)
 			{
@@ -593,6 +595,7 @@ void Client_InitObj(void* mValue)
 				g_cpOrderingFinalized = true;
 				s_initObjReorderMode = false;
 				MF_Log("[DODX] InitObj: reordered %d CPs to DLL order", mObjects.count);
+#ifdef DODX_DEBUG_CP_INIT
 				for (int i = 0; i < mObjects.count; i++)
 				{
 					edict_t *pe = mObjects.obj[i].pEdict;
@@ -600,6 +603,7 @@ void Client_InitObj(void* mValue)
 					MF_Log("[DODX]   CP[%d] index=%d owner=%d targetname='%s'",
 						i, mObjects.obj[i].index, mObjects.obj[i].owner, tn);
 				}
+#endif
 			}
 			else
 			{
@@ -700,9 +704,22 @@ void Client_DeathMsg(void* mValue)
 		if (victimIdx < 1 || victimIdx > maxClients) break;
 
 		// Dedup: skip if Damage hook already fired iFDeath for this victim
-		// in the current frame (within ~0.1s tolerance for engine timing jitter).
+		// in the current or last few frames. Damage and DeathMsg normally ship
+		// in the same server frame (both generated during the same SV_RunCmd
+		// pass), so well under 1ms apart. A 33ms window (~4 frames at
+		// sv_maxupdaterate 120) is comfortably beyond expected engine timing
+		// jitter while minimizing the chance of suppressing a legitimate
+		// quick re-death.
+		//
+		// KNOWN LIMITATION: If a damage message races the DeathMsg by >33ms
+		// (e.g. under a server FPS dip), DeathMsg fires first with TA=0 and
+		// the Damage hook's subsequent fire gets suppressed by this guard.
+		// A real teamkill via a world-damage source (grenade, trigger_hurt)
+		// could then be logged as non-TK in HLStatsX. Narrow edge case —
+		// the Damage hook owns real-time TK detection for the >99% normal
+		// kill path. Revisit if stats regressions surface.
 		float now = gpGlobals->time;
-		if (now - g_lastDeathReportTime[victimIdx] < 0.1f)
+		if (now - g_lastDeathReportTime[victimIdx] < 0.033f)
 			break;
 
 		// Resolve weapon name to wpnindex (matches xmod_get_wpnlogname behavior).
