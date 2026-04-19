@@ -5,6 +5,37 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.11] - 2026-04-19
+
+### Added
+
+#### Live CAreaCapture state natives (PR #1 by JimmyLockhart65616)
+Resized `pd_dca.unknown_block_16` so `cap_mode` lines up with `m_iCapMode` per `offsets-careacapture.txt` gamedata (Win=492, Linux=512). Renamed `iunk_*` slots to match in-game struct fields: `cap_mode`, `is_capturing`, `capturing_team`, `owning_team`, `cap_time` (was `time_to_cap`), `time_remaining` (was `iunk_128`, now float), `num_allies`, `num_axis`. Exposed via `dodx_area_get_data` with new `CA_*` enum values: `CA_num_allies`, `CA_num_axis`, `CA_is_capturing`, `CA_capturing_team`, `CA_owning_team`, `CA_cap_mode`, `CA_time_remaining`. Plugins (HUD Observer, MatchHandler, HLTV) can now read live cap state directly from the engine instead of reimplementing AABB/radius math.
+
+#### DeathMsg handler — suicide / world-kill path (PR #1)
+New `Client_DeathMsg` catches deaths the Damage hook misses — suicides via `kill` console and world deaths (fall, drown, trigger_hurt) where no Damage message is sent. Resolves weapon name → wpnindex and dedups against `g_lastDeathReportTime` so the normal kill flow doesn't double-fire.
+
+#### `scripts/pre-push.sh` and `scripts/install-hooks.sh` (PR #1)
+Pre-push hook runs `make build-amxx` + `make build-plugins` from a sibling `KTPInfrastructure/` checkout to catch API-breaking changes against every downstream plugin before the push is accepted. Bypass with `git push --no-verify` or `KTP_SKIP_PREPUSH=1`.
+
+### Fixed
+
+#### InitObj → DLL ordering reorder in extension mode (PR #1)
+Entity-scan order during `SV_ActivateServer` isn't guaranteed to match the DLL's `SetObj` id space. The first matching InitObj (`newCount == mObjects.count` and `!g_cpOrderingFinalized`) now snapshots entity-scan entries, clears `mObjects`, parses the InitObj, and re-pairs each CP's `pAreaEdict` by matching edict pointers. Re-fires `iFInitCP` so SMA plugins rebuild their name cache in DLL order. Stale / partial InitObj messages are skipped.
+
+#### pdata origin unreliable — BSP sort used wrong coords (PR #1)
+`DODX_InitCPFromEntities` now reads origin from `pEdict->v.origin` instead of `cpd.origin_x/y`. The pdata origin offsets were unreliable (observed as `(0, world_x)` on dod_anzio), which silently broke BSP `point_index` reorder and mapped CP names to the wrong entity.
+
+#### DeathMsg dedup window too wide (PR #2)
+`Client_DeathMsg` used a 100ms dedup window (~12 frames at 120Hz) — much wider than needed since the Damage hook and DeathMsg fire in the same `SV_RunCmd` pass (<1ms apart). Tightened to 33ms (~4 frames), well beyond expected engine jitter. Documented residual edge case (FPS dip >33ms could cause TK misreport) in-code for future debugging.
+
+### Changed
+
+#### CP-init diagnostic logs gated behind `DODX_DEBUG_CP_INIT` (PR #2)
+BSP sort entity+bsp dump in `DODX_InitCPFromEntities` and the case 0 / per-CP reorder-list logs in `Client_InitObj` fired on every map change across every instance (~12 lines per map load, 60 per server rotation, 300 fleet-wide). Gated behind compile-time `#ifdef DODX_DEBUG_CP_INIT`. Default off in prod; enable with `-DDODX_DEBUG_CP_INIT=1` when investigating. Summary line (`InitObj: reordered N CPs to DLL order`) and error-condition logs remain. `CVAR_REGISTER` crashes in extension mode, so a runtime cvar wasn't viable.
+
+---
+
 ## [2.7.10] - 2026-04-16
 
 ### Fixed
