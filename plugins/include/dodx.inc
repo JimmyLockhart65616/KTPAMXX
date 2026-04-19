@@ -511,6 +511,15 @@ enum CA_VALUE {
 	CA_timetocap,
 	CA_can_cap,
 
+	// Live cap state (read-only). Pulled directly from CAreaCapture pvPrivateData.
+	CA_num_allies,       // m_nNumAllies: allies-team players currently in zone
+	CA_num_axis,         // m_nNumAxis: axis-team players currently in zone
+	CA_is_capturing,     // m_bCapturing: non-zero while a cap is in progress
+	CA_capturing_team,   // m_nCapturingTeam: 1=allies, 2=axis, 0=none
+	CA_owning_team,      // m_nOwningTeam: 1=allies, 2=axis, 0=neutral
+	CA_cap_mode,         // m_iCapMode
+	CA_time_remaining,   // m_fTimeRemaining (float; retrieve and cast with Float:)
+
 	// strings
 	CA_target,
 	CA_sprite,

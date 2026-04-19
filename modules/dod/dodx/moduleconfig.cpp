@@ -73,6 +73,7 @@ edict_t* g_pFirstEdict = nullptr;
 
 // KTP: Server active flag - prevents message processing during map changes
 bool g_bServerActive = false;
+bool g_cpOrderingFinalized = false;  // KTP: Set true once Client_InitObj has reordered mObjects to match DLL's SetObj id space.
 
 // (g_bCPFromInitObj was removed — entity scan + BSP reorder is the sole CP ordering path)
 
@@ -126,6 +127,7 @@ int gmsgPStatus;
 int gmsgTeamInfo;  // KTP: For scoreboard team name refresh
 int gmsgInitObj;   // KTP: CP tracking
 int gmsgSetObj;    // KTP: CP tracking
+int gmsgDeathMsg;  // KTP: Suicide / world-kill detection (no Damage path)
 
 RankSystem g_rank;
 Grenades g_grenades;
@@ -176,6 +178,7 @@ g_user_msg[] =
 	{ "TeamInfo",	&gmsgTeamInfo,			NULL,					false },  // KTP: For scoreboard refresh
 	{ "InitObj",	&gmsgInitObj,			Client_InitObj,			false },  // KTP: CP tracking
 	{ "SetObj",		&gmsgSetObj,			Client_SetObj,			false },  // KTP: CP tracking
+	{ "DeathMsg",	&gmsgDeathMsg,			Client_DeathMsg,		false },  // KTP: Suicide path
 	{ 0,0,0,false }
 };
 
@@ -1704,6 +1707,7 @@ static void DODX_InitCPFromEntities()
 	MF_Log("[DODX] CP entity scan starting");
 
 	mObjects.Clear();
+	g_cpOrderingFinalized = false;  // KTP: Allow first matching InitObj to reorder mObjects to DLL order
 
 	// Use FindEntityByClassname instead of GETEDICT loop — pfnPEntityOfEntIndex
 	// hangs during OnPluginsLoaded in extension mode, but pfnFindEntityByString is safe.
@@ -1724,8 +1728,10 @@ static void DODX_InitCPFromEntities()
 		mObjects.obj[idx].icon_neutral = cpd.icon_neutral;
 		mObjects.obj[idx].icon_allies = cpd.icon_allies;
 		mObjects.obj[idx].icon_axis = cpd.icon_axis;
-		mObjects.obj[idx].origin_x = cpd.origin_x;
-		mObjects.obj[idx].origin_y = cpd.origin_y;
+		// Read origin from edict vars, not pdata — the pdata origin offsets
+		// are unreliable (observed as (0, world_x) on dod_anzio instead of (world_x, world_y)).
+		mObjects.obj[idx].origin_x = pEdict->v.origin[0];
+		mObjects.obj[idx].origin_y = pEdict->v.origin[1];
 		mObjects.obj[idx].areaflags = 0;
 		mObjects.obj[idx].pAreaEdict = NULL;
 		mObjects.count++;
@@ -1742,6 +1748,20 @@ static void DODX_InitCPFromEntities()
 
 			if (bspCount == mObjects.count)
 			{
+				// Diagnostic: dump entity origins before match attempt
+				for (int oi = 0; oi < mObjects.count; oi++)
+				{
+					edict_t *pe = mObjects.obj[oi].pEdict;
+					const char *tn = pe ? STRING(pe->v.targetname) : "?";
+					MF_Log("[DODX] BSP sort: entity[%d] origin=(%.0f,%.0f) targetname='%s'",
+						oi, mObjects.obj[oi].origin_x, mObjects.obj[oi].origin_y, tn);
+				}
+				for (int bi = 0; bi < bspCount; bi++)
+				{
+					MF_Log("[DODX] BSP sort: bsp[%d] point_index=%d origin=(%.0f,%.0f)",
+						bi, bspCPs[bi].point_index, bspCPs[bi].origin_x, bspCPs[bi].origin_y);
+				}
+
 				// Sort BSP entries by point_index (ascending) — insertion sort for small N
 				for (int i = 1; i < bspCount; i++)
 				{

@@ -285,9 +285,26 @@ static cell AMX_NATIVE_CALL dodx_area_get_data(AMX *amx, cell *params)
 		case CA_axis_numcap:
 			return GET_CA_PD(mObjects.obj[index].pAreaEdict).axis_numcap;
 		case CA_timetocap:
-			return GET_CA_PD(mObjects.obj[index].pAreaEdict).time_to_cap;
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).cap_time;
 		case CA_can_cap:
 			return GET_CA_PD(mObjects.obj[index].pAreaEdict).can_cap;
+		case CA_num_allies:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).num_allies;
+		case CA_num_axis:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).num_axis;
+		case CA_is_capturing:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).is_capturing;
+		case CA_capturing_team:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).capturing_team;
+		case CA_owning_team:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).owning_team;
+		case CA_cap_mode:
+			return GET_CA_PD(mObjects.obj[index].pAreaEdict).cap_mode;
+		case CA_time_remaining:
+		{
+			float t = GET_CA_PD(mObjects.obj[index].pAreaEdict).time_remaining;
+			return amx_ftoc(t);
+		}
 
 		// strings
 		case CA_target:
@@ -328,7 +345,7 @@ static cell AMX_NATIVE_CALL dodx_area_set_data(AMX *amx, cell *params)
 			GET_CA_PD(mObjects.obj[index].pAreaEdict).axis_numcap = ivalue;
 			return 1;
 		case CA_timetocap:
-			GET_CA_PD(mObjects.obj[index].pAreaEdict).time_to_cap = ivalue;
+			GET_CA_PD(mObjects.obj[index].pAreaEdict).cap_time = ivalue;
 			return 1;
 		case CA_can_cap:
 			GET_CA_PD(mObjects.obj[index].pAreaEdict).can_cap = ivalue;

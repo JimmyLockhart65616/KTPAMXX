@@ -241,21 +241,32 @@ struct pd_dca {
 	float angles_y;
 	float angles_z; // 15
 
+	// KTP: block before cap_mode sized so cap_mode lines up with m_iCapMode per gamedata
+	// (offsets-careacapture.txt). Windows m_iCapMode=492, Linux m_iCapMode=512.
+	// Windows pre-block header = 64 bytes -> (492-64)/4 = 107 ints.
+	// Linux pre-block header   = 60 bytes -> (512-60)/4 = 113 ints.
 #if defined(_WIN32)
-	int unknown_block_16[111];
+	int unknown_block_16[107];
 #else
-	int unknown_block_16[116]; // linux +5 more
+	int unknown_block_16[113];
 #endif
 
-	int time_to_cap; // 127
-	int iunk_128;
-	int allies_numcap; // 129
-	int axis_numcap; // 130
+	// Live CAreaCapture state (from gamedata offsets-careacapture.txt).
+	// Reading these is the game's own source of truth — no AABB/radius math.
+	int cap_mode;           // m_iCapMode
+	int is_capturing;       // m_bCapturing (non-zero while a team is progressing a cap)
+	int capturing_team;     // m_nCapturingTeam (1=allies, 2=axis, 0=none)
+	int owning_team;        // m_nOwningTeam
 
-	int iunk_131;
-	int iunk_132;
+	int cap_time;           // m_nCapTime (total seconds to cap; was named time_to_cap)
+	float time_remaining;   // m_fTimeRemaining (seconds left on active cap; was iunk_128)
+	int allies_numcap;      // m_nAlliesNumCap (required count to cap for allies)
+	int axis_numcap;        // m_nAxisNumCap
 
-	int can_cap; // 133 flags : 1-allies can , 256-axis can, default 257 (all can)
+	int num_allies;         // m_nNumAllies (live count of allies in zone; was iunk_131)
+	int num_axis;           // m_nNumAxis (live count of axis in zone; was iunk_132)
+
+	int can_cap;            // m_bAlliesCanCap combined w/ axis (flags: 1=allies, 256=axis)
 
 	int iunk_134;
 	int iunk_135;
@@ -356,6 +367,15 @@ enum CA_VALUE {
 	CA_timetocap,
 	CA_can_cap,
 
+	// Live cap state (read-only). See offsets-careacapture.txt.
+	CA_num_allies,       // m_nNumAllies: players from allies team currently in zone
+	CA_num_axis,         // m_nNumAxis: players from axis team currently in zone
+	CA_is_capturing,     // m_bCapturing: non-zero while a cap is in progress
+	CA_capturing_team,   // m_nCapturingTeam: 1=allies, 2=axis, 0=none
+	CA_owning_team,      // m_nOwningTeam: 1=allies, 2=axis, 0=neutral
+	CA_cap_mode,         // m_iCapMode
+	CA_time_remaining,   // m_fTimeRemaining (float, read via Float:, cast with dodx_area_get_data)
+
 	// strings
 	CA_target,
 	CA_sprite,
@@ -396,6 +416,7 @@ void Client_Object_End(void*);
 void Client_PStatus(void*);
 void Client_InitObj(void*);
 void Client_SetObj(void*);
+void Client_DeathMsg(void*);  // KTP: Suicide / world-kill detection
 
 typedef void (*funEventCall)(void*);
 
@@ -421,6 +442,7 @@ extern int gmsgPStatus;
 extern int gmsgTeamInfo;  // KTP: For scoreboard team name refresh
 extern int gmsgInitObj;   // KTP: CP tracking
 extern int gmsgSetObj;    // KTP: CP tracking
+extern int gmsgDeathMsg;  // KTP: Suicide / world-kill detection (no Damage path)
 
 extern int iFDamage;
 extern int iFDeath;
@@ -440,6 +462,7 @@ extern int iFFlushStats;  // KTP: Forward for stats flush notification
 extern int iFDamagePre;   // KTP: Forward for damage modification (fires before client_damage)
 extern int iFInitCP;      // KTP: Forward for CP init
 extern int iFCPCaptured;  // KTP: Forward for CP ownership change
+extern bool g_cpOrderingFinalized;  // KTP: Has InitObj reordered mObjects to match DLL?
 extern int iFScoreEvent;  // KTP: Forward for enriched score event with CP context
 
 // KTP: Last CP capture tracking (for ObjScore correlation)
