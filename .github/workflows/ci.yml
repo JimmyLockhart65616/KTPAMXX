@@ -23,6 +23,12 @@ jobs:
     # any glibc >=2.35, while a 24.04-built one would refuse to load anywhere
     # older. Keep 22.04 as the conservative symbol floor.
     runs-on: ubuntu-22.04
+    # Matrix is gcc-only on purpose. clang-11 + -m32 + -flto is a known-broken
+    # combo on 22.04 — GNU ld rejects clang's LTO bitcode with "final link
+    # failed: bad value". We don't ship a clang build, and gcc-9 matches the
+    # production WSL build pipeline, so a single compiler is the right scope.
+    # If clang coverage becomes valuable, re-add as clang-14 (ships with 22.04,
+    # newer LLVM handles 32-bit LTO), not clang-11.
     strategy:
       fail-fast: false
       matrix:
@@ -30,9 +36,6 @@ jobs:
           - cc: gcc-9
             cxx: g++-9
             extra_install: gcc-9-multilib g++-9-multilib
-          - cc: clang-11
-            cxx: clang++-11
-            extra_install: ''
     name: linux-${{ matrix.cc }}
     steps:
       - name: Checkout KTPAMXX
