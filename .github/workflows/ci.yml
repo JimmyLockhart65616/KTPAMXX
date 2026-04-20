@@ -1,142 +1,111 @@
-name: Continuous Integration
-on: 
+name: CI
+# KTP-native CI for the KTPAMXX fork.
+#
+# Replaces the upstream AMX Mod X matrix (which cloned alliedmodders/hlsdk and
+# alliedmodders/metamod-hl1) with a Linux-only build that uses afraznein/KTPHLSDK
+# — our fork that adds `pfnClientCvarChanged` to NEW_DLL_FUNCTIONS.
+#
+# Windows MSVC is intentionally dropped: we don't ship a Windows KTPAMXX build.
+# Plugin compilation (.sma → .amxx) is skipped here and validated separately via
+# KTPInfrastructure's `make build-plugins` target, which the pre-push hook runs.
+
+on:
   workflow_dispatch:
   push:
-    branches:
-     - master
-     - 1.9-dev
+    branches: [master]
   pull_request:
-    branches:
-     - master
-     - 1.9-dev
+    branches: [master]
+
 jobs:
-  test:
+  build-linux:
+    # Pinned to 22.04 (GLIBC 2.35) on purpose. Production is 24.04 (GLIBC 2.39),
+    # but GLIBC is backward-compatible, not forward — a 22.04-built .so runs on
+    # any glibc >=2.35, while a 24.04-built one would refuse to load anywhere
+    # older. Keep 22.04 as the conservative symbol floor.
+    runs-on: ubuntu-22.04
     strategy:
+      fail-fast: false
       matrix:
         include:
-          # - os: ubuntu-latest
-          #   os_short: linux
-          #   compiler_cc: gcc
-          #   compiler_cxx: g++
-          # - os: ubuntu-latest
-          #   os_short: linux
-          #   compiler_cc: clang
-          #   compiler_cxx: clang++
-          - os: ubuntu-22.04
-            os_short: linux
-            compiler_cc: clang-11
-            compiler_cxx: clang++-11
-          - os: ubuntu-22.04
-            os_short: linux
-            compiler_cc: gcc-9
-            compiler_cxx: g++-9
-            compiler_install: 'gcc-9-multilib g++-9-multilib'
-          - os: windows-2022
-            os_short: windows
-            compiler_cc: msvc
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    name: ${{ matrix.os_short }}-${{ matrix.compiler_cc }}
-    env:
-      DEPENDENCIES_FOLDER: dependencies      
-      DEPENDENCIES_ROOT: ${{ github.workspace }}/dependencies      
-      DEPENDENCIES_ROOT_WIN: ${{ github.workspace }}\dependencies              
+          - cc: gcc-9
+            cxx: g++-9
+            extra_install: gcc-9-multilib g++-9-multilib
+          - cc: clang-11
+            cxx: clang++-11
+            extra_install: ''
+    name: linux-${{ matrix.cc }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout KTPAMXX
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-          path: amxmodx
-      # Setup Python for AMBuild
-      - uses: actions/setup-python@v2
-        name: Setup Python 3.9
+          path: KTPAMXX
+
+      - name: Checkout KTPhlsdk (KTP fork — adds pfnClientCvarChanged)
+        uses: actions/checkout@v4
         with:
-          python-version: 3.9
-      - name: Install Python dependencies
-        run: |
-          python3 -m pip install --upgrade pip setuptools wheel
-          python3 --version
-      - name: Install AMXModX dependencies (Linux)
-        if: startsWith(runner.os, 'Linux')
-        shell: bash
-        run: |
-          mkdir -p ${{ env.DEPENDENCIES_FOLDER }}
-          cd ${{ env.DEPENDENCIES_FOLDER }}
-          
-          # Satisfy checkout-deps requirement for a "amxmodx" folder.
-          mkdir -p amxmodx
-          ../amxmodx/support/checkout-deps.sh          
-      - name: Install AMXModX dependencies (Windows)
-        if: startsWith(runner.os, 'Windows')
-        shell: cmd
-        run: |
-          mkdir %DEPENDENCIES_ROOT_WIN%\nasm
-          curl -L -o "%DEPENDENCIES_ROOT_WIN%\nasm\nasm.zip" https://www.nasm.us/pub/nasm/releasebuilds/2.13.03/win32/nasm-2.13.03-win32.zip
-          chdir %DEPENDENCIES_ROOT_WIN%\nasm
-          7z x nasm.zip
-          
-          chdir %DEPENDENCIES_ROOT_WIN%
-          git clone https://github.com/alliedmodders/ambuild
-          git clone https://github.com/alliedmodders/metamod-hl1 metamod-am
-          git clone https://github.com/alliedmodders/hlsdk
-          
-          curl -L -o "mysql-connector-c-6.1.1-win32.zip" https://downloads.mysql.com/archives/get/p/19/file/mysql-connector-c-6.1.1-win32.zip
-          7z x mysql-connector-c-6.1.1-win32.zip -o"mysql"
-          cd mysql
-          dir
-          ren mysql-connector-c-6.1.1-win32 mysql-5.5
-          move /Y mysql-5.5 ..\
-          
-          cd ..\ambuild
-          python3 setup.py install          
-      - name: Install Linux dependencies
-        if: startsWith(runner.os, 'Linux')
+          repository: afraznein/KTPHLSDK
+          path: KTPhlsdk
+
+      - name: Clone metamod-hl1 (headers only, upstream is fine)
+        run: git clone --depth=1 https://github.com/alliedmodders/metamod-hl1.git metamod-hl1
+
+      - name: Clone AMBuild
+        run: git clone --depth=1 https://github.com/alliedmodders/ambuild.git ambuild
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install 32-bit toolchain + compiler
         run: |
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             gcc-multilib g++-multilib libstdc++6 lib32stdc++6 \
             libc6-dev libc6-dev-i386 linux-libc-dev \
-            linux-libc-dev:i386 lib32z1-dev nasm ${{ matrix.compiler_cc }} ${{ matrix.compiler_install }}
-      - name: Select compiler
-        if: startsWith(runner.os, 'Linux')
+            linux-libc-dev:i386 lib32z1-dev nasm \
+            ${{ matrix.cc }} ${{ matrix.extra_install }}
+
+      - name: Install AMBuild
         run: |
-          echo "CC=${{ matrix.compiler_cc }}" >> $GITHUB_ENV
-          echo "CXX=${{ matrix.compiler_cxx }}" >> $GITHUB_ENV
-          ${{ matrix.compiler_cc }} --version
-          ${{ matrix.compiler_cxx }} --version
-      - uses: ilammy/setup-nasm@v1
-      - name: Build Linux
-        if: startsWith(runner.os, 'Linux')
-        working-directory: amxmodx
+          python3 -m pip install --upgrade pip setuptools wheel
+          python3 -m pip install ./ambuild
+
+      - name: Configure (extension-mode, no MySQL, no plugins)
+        working-directory: KTPAMXX
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
         run: |
-          mkdir build
-          cd build
-          python3 ../configure.py --enable-optimize --metamod=${{ env.DEPENDENCIES_ROOT }}/metamod-am --hlsdk=${{ env.DEPENDENCIES_ROOT }}/hlsdk --mysql=${{ env.DEPENDENCIES_ROOT }}/mysql-5.5
-          ambuild
-      - name: Upload Linux artifacts
-        if: startsWith(runner.os, 'Linux') && always()
+          ${{ matrix.cc }} --version
+          ${{ matrix.cxx }} --version
+          python3 configure.py \
+            --enable-optimize \
+            --no-mysql \
+            --no-plugins \
+            --hlsdk=../KTPhlsdk \
+            --metamod=../metamod-hl1
+
+      - name: Build
+        working-directory: KTPAMXX/obj-linux
+        run: ambuild
+
+      - name: Verify artifacts
+        working-directory: KTPAMXX
+        run: |
+          set -e
+          AMXX=obj-linux/packages/base/addons/ktpamx/dlls/ktpamx_i386.so
+          DODX=obj-linux/packages/dod/addons/ktpamx/modules/dodx_ktp_i386.so
+          test -f "$AMXX" || { echo "MISSING: $AMXX"; exit 1; }
+          test -f "$DODX" || { echo "MISSING: $DODX"; exit 1; }
+          file "$AMXX" "$DODX"
+          ls -lh "$AMXX" "$DODX"
+
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: amxmodx-${{ matrix.os_short }}-${{ matrix.compiler_cc }}-${{ github.sha }}
-          path: amxmodx/build/packages/
-          retention-days: 7
-      - uses: ilammy/msvc-dev-cmd@v1
-        with:
-          arch: x86
-      - name: Build Windows
-        if: startsWith(runner.os, 'Windows')
-        working-directory: amxmodx
-        shell: cmd
-        run: |
-          cl.exe
-          mkdir build
-          cd build
-          python3 ../configure.py --enable-optimize --metamod=${{ env.DEPENDENCIES_ROOT_WIN }}\metamod-am --hlsdk=${{ env.DEPENDENCIES_ROOT_WIN }}\hlsdk --mysql=${{ env.DEPENDENCIES_ROOT_WIN }}\mysql-5.5
-          ambuild
-      - name: Upload Windows artifacts
-        if: startsWith(runner.os, 'Windows') && always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: amxmodx-${{ matrix.os_short }}-${{ matrix.compiler_cc }}-${{ github.sha }}
-          path: amxmodx/build/packages/
+          name: ktpamxx-linux-${{ matrix.cc }}-${{ github.sha }}
+          path: KTPAMXX/obj-linux/packages/
           retention-days: 7
