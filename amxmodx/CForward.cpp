@@ -11,6 +11,32 @@
 #include "debugger.h"
 #include "binlog.h"
 
+#ifndef _WIN32
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
+
+// KTP: Check whether a pointer is likely safe to read as a string.
+// The previous check rejected only NULL and addresses < 0x1000 (the null page),
+// but stale/UAF pointers often land at high-but-unmapped addresses (e.g.
+// 0x3f145406) which pass that check yet still SEGV inside libc strlen().
+// Use mincore() on the containing page: if it's not mapped we reject the
+// pointer rather than crash. Returns false for NULL, low addresses, or
+// unmapped pages. On _WIN32 falls back to the old low-address check.
+static bool amxx_is_string_ptr_readable(const void *ptr)
+{
+	if (!ptr || reinterpret_cast<uintptr_t>(ptr) < 0x1000)
+		return false;
+#ifndef _WIN32
+	static const long page_size = sysconf(_SC_PAGESIZE);
+	uintptr_t page_start = reinterpret_cast<uintptr_t>(ptr) & ~(page_size - 1);
+	unsigned char vec;
+	if (mincore(reinterpret_cast<void*>(page_start), 1, &vec) != 0)
+		return false;
+#endif
+	return true;
+}
+
 CForward::CForward(const char *name, ForwardExecType et, int numParams, const ForwardParam *paramTypes)
 {
 	m_FuncName = name;
@@ -68,12 +94,12 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				{
 					const char *str = reinterpret_cast<const char*>(params[i]);
 					cell *tmp;
-					// KTP: Catch NULL and invalid low-address pointers (< first page on Linux).
-					if (!str || reinterpret_cast<uintptr_t>(str) < 0x1000)
+					// KTP: NULL / low-page / unmapped-page check (see amxx_is_string_ptr_readable).
+					if (!amxx_is_string_ptr_readable(str))
 					{
 						if (str)
 						{
-							AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in global forward \"%s\" param %d (likely param type mismatch)",
+							AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in global forward \"%s\" param %d (likely param type mismatch or use-after-free)",
 								(void*)str, m_FuncName, i);
 						}
 						str = "";
@@ -166,8 +192,9 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				}
 				else if (m_ParamTypes[i] == FP_STRINGEX)
 				{
-					// copy back (skip if pointer was invalid - would crash on write)
-					if (static_cast<uintptr_t>(static_cast<unsigned int>(params[i])) >= 0x1000)
+					// KTP: Skip writeback if pointer is NULL/low-page/unmapped — would SEGV inside
+					// amx_GetStringOld's memcpy just like the strlen read path did before this check.
+					if (amxx_is_string_ptr_readable(reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<unsigned int>(params[i])))))
 						amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
 					amx_Release(amx, realParams[i]);
 				}
@@ -290,14 +317,14 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		{
 			const char *str = reinterpret_cast<const char*>(params[i]);
 			cell *tmp;
-			// KTP: Catch NULL and invalid low-address pointers (< first page on Linux).
-			// A cell value like 1 reinterpreted as char* gives 0x1 -- passes NULL check
-			// but crashes strlen(). Log the mismatch for diagnosis then default to empty.
-			if (!str || reinterpret_cast<uintptr_t>(str) < 0x1000)
+			// KTP: NULL / low-page / unmapped-page check (see amxx_is_string_ptr_readable).
+			// Previously only NULL and <0x1000 were rejected, which missed
+			// high-but-unmapped UAF pointers (e.g. 0x3f145406) that crashed strlen().
+			if (!amxx_is_string_ptr_readable(str))
 			{
 				if (str)
 				{
-					AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in SP forward \"%s\" param %d func %d (likely param type mismatch)",
+					AMXXLOG_Log("[AMXX] WARNING: Invalid string pointer %p in SP forward \"%s\" param %d func %d (likely param type mismatch or use-after-free)",
 						(void*)str, m_Name.chars(), i, m_Func);
 				}
 				str = "";
@@ -384,8 +411,9 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		}
 		else if (m_ParamTypes[i] == FP_STRINGEX)
 		{
-			// copy back (skip if pointer was invalid - would crash on write)
-			if (static_cast<uintptr_t>(static_cast<unsigned int>(params[i])) >= 0x1000)
+			// KTP: Skip writeback if pointer is NULL/low-page/unmapped — would SEGV inside
+			// amx_GetStringOld's memcpy just like the strlen read path did before this check.
+			if (amxx_is_string_ptr_readable(reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<unsigned int>(params[i])))))
 				amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
 			amx_Release(m_Amx, realParams[i]);
 		}

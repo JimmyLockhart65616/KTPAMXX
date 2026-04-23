@@ -5,6 +5,21 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.12] - 2026-04-22
+
+### Fixed
+
+#### Forward execution UAF crash — `CForward::execute` / `CSPForward::execute`
+Both forward-execution paths (global forwards in `CForward.cpp:67` and single-plugin forwards at `CForward.cpp:289`) had a defensive check that rejected only `NULL` and pointers `< 0x1000` before calling `strlen()` on `FP_STRING` / `FP_STRINGEX` parameters. In practice, use-after-free on scheduled tasks (e.g. `set_task` with a string param whose backing memory was freed between registration and fire) leaves a high-value garbage integer in the cell slot — a value like `0x3f145406` passes the `< 0x1000` check but points to an unmapped page, and `strlen()`'s SSE-accelerated `movdqu` instruction SEGVs the entire server process.
+
+Replaced the existing check with a new helper `amxx_is_string_ptr_readable(ptr)` that combines the old NULL/low-page rejection with a `mincore()` syscall to verify the containing page is actually mapped. Unmapped pages are rejected and the string defaults to `""` with a diagnostic warning logged instead of crashing. Windows builds fall through to the old behavior (no `mincore()` equivalent and this crash pattern is i386-Linux-specific on our deployment).
+
+Also applied the same check to the `FP_STRINGEX` writeback path (`CForward.cpp:196` and `:414`) which had the identical vulnerability on copy-back — a stale pointer would SEGV inside `amx_GetStringOld`'s `memcpy` after the plugin's param was modified. Both read and write paths now use the helper consistently.
+
+Fleet impact: 15 segfaults captured across Atlanta (2026-04-21) and New York (2026-04-22) — all traced to this path via gdb on `/tmp/core.hlds_linux.*` dumps captured after the core-dump fleet rollout earlier the same day.
+
+---
+
 ## [2.7.11] - 2026-04-19
 
 ### Added
