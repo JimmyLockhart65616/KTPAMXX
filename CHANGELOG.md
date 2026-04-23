@@ -5,6 +5,25 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.13] - 2026-04-23
+
+### Fixed
+
+#### DODX forwards silently stall across map changes — `g_pFirstEdict` per-map re-init blocked by `FNullEnt` check + no recovery path in PreThink
+Two chained bugs in `modules/dod/dodx/moduleconfig.cpp` caused every DODX-forward-based event (`kill`, `damage`, `prone_change`, `player_spawn`, `player_team_change`, `flag_captured`, `player_score`) to go silent within hours of server restart on all three production KTP hosts (DEN5, ATL1, NY1), with AMXX core hooks & polling tasks still firing. A full `restart` was the only known workaround.
+
+**Bug #1 — `DODX_OnSV_ActivateServer` used `!FNullEnt(pWorld)`** (line 1160). `FNullEnt(edict 0)` returns TRUE because edict 0 IS the world entity — the same issue that was fixed in `DODX_SetupExtensionHooks` in 2.7.5 (`b95b82c1`) via the comment *"Do NOT use FNullEnt — edict 0 IS the world entity (index 0 is valid)"*. That fix was applied to the attach-time fallback path but missed the per-map hook path, so every map change's init was silently skipped. Replaced the check with a plain `if (pWorld)` and added an `MF_Log` on the `pWorld == NULL` branch so future hook-miss conditions surface in logs instead of stalling silently.
+
+**Bug #2 — `DODX_OnPlayerPreThink` had no recovery path after 2.7.4 removal** (lines 947-948). Commit `096adb70` replaced the `ENTINDEX()`-based fallback with a hard `return`. Once the per-map init failed (for any reason, not just bug #1), forwards stayed silent until plugin re-attach. Restored the fallback with an explicit `tmpIndex >= 1 && tmpIndex <= maxClients` bounds check (addresses the original "unsafe fallback init" concern), extension-mode-only (Metamod builds untouched), and logs via `MF_Log` so recoveries are visible.
+
+**Evidence:** Symptom isolation is mathematical — every silent event type routes through the `g_pFirstEdict` gate; every event type that keeps firing (team_score, time_sync, flags_init, player_connect, user_say) does not. Live `restart` verification on ATL1 confirmed attach-time fallback is what re-enables forwards. Local 4h/589-rotation stress test on vanilla HLDS did not reproduce, ruling out rotation count & wall-clock uptime as standalone triggers — prod-specific (KTP-ReHLDS hook behavior + real HLTV/player churn) is what eventually makes `DODX_OnSV_ActivateServer` skip init on a given map.
+
+**Risk:** Patch #1 is a strict re-application of 2.7.5's sibling-path fix — same reasoning, same happy-path behavior. Patch #2 restores pre-2.7.4 behavior with added bounds check, extension-mode-guarded. Happy-path Metamod builds and correctly-initialized extension-mode servers are untouched.
+
+**Credit:** Diagnosis and patch by @JimmyLockhart65616 (PR [#4](https://github.com/afraznein/KTPAMXX/pull/4)).
+
+---
+
 ## [2.7.12] - 2026-04-22
 
 ### Fixed
