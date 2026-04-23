@@ -30,6 +30,19 @@ if [[ ! -d "$INFRA_DIR" ]]; then
   exit 1
 fi
 
+# KTPInfrastructure's Makefile passes $KTP_PROJECT_ROOT as the Docker build context.
+# On Windows (git-bash/msys), the default fallback resolves to a broken relative
+# path (observed as "<cwd>/d/Git"), so the build aborts before compiling.
+# Export a forward-slash Windows path (d:/Git) when unset — Docker Desktop accepts it.
+if [[ -z "${KTP_PROJECT_ROOT:-}" ]]; then
+  case "${OSTYPE:-}" in
+    msys*|cygwin*|win32*)
+      export KTP_PROJECT_ROOT="$(cd "$REPO_ROOT/.." && pwd -W)"
+      echo "[pre-push] Windows detected — set KTP_PROJECT_ROOT=$KTP_PROJECT_ROOT"
+      ;;
+  esac
+fi
+
 VERSION="prepush-$(date +%Y%m%d-%H%M%S)"
 
 cd "$INFRA_DIR"
