@@ -944,8 +944,29 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	if (!gpGlobals)
 		return;
 
+	// KTP: Last-resort recovery. If DODX_OnSV_ActivateServer was missed for any
+	// reason (hook not fired, INDEXENT(0) returned NULL, etc.), reconstruct
+	// g_pFirstEdict from this player's edict so forwards can resume dispatching.
+	// Before 2.7.4 this path existed unguarded; 2.7.4 replaced it with a hard
+	// return, which turned any single missed re-init into a permanent silent
+	// state on production (Denver 5, ATL1, NY1) — only fixable by plugin
+	// re-attach. MF_Log so the underlying hook miss is visible in logs.
 	if (g_bExtensionMode && !g_pFirstEdict)
-		return;
+	{
+		int tmpIndex = ENTINDEX(pEntity);
+		if (tmpIndex >= 1 && tmpIndex <= gpGlobals->maxClients)
+		{
+			g_pFirstEdict = pEntity - tmpIndex;
+			g_bServerActive = true;
+			for (int i = 1; i <= gpGlobals->maxClients; ++i)
+				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
+			MF_Log("dodx: PreThink recovered g_pFirstEdict after SV_ActivateServer hook miss (player idx=%d)", tmpIndex);
+		}
+		else
+		{
+			return;
+		}
+	}
 
 	if (!g_bServerActive)
 		return;
@@ -1157,7 +1178,11 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 	if (gpGlobals && gpGlobals->maxEntities > 0)
 	{
 		edict_t *pWorld = INDEXENT(0);
-		if (pWorld && !FNullEnt(pWorld))
+		// NOTE: do NOT use FNullEnt — edict 0 IS the world entity (index 0 is valid).
+		// Same fix as 2.7.5 (b95b82c1) in DODX_SetupExtensionHooks; the sibling
+		// per-map path was missed there, leaving this block as the mechanism by
+		// which prod servers accumulate silent-forward state across rotations.
+		if (pWorld)
 		{
 			g_pFirstEdict = pWorld;
 			g_bServerActive = true;
@@ -1165,6 +1190,10 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 			// Initialize player slots
 			for (int i = 1; i <= gpGlobals->maxClients; i++)
 				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
+		}
+		else
+		{
+			MF_Log("dodx: SV_ActivateServer INDEXENT(0) returned NULL — forwards will stall until PreThink fallback or restart");
 		}
 	}
 
