@@ -47,6 +47,7 @@
 #define _ktp_version_reporter_included
 
 #include <amxmodx>
+#include <amxmisc>  // for cmd_access — keeps the include self-contained for plugins that don't already pull amxmisc
 
 #tryinclude "build_info"
 #if !defined KTP_BUILD_SHA
