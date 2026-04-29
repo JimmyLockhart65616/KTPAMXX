@@ -5,6 +5,33 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.14] - 2026-04-29
+
+### Build system
+
+#### Vendored Metamod headers — drop external `metamod-am` build dependency
+KTPAMXX previously required a sibling checkout of `alliedmodders/metamod-hl1` (locally named `metamod-am`) at build time, supplied via the `--metamod` configure flag or the `METAMOD` environment variable. This was confusing — KTP runs in extension mode and never loads Metamod at runtime — and added an external dep that CI workflows had to checkout for every build.
+
+Vendored the actual subset KTPAMXX uses (transitive closure of `<meta_api.h>` and `<sdk_util.h>`: 13 headers, ~126 KB) into `third_party/metamod/`. See `third_party/metamod/README.md` for the file list and update procedure.
+
+##### Changed
+- **`AMBuildScript`** — Removed `detectMetamod()` method, the `self.metamod_path` field, and the call to `detectMetamod()` in module init. The conditional `if self.metamod_path: compiler.cxxincludes.append(...)` was replaced with an unconditional `compiler.cxxincludes.append(third_party/metamod)`.
+- **`configure.py`** — Removed the `--metamod` CLI option. Build no longer accepts or requires it.
+- **`third_party/metamod/`** — New directory containing 13 headers (dllapi.h, engine_api.h, enginecallbacks.h, log_meta.h, meta_api.h, meta_eiface.h, mhook.h, mreg.h, mutil.h, osdep.h, plinfo.h, sdk_util.h, types_meta.h) verbatim from `alliedmodders/metamod-hl1`, plus the upstream GPL `LICENSE.txt` and a `README.md` documenting why and the update procedure.
+
+##### Compatibility
+Strictly internal — no runtime behavior change, no plugin-facing API change. The `--metamod` flag and `METAMOD` env var are now silently ignored if passed (option no longer registered). Anything that scripts the build with those vars set will need them removed from the invocation; KTPInfrastructure's `build/amxx/Dockerfile` updated in lockstep (companion KTPInfrastructure 1.5.5).
+
+##### Why now
+Identified as cleanup in TODO.md ("Vendor metamod-am headers — drop external build dep"). Cost ~3-4h as estimated. Upstream `metamod-hl1` is essentially abandoned (last meaningful commit ~2018), so vendoring is safe and won't drift.
+
+##### Verification
+- `bash build_linux.sh` build succeeds with no compile errors related to the move.
+- `obj-linux/packages/base/addons/ktpamx/dlls/ktpamx_i386.so` produced at expected ~6.9 MB.
+- Pre-existing warnings (sh_tinyhash.h `Walloc-size-larger-than`, ld text relocation in natives-asm.obj) unchanged — unrelated to this change.
+
+---
+
 ## [2.7.13] - 2026-04-23
 
 ### Fixed

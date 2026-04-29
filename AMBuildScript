@@ -10,7 +10,6 @@ class AMXXConfig(object):
     self.plugins = {}
     self.libpc300 = None
     self.amxxpc = None
-    self.metamod_path = None
     self.hlsdk_path = None
     self.mysql_path = None
     self.generated_headers = []
@@ -40,29 +39,6 @@ class AMXXConfig(object):
     else:
       major, minor, release = m.groups()
       self.productVersion = '{0}.{1}.{2}'.format(major, minor, release)
-
-  def detectMetamod(self):
-    metamod_path = builder.options.metamod_path
-    if not len(metamod_path):
-      metamod_path = os.getenv('METAMOD', '')
-
-    if len(metamod_path):
-      self.metamod_path = os.path.join(builder.originalCwd, metamod_path)
-      if not os.path.exists(os.path.join(self.metamod_path, 'metamod')):
-        raise Exception('Metamod path does not exist: {0}'.format(metamod_path))
-    else:
-      try_paths = [
-        os.path.join(builder.sourcePath, '..', 'metamod'),
-        os.path.join(builder.sourcePath, '..', 'metamod-am'),
-        os.path.join(builder.sourcePath, '..', 'metamod-hl1'),
-      ]
-      for try_path in try_paths:
-        if os.path.exists(os.path.join(try_path, 'metamod')):
-          self.metamod_path = os.path.normpath(try_path)
-          break
-      if not self.metamod_path:
-        # Metamod is optional for extension mode builds
-        pass
 
   def detectHlsdk(self):
     hlsdk_path = builder.options.hlsdk_path
@@ -373,9 +349,10 @@ class AMXXConfig(object):
       os.path.join(self.hlsdk_path, 'public'),
       os.path.join(self.hlsdk_path, 'pm_shared'),
     ]
-    # Metamod include is optional for extension mode builds
-    if self.metamod_path:
-      compiler.cxxincludes.append(os.path.join(self.metamod_path, 'metamod'))
+    # Metamod headers are vendored in third_party/metamod/ — see that
+    # directory's README for the rationale. KTP runs in extension mode and
+    # never loads Metamod at runtime; these headers are compile-time only.
+    compiler.cxxincludes.append(os.path.join(builder.sourcePath, 'third_party', 'metamod'))
     return compiler
 
   def AddVersioning(self, binary):
@@ -464,7 +441,6 @@ class AMXXConfig(object):
 
 AMXX = AMXXConfig()
 AMXX.detectProductVersion()
-AMXX.detectMetamod()
 AMXX.detectHlsdk()
 AMXX.detectMysql()
 AMXX.detectNASM()

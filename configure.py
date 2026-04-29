@@ -22,8 +22,6 @@ run.options.add_option('--no-mysql', action='store_true', default=False, dest='d
                        help='Disable building MySQL extension')
 run.options.add_option('--breakpad-dump', action='store_true', dest='breakpad_dump',
                        default=False, help='Dump and upload breakpad symbols')
-run.options.add_option('--metamod', type='string', dest='metamod_path', default='',
-                       help='Path to Metamod source code')
 run.options.add_option('--hlsdk', type='string', dest='hlsdk_path', default='',
                        help='Path to the HLSDK')
 run.options.add_option('--mysql', type='string', dest='mysql_path', default='',

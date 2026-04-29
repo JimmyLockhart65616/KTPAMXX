@@ -69,15 +69,8 @@ fi
 echo ""
 
 # Set environment variables
-# Check for metamod (optional for extension mode builds)
-if [ -d "$(pwd)/../metamod-am" ]; then
-    export METAMOD="$(pwd)/../metamod-am"
-elif [ -d "$(pwd)/../metamod" ]; then
-    export METAMOD="$(pwd)/../metamod"
-else
-    # No metamod found - will build extension mode only
-    export METAMOD=""
-fi
+# Metamod headers are vendored at third_party/metamod/ since 2.7.14;
+# AMBuildScript no longer reads $METAMOD or accepts --metamod.
 
 # Check for HLSDK in common locations
 if [ -d "$(pwd)/../hlsdk" ]; then
