@@ -5,6 +5,26 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.15] - 2026-04-30
+
+### Fixed
+
+#### `ktp_version_reporter.inc` — silent truncation past 2 entries (engine `MAX_KV_LEN=127` cap)
+The shared `amx_ktp_versions` rcon command was reporting only the first 2 plugins by load order (KTP Admin Audit, KTP Cvar Checker) instead of all 9 KTP plugins that adopted the include 2026-04-25. Discovered 2026-04-30 09:43 ET against ATL:27015 — a `localinfo` console dump showed `_ktp_v_data` capped at 113 bytes containing exactly two entries.
+
+Root cause was structural to the v1 include design: it accumulated all entries into a single `_ktp_v_data` localinfo string. GoldSrc/ReHLDS `Info_SetValueForStarKey` (which `set_localinfo` resolves to) enforces a per-value cap of `MAX_KV_LEN = 127` chars (see `KTPReHLDS/rehlds/engine/info.h:34` + `info.cpp:611`). The first 2 entries (113 chars) fit; the third would push past 127 → silently rejected at the engine boundary, while AMXX's `set_localinfo` Pawn native returns 1 (success) regardless.
+
+##### Changed
+- **`plugins/include/ktp_version_reporter.inc`** — Replaced the localinfo-string accumulator with an AMXX multi-forward (`CreateMultiForward("KTP_OnVersionDump", ET_IGNORE, FP_CELL, FP_ARRAY)`). Each plugin owns its own one-line dump via a `public KTP_OnVersionDump(id, counter[1])` callback; the rcon handler fires `ExecuteForward` and lets every plugin print its own line. The counter uses `PrepareArray` with copyback so each plugin can increment `counter[0]` for the totals footer. Localinfo is now used only for a single-byte `_ktp_v_reg` flag (well under the 127-cap) to gate "first registrant" concmd registration.
+
+##### Compatibility
+Plugin source files unchanged — only the include semantics changed. All 9 KTP plugins recompiled cleanly against the new include with no source modifications. Old `_ktp_v_data` localinfo key is no longer written; stale data from prior server runs persists harmlessly until restart.
+
+##### Verification
+Activation gated on next 03:00 ET nightly auto-swap (`.new` files staged to all 24 active fleet instances 2026-04-30 ~10:25 ET, md5s verified post-deploy). Post-restart expectation: `amx_ktp_versions` rcon shows all 9 plugins with `Total: 9 KTP plugin(s) loaded`. v1 failure mode captured for forensic record in TODO.md and `info_string_max_kv_len_cap.md` memory.
+
+---
+
 ## [2.7.14] - 2026-04-29
 
 ### Build system
