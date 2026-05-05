@@ -611,3 +611,66 @@ native dodx_area_get_data(index, CA_VALUE:key, szvalue[] = "", len = 0);
 native dodx_area_set_data(index, CA_VALUE:key, ivalue = 0, const szvalue[] = "");
 
 // ==================================================================
+// TEST-ONLY forward dispatch primitives — Tier 2 integration tests
+// ==================================================================
+//
+// These natives bypass the engine event chain and dispatch DODX forwards
+// directly. They exist solely so that hot-path Phase 3 integration tests
+// can fire client_damage / dod_grenade_explosion / client_score /
+// dod_score_event deterministically without relying on bot-vs-bot combat.
+//
+// PRODUCTION PLUGINS MUST NOT CALL THESE. They are intended exclusively
+// for KTPWitness.amxx (the test-only forward observer in
+// KTPInfrastructure/tests/integration/witness/) and any future test
+// fixture plugins. The natives do not modify engine state — they only
+// dispatch the corresponding forward to all subscribed plugins via
+// MF_ExecuteForward, the same primitive DODX uses for real engine
+// events.
+//
+// Safety rationale + implementation details:
+// modules/dod/dodx/NBase.cpp § "KTP TEST-ONLY: Forward dispatch primitives"
+
+/**
+ * Test-only: dispatch the `client_damage` forward.
+ * @param attacker  Attacker client slot
+ * @param victim    Victim client slot
+ * @param damage    Damage value
+ * @param wpnindex  Weapon index (xmod weapon ID)
+ * @param hitplace  Hit location enum
+ * @param TA        1 if teamattack, else 0
+ * @return          1 on success, 0 if forward not registered
+ */
+native dodx_test_dispatch_damage(attacker, victim, damage, wpnindex, hitplace, TA);
+
+/**
+ * Test-only: dispatch the `dod_grenade_explosion` forward.
+ * @param id        Grenade owner client slot
+ * @param pos       3-float world position [x, y, z]
+ * @param wpnid     Grenade weapon ID (DODW_HANDGRENADE etc.)
+ * @return          1 on success, 0 if forward not registered
+ */
+native dodx_test_dispatch_grenade_explosion(id, Float:pos[3], wpnid);
+
+/**
+ * Test-only: dispatch BOTH `client_score` (id, score, total) and
+ * `dod_score_event` (id, score_delta, total_score, cp_index) forwards
+ * — matching the production pattern where they fire in tandem.
+ *
+ * @param id           Player client slot
+ * @param score_delta  Score change (positive for frag, negative for suicide)
+ * @param total_score  New running total
+ * @param cp_index     CP that triggered the score, or -1 if not CP-related
+ * @return             1
+ */
+native dodx_test_dispatch_score(id, score_delta, total_score, cp_index);
+
+/**
+ * Test-only: dispatch the `dod_control_point_captured` forward.
+ * @param cp_index   Control point index that changed ownership
+ * @param new_owner  New owning team (0=neutral, 1=allies, 2=axis)
+ * @param old_owner  Previous owning team
+ * @return           1 on success, 0 if forward not registered
+ */
+native dodx_test_dispatch_cp_captured(cp_index, new_owner, old_owner);
+
+// ==================================================================

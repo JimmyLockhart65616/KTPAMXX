@@ -1292,6 +1292,140 @@ static cell AMX_NATIVE_CALL dodx_debug_dump_ammo(AMX *amx, cell *params)
 	return 1;
 }
 
+// ============================================================================
+// KTP TEST-ONLY: Forward dispatch primitives for the Tier 2 integration suite.
+// ============================================================================
+//
+// These natives bypass the engine event chain and dispatch DODX forwards
+// directly via MF_ExecuteForward. They are NOT for production use — they
+// exist solely to give Phase 3 hot-path tests in
+// `KTPInfrastructure/tests/integration/` a deterministic way to fire the
+// `client_damage`, `dod_grenade_explosion`, `client_score`, and
+// `dod_score_event` forwards without relying on bot-vs-bot combat
+// (unreliable) or sniffing engine usermsg internals (high-coupling).
+//
+// Production safety:
+//   - The natives are no-ops with respect to engine state — they only
+//     dispatch the forward to subscribed plugins. They do NOT modify
+//     pev->frags, weapon stats, or any other engine field.
+//   - Any plugin that calls these COULD spoof a DODX forward (e.g. fake
+//     a player attack), but DODX itself dispatches the same forwards from
+//     real engine events using the same MF_ExecuteForward primitive — a
+//     spoof is no more dangerous than a real event. The risk surface is
+//     equivalent to "a plugin calls MF_ExecuteForward(iFDamage, ...)" which
+//     any sufficiently-privileged plugin could already do via direct AMX
+//     module access.
+//   - Production plugins MUST NOT call these. Naming convention
+//     (`dodx_test_dispatch_*` prefix) signals the intent.
+//
+// Each native short-circuits if the relevant forward isn't registered
+// (defensive — should never happen in practice since DODX registers all
+// forwards in OnAmxxAttach).
+
+// dodx_test_dispatch_damage(attacker, victim, damage, wpnindex, hitplace, TA)
+// Fires the `client_damage` forward. All args are ints.
+static cell AMX_NATIVE_CALL dodx_test_dispatch_damage(AMX *amx, cell *params)
+{
+	if (iFDamage < 0)
+		return 0;
+
+	int attacker = params[1];
+	int victim   = params[2];
+	int damage   = params[3];
+	int wpnindex = params[4];
+	int hitplace = params[5];
+	int TA       = params[6];
+
+	// Bounds-check the player slots so a subscribed handler that does
+	// engine lookups (MF_IsPlayerIngame, dodx_get_user_*, etc.) on the
+	// slot doesn't see UB from an out-of-range test value. Production
+	// dispatch sites are gated on `GET_PLAYER_POINTER` which validates
+	// implicitly; the test native has no such gate. attacker may be 0
+	// (worldspawn-style "no attacker") so floor it at 0; victim must be
+	// an actual player slot.
+	int maxClients = gpGlobals->maxClients;
+	if (attacker < 0 || attacker > maxClients) return 0;
+	if (victim < 1 || victim > maxClients) return 0;
+
+	MF_ExecuteForward(iFDamage, attacker, victim, damage, wpnindex, hitplace, TA);
+	return 1;
+}
+
+// dodx_test_dispatch_grenade_explosion(id, Float:pos[3], wpnid)
+// Fires the `dod_grenade_explosion` forward. pos is a Pawn-side Float[3]
+// passed by reference; we re-pack as a cell array per the established
+// pattern (see moduleconfig.cpp:487-491 for the production dispatch site).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_grenade_explosion(AMX *amx, cell *params)
+{
+	if (iFGrenadeExplode < 0)
+		return 0;
+
+	int id    = params[1];
+	cell *posCells = MF_GetAmxAddr(amx, params[2]);
+	int wpnid = params[3];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	// Pawn cells already encode floats as bit-reinterpreted IEEE 754 — pass
+	// through to MF_PrepareCellArray without re-conversion (the consumer
+	// will read them back as Float: cells in the receiving plugin's public).
+	cell position[3];
+	position[0] = posCells[0];
+	position[1] = posCells[1];
+	position[2] = posCells[2];
+	cell pos = MF_PrepareCellArray(position, 3);
+
+	MF_ExecuteForward(iFGrenadeExplode, id, pos, wpnid);
+	return 1;
+}
+
+// dodx_test_dispatch_score(id, score_delta, total_score, cp_index)
+// Fires BOTH the `client_score` forward (3 args: id, score, total) AND
+// the `dod_score_event` forward (4 args: id, delta, total, cp_index) —
+// matching the production dispatch pattern (moduleconfig.cpp:276-278 and
+// 1043-1045) where they fire in tandem.
+//
+// Both forwards independently guarded — early-out only if BOTH unregistered.
+static cell AMX_NATIVE_CALL dodx_test_dispatch_score(AMX *amx, cell *params)
+{
+	if (iFScore < 0 && iFScoreEvent < 0)
+		return 0;
+
+	int id          = params[1];
+	int score_delta = params[2];
+	int total_score = params[3];
+	int cp_index    = params[4];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	if (iFScore >= 0)
+		MF_ExecuteForward(iFScore, id, score_delta, total_score);
+	if (iFScoreEvent >= 0)
+		MF_ExecuteForward(iFScoreEvent, id, score_delta, total_score, cp_index);
+	return 1;
+}
+
+// dodx_test_dispatch_cp_captured(cp_index, new_owner, old_owner)
+// Fires the `dod_control_point_captured` forward. Phase 4 dispatch
+// primitive — production dispatches this from usermsg.cpp:643-644 in
+// response to engine flag-cap messages. Test-only.
+static cell AMX_NATIVE_CALL dodx_test_dispatch_cp_captured(AMX *amx, cell *params)
+{
+	if (iFCPCaptured < 0)
+		return 0;
+
+	int cp_index  = params[1];
+	int new_owner = params[2];
+	int old_owner = params[3];
+
+	MF_ExecuteForward(iFCPCaptured, cp_index, new_owner, old_owner);
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1372,6 +1506,14 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_set_user_origin", dodx_set_user_origin},
 	{"dodx_get_user_angles", dodx_get_user_angles},
 	{"dodx_set_user_angles", dodx_set_user_angles},
+
+	// KTP: TEST-ONLY forward dispatch primitives for Tier 2 integration tests.
+	// Production plugins MUST NOT call these. See function bodies above for
+	// rationale + safety analysis.
+	{"dodx_test_dispatch_damage",            dodx_test_dispatch_damage},
+	{"dodx_test_dispatch_grenade_explosion", dodx_test_dispatch_grenade_explosion},
+	{"dodx_test_dispatch_score",             dodx_test_dispatch_score},
+	{"dodx_test_dispatch_cp_captured",       dodx_test_dispatch_cp_captured},
 
 	///*******************
 	{ NULL, NULL }
