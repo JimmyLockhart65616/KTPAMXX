@@ -5,6 +5,9 @@ name: CI
 # alliedmodders/metamod-hl1) with a Linux-only build that uses afraznein/KTPHLSDK
 # — our fork that adds `pfnClientCvarChanged` to NEW_DLL_FUNCTIONS.
 #
+# Extension-mode-only: KTPAMXX loads as a ReHLDS extension (no Metamod), so
+# configure.py dropped its --metamod option. We don't clone metamod-hl1 here.
+#
 # Windows MSVC is intentionally dropped: we don't ship a Windows KTPAMXX build.
 # Plugin compilation (.sma → .amxx) is skipped here and validated separately via
 # KTPInfrastructure's `make build-plugins` target, which the pre-push hook runs.
@@ -50,9 +53,6 @@ jobs:
           repository: afraznein/KTPHLSDK
           path: KTPhlsdk
 
-      - name: Clone metamod-hl1 (headers only, upstream is fine)
-        run: git clone --depth=1 https://github.com/alliedmodders/metamod-hl1.git metamod-hl1
-
       - name: Clone AMBuild
         run: git clone --depth=1 https://github.com/alliedmodders/ambuild.git ambuild
 
@@ -87,8 +87,7 @@ jobs:
             --enable-optimize \
             --no-mysql \
             --no-plugins \
-            --hlsdk=../KTPhlsdk \
-            --metamod=../metamod-hl1
+            --hlsdk=../KTPhlsdk
 
       - name: Build
         working-directory: KTPAMXX/obj-linux
