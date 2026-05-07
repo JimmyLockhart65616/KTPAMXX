@@ -5,6 +5,32 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.16] - 2026-05-06
+
+### Fixed
+
+#### `client_infochanged` forward + `CPlayer::name` cache stuck at connect-time name in extension mode
+`get_user_name()` reads `CPlayer::name`, an internal AMXX cache. That cache is only refreshed by `C_ClientUserInfoChanged_Post` (`amxmodx/meta_api.cpp:1635`), which is wired into `gFunctionTable_Post.pfnClientUserInfoChanged` — the Metamod DLL-export table. In extension mode there is no Metamod, so the engine calls the game DLL's `pfnClientUserInfoChanged` directly and the AMXX post-hook never fires. Two consequences:
+
+1. The `client_infochanged` forward never fires, contradicting the audit note in `KTPAMXX_NATIVE_AUDIT.md` ("Not needed").
+2. `CPlayer::name` stays frozen at the connect-time name. Every subsequent `get_user_name()` call — including the one a plugin makes inside its own `dod_client_spawn` / `client_putinserver` handler on respawn — returns the stale name even after the player ran `setinfo "name" "..."` mid-life. The engine's `pEdict->v.netname` is updated correctly (the in-game DeathMsg kill feed reads the new name), creating a visible divergence between AMXX-driven HUDs and the engine's own scoreboard.
+
+Discovered 2026-05-03 against the production fleet: a player connected as `金緑ぎ子供[bc]`, renamed to `incite` mid-match via setinfo, died and respawned multiple times, and AMXX-fed HUDs (DoD HUD Observer overlay) still rendered the original CJK name while the in-game kill feed showed `incite`.
+
+##### Changed
+- **`amxmodx/meta_api.cpp`** — Added extension-mode `SV_ClientUserInfoChanged_RH` hook (forward decl beside the other extension-mode hooks; definition next to the disabled `Steam_GSBUpdateUserData_RH` placeholder block, which had been left as a dead pass-through under the wrong assumption that `C_ClientUserInfoChanged_Post` covered the extension-mode path). Registered via `RehldsHookchains->SV_ClientUserInfoChanged()->registerHook(...)` in the extension-mode init block alongside `Steam_NotifyClientConnect`. The handler calls `chain->callNext(cl)` first (post-hook semantics so the engine's userinfo update has applied), then short-circuits in Metamod mode to avoid double-firing, validates the client/edict/index, skips fakeclients, re-reads the infobuffer via `GET_INFOKEYBUFFER` + `INFOKEY_VALUE`, refreshes `pPlayer->name`, and fires `FF_ClientInfoChanged`.
+- **`KTPAMXX_NATIVE_AUDIT.md`** — Flipped the `client_infochanged` row from N/A / "Not needed" → OK / `SV_ClientUserInfoChanged` / "Userinfo changes; refreshes `CPlayer::name` (`get_user_name`)".
+
+##### Compatibility
+Strictly additive. In Metamod mode the new hook is a no-op pass-through (early `return` after `chain->callNext(cl)` when `g_bRunningWithMetamod` is true), so the existing Metamod path through `C_ClientUserInfoChanged_Post` is untouched. The `client_infochanged` forward signature is unchanged. No plugin source needs recompilation. The ReHLDS hookchain `SV_ClientUserInfoChanged` was already exposed in the API (`public/resdk/engine/rehlds_api.h:383`) — this PR simply consumes it.
+
+##### Verification
+- `bash build_linux.sh` build succeeds.
+- Pre-push hook compile of the consuming plugin (DoD HUD Observer's `KTPHudObserver.sma`, which calls `get_user_name()` from `dod_client_spawn` / `client_authorized` / roster dump paths) passes.
+- End-to-end behavior reproducible by connecting under one name, calling `setinfo "name" "newname"` mid-life, and observing that the next AMXX-driven HUD update reflects the new name without requiring a respawn cycle.
+
+---
+
 ## [2.7.15] - 2026-04-30
 
 ### Fixed

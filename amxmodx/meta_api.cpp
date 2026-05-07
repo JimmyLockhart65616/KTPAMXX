@@ -167,6 +167,11 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl);
 qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *chain, IGameClient *cl, const void *pvSteam2Key, unsigned int ucbSteam2Key);
 // KTP: Disabled — pass-through hook with no functionality
 // bool Steam_GSBUpdateUserData_RH(IRehldsHook_Steam_GSBUpdateUserData *chain, uint64 steamid, const char *name, uint32 score);
+// KTP: SV_ClientUserInfoChanged hook for client_infochanged + CPlayer::name refresh in extension mode.
+// The Metamod-mode path (C_ClientUserInfoChanged_Post via gFunctionTable_Post) never fires here,
+// so without this hook get_user_name() stays at the connect-time name through every respawn
+// after a setinfo "name" "..." mid-life.
+void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IGameClient *cl);
 bool SV_CheckConsistencyResponse_RH(IRehldsHook_SV_CheckConsistencyResponse *chain, IGameClient *cl, resource_t *resource, uint32 hash);
 // KTP: Disabled — pass-through hook with no functionality
 // void ExecuteServerStringCmd_RH(IRehldsHook_ExecuteServerStringCmd *chain, const char *cmdStr, cmd_source_t src, IGameClient *cl);
@@ -1599,6 +1604,54 @@ qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *cha
 // 	// This hook is registered for potential future Steam-specific functionality.
 // 	return result;
 // }
+
+// KTP: SV_ClientUserInfoChanged hook — fires client_infochanged forward and
+// refreshes CPlayer::name from the engine's infobuffer. The Metamod equivalent
+// (C_ClientUserInfoChanged_Post via gFunctionTable_Post.pfnClientUserInfoChanged)
+// never fires in extension mode because the engine calls the game DLL's
+// pfnClientUserInfoChanged directly, so without this hook get_user_name()
+// returns the connect-time name forever — every respawn after a setinfo "name"
+// "..." reads the stale CPlayer::name cache and old names persist on AMXX HUDs.
+void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IGameClient *cl)
+{
+	// Pass through first so the engine has applied the userinfo change before we
+	// re-read the infobuffer.
+	chain->callNext(cl);
+
+	// In Metamod mode, C_ClientUserInfoChanged_Post fires via gFunctionTable_Post —
+	// don't double-fire client_infochanged here.
+	if (g_bRunningWithMetamod)
+		return;
+
+	if (!cl || !cl->IsConnected())
+		return;
+
+	edict_t *pEntity = cl->GetEdict();
+	if (!pEntity)
+		return;
+
+	int index = ENTINDEX(pEntity);
+	if (index < 1 || index > gpGlobals->maxClients)
+		return;
+
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer || !pPlayer->ingame)
+		return;
+
+	// Skip bots — fakeclient userinfo is set once at connect and not authoritative.
+	if (pEntity->v.flags & FL_FAKECLIENT)
+		return;
+
+	char *infobuffer = GET_INFOKEYBUFFER(pEntity);
+	if (infobuffer)
+	{
+		const char *name = INFOKEY_VALUE(infobuffer, "name");
+		if (name && *name)
+			pPlayer->name = name;
+	}
+
+	executeForwards(FF_ClientInfoChanged, static_cast<cell>(index));
+}
 
 // KTP: Disabled — pass-through hook with no functionality
 // // KTP: ExecuteServerStringCmd hook for client_command forward in extension mode
@@ -3129,6 +3182,10 @@ static void KTPAMX_InitAsRehldsExtension()
 
 	// KTP: Register Steam_NotifyClientConnect hook for client_authorized forward
 	RehldsHookchains->Steam_NotifyClientConnect()->registerHook(Steam_NotifyClientConnect_RH);
+
+	// KTP: Register SV_ClientUserInfoChanged hook for client_infochanged forward
+	// and to keep CPlayer::name in sync with the engine on userinfo changes.
+	RehldsHookchains->SV_ClientUserInfoChanged()->registerHook(SV_ClientUserInfoChanged_RH);
 
 	// KTP: Disabled — pass-through hook with no functionality
 	// RehldsHookchains->Steam_GSBUpdateUserData()->registerHook(Steam_GSBUpdateUserData_RH);
