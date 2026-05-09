@@ -1635,21 +1635,32 @@ void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IG
 		return;
 
 	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
-	if (!pPlayer || !pPlayer->ingame)
+	// Match the C_ClientCvarChanged guard below — plugin handlers assume a fully
+	// connected player; firing FF_ClientInfoChanged before initialized + ingame are
+	// both true leads to undefined behaviour in plugin code.
+	if (!pPlayer || !pPlayer->initialized || !pPlayer->ingame)
 		return;
 
 	// Skip bots — fakeclient userinfo is set once at connect and not authoritative.
+	// Note: unlike the Metamod path's C_ClientUserInfoChanged_Post, we do not need
+	// the `else if (pPlayer->IsBot())` Connect-emulation branch here — DODX extension
+	// hooks handle bot connect/putinserver elsewhere (see extension_mode_no_fakemeta.md).
 	if (pEntity->v.flags & FL_FAKECLIENT)
 		return;
 
+	// Only fire the forward when the cache was actually refreshed. If GET_INFOKEYBUFFER
+	// returns NULL or the "name" key is absent (engine infobuffer corruption / connect-
+	// time race), firing with stale `pPlayer->name` would reproduce the same bug class
+	// this hook exists to fix.
 	char *infobuffer = GET_INFOKEYBUFFER(pEntity);
-	if (infobuffer)
-	{
-		const char *name = INFOKEY_VALUE(infobuffer, "name");
-		if (name && *name)
-			pPlayer->name = name;
-	}
+	if (!infobuffer)
+		return;
 
+	const char *name = INFOKEY_VALUE(infobuffer, "name");
+	if (!name || !*name)
+		return;
+
+	pPlayer->name = name;
 	executeForwards(FF_ClientInfoChanged, static_cast<cell>(index));
 }
 
