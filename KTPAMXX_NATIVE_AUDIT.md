@@ -182,7 +182,7 @@ By checking `pPlayer->initialized`, we detect if reinitialization is needed.
 | `client_disconnect` | ![OK](https://img.shields.io/badge/-OK-brightgreen) | SV_DropClient | Disconnect handling |
 | `client_disconnected` | ![OK](https://img.shields.io/badge/-OK-brightgreen) | SV_DropClient | Post-disconnect |
 | `client_command` | ![OK](https://img.shields.io/badge/-OK-brightgreen) | SV_ClientCommand | Command processing |
-| `client_infochanged` | ![N/A](https://img.shields.io/badge/-N%2FA-inactive) | SV_ClientUserInfoChanged | Not needed |
+| `client_infochanged` | ![OK](https://img.shields.io/badge/-OK-brightgreen) | SV_ClientUserInfoChanged | Userinfo changes; refreshes CPlayer::name (`get_user_name`) |
 
 ### Custom KTP Forwards
 
