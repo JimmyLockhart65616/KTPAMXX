@@ -5,6 +5,30 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.17] - 2026-05-21
+
+### Added
+
+#### `dodx`: Per-player score / deaths native infrastructure for mid-match score persistence (spike branch B+C+broadcast)
+
+Built on the existing 5/11 v1.2 spike (commit `851295e4` — added `dodx_get/set_user_deaths` + `dodx_get/set_user_score` natives writing to `STEAM_PDOFFSET_DEATHS` / `STEAM_PDOFFSET_SCORE` in pvPrivateData). Three composed changes round out the design after 5/21 client-test discoveries:
+
+**1. Independent `g_iScoreDeathsOffsetAdjust` global** (`dodx.h` + `moduleconfig.cpp`). Splits the score/deaths offset adjust from the grenade adjust (`g_iLinuxPdataOffsetAdjust`). Both default to `+4` (Ubuntu 24.04 baremetal fleet), but grenade is auto-detect-promoted to `+5` at first grenade op via the heuristic in `moduleconfig.cpp:1987` — which 5/21 evidence proved is correct for grenades but FALSE-POSITIVE-promotes score/deaths offsets one int past the correct location. Two field families, two different correct adjusts on the same OS build. Score/deaths keep their own adjust and intentionally skip the auto-detect (the heuristic doesn't generalize — non-zero-int-at-offset ≠ correct-field). Override via new `dodx.ini` key `score_deaths_offset = N`. Confirmed offsets via disassembling production `dod_i386.so` md5 `4f4727b2…`: `m_iObjScore` at byte `0x780` (int 480 = base 476 + 4), `m_iDeaths` at byte `0x784` (int 481 = base 477 + 4) — see `KTPMatchHandler/research/OFFSETS_RESEARCH_2026-05-21.md`.
+
+**2. `dodx_get_observed_deaths(id)` native + dedicated `g_observedDeaths[33]` counter** (`NBase.cpp` + `usermsg.cpp` + `CMisc.cpp` + `dodx.inc`). Engine-authoritative ground-truth death counter for the validation gate. Ticks once per death event in `usermsg.cpp`'s death paths — both the Damage hook (deaths via normal frag flow) and `Client_DeathMsg` (suicides via `kill` console + world deaths). The pre-existing 33ms dedup gate against `g_lastDeathReportTime[]` already prevents double-fire, so the new counter stays one-tick-per-death. Reset on `CPlayer::Connect` so reconnects don't inherit the prior session's tally.
+
+Selected over the obvious alternatives:
+- `pPlayer->life.deaths` (DODX `CPlayer` stat) — 5/21 verified under-counts: only ticks via `CPlayer::saveKill` from the Damage hook path, so `kill`-console suicides bypass it. Returned 0 against scoreboard=2 in the 5/21 test.
+- AMXX core `get_user_deaths(id)` — its `Client_ScoreInfo` hook on the `ScoreInfo` user message doesn't catch DoD's death broadcasts. DoD doesn't even register `gmsgTeamInfo` server-side; its scoreboard updates flow via `gmsgScoreShort` / `gmsgScoreInfoLong` instead, neither handled by AMXX core. Returned 0 with scoreboard=2 in the same 5/21 test.
+
+**3. `dodx_broadcast_scoreboard(id)` native** (`NBase.cpp` + `dodx.inc`). Refreshes a player's scoreboard row immediately by sending a `ScoreShort` message in DoD's exact native format (BYTE id + SHORT m_iObjScore + SHORT frags + SHORT m_iDeaths + BYTE 1). Format derived from disassembling the broadcast site immediately after `inc DWORD PTR [eax+0x784]` in `CDoDTeamPlay::PlayerKilled` (b2774-b27ee in `dod_i386.so`). Uses direct engine-func `MESSAGE_BEGIN`/`WRITE_BYTE`/`WRITE_SHORT`/`MESSAGE_END` — the same pattern as `dodx_broadcast_team_score` (proven safe since v0.10.20 per the historical CLAUDE.md note), explicitly NOT the AMX `message_begin` Pawn native path which crashed ATL:27019 on 5/21 v1.3.1 RESTORE (vtable lookup segfault at `ktpamx_i386.so+0x561c3`).
+
+**Tested 2026-05-21 on ATL:27019 baremetal:** full SAVE → disconnect → reconnect → RESTORE cycle validated end-to-end. Scoreboard refreshed immediately on RESTORE with no crash. Validation gate caught the offset-vs-observed mismatch in earlier iteration (when `life.deaths` was the ground truth) — proving the gate works as designed.
+
+**Branch state:** This commit lands on `feature/dodx-score-persistence-spike-v1.2`; do NOT merge to master until consumer plugin (`KTPMatchHandler`) is also ready + fleet-deploy pipeline (`.new` push to all 25 instances) is wired. The plugin side is on `main` of `KTPMatchHandler` waiting on the same upstream gate.
+
+---
+
 ## [2.7.16] - 2026-05-06
 
 ### Fixed

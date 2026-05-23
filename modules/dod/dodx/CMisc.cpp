@@ -104,6 +104,13 @@ void CPlayer::Connect(const char* nn,const char* ippp ){
 			break;
 		}
 	}
+
+	// KTP 2026-05-21: reset the offset-validation gate's observed-death
+	// counter for this slot so a reconnect doesn't inherit the prior
+	// session's death tally.
+	extern int g_observedDeaths[33];
+	if (index >= 1 && index < 33)
+		g_observedDeaths[index] = 0;
 }
 
 void CPlayer::restartStats(bool all)

@@ -802,6 +802,164 @@ static cell AMX_NATIVE_CALL dodx_set_pl_teamname(AMX *amx, cell *params)
 	return 1;
 }
 
+// KTP: Per-player score / deaths read+write into DoD game-DLL private data.
+// Offsets defined in dodx.h (STEAM_PDOFFSET_SCORE / STEAM_PDOFFSET_DEATHS;
+// the same offsets dodx_set_pl_teamname / dodx_set_user_class use). Adds
+// the missing piece KTPMatchHandler.sma needs to restore per-player
+// scoreboard state across mid-match disconnect/reconnect (the AMXX/ReAPI
+// path for these fields requires ReGameDll, which is Counter-Strike-only
+// and unavailable on DoD — validated empirically on ATL:27019 2026-05-11
+// via "Run time error 10 (native set_member_s)" when calling
+// set_member(id, m_iDeaths, ...)).
+//
+// Safety: same guard chain as the other pdata writers in this file.
+
+// native dodx_set_user_deaths(id, deaths);
+static cell AMX_NATIVE_CALL dodx_set_user_deaths(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients)
+		return 0;
+
+	edict_t* pEdict = MF_GetPlayerEdict(id);
+	if (!pEdict || !pEdict->pvPrivateData)
+		return 0;
+
+	*((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_DEATHS) = params[2];
+	return 1;
+}
+
+// native dodx_get_user_deaths(id);
+static cell AMX_NATIVE_CALL dodx_get_user_deaths(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients)
+		return 0;
+
+	edict_t* pEdict = MF_GetPlayerEdict(id);
+	if (!pEdict || !pEdict->pvPrivateData)
+		return 0;
+
+	return *((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_DEATHS);
+}
+
+// native dodx_set_user_score(id, score);
+static cell AMX_NATIVE_CALL dodx_set_user_score(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients)
+		return 0;
+
+	edict_t* pEdict = MF_GetPlayerEdict(id);
+	if (!pEdict || !pEdict->pvPrivateData)
+		return 0;
+
+	*((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_SCORE) = params[2];
+	return 1;
+}
+
+// native dodx_get_user_score(id);
+static cell AMX_NATIVE_CALL dodx_get_user_score(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients)
+		return 0;
+
+	edict_t* pEdict = MF_GetPlayerEdict(id);
+	if (!pEdict || !pEdict->pvPrivateData)
+		return 0;
+
+	return *((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_SCORE);
+}
+
+// KTP 2026-05-21: Per-player observed-deaths counter for the score/deaths
+// offset validation gate. Ticks ONCE per death event in usermsg.cpp's
+// death paths (Damage hook AND Client_DeathMsg, deduplicated via the
+// existing 33ms guard). Covers normal frags, suicides (`kill` console
+// command), and world deaths — same coverage as DoD's m_iDeaths
+// increment in dod_i386.so.
+//
+// Why not life.deaths: that counter is updated via CPlayer::saveKill
+// which is only invoked from the Damage hook path. Suicides via `kill`
+// reach Client_DeathMsg but bypass damage flow, so life.deaths under-
+// counts (verified empirically 5/21: 2 suicides + scoreboard deaths=2
+// but life.deaths stayed 0).
+//
+// Why not AMXX get_user_deaths: AMXX core's CPlayer.deaths is only
+// updated by its Client_ScoreInfo hook which doesn't catch DoD's death
+// broadcasts (verified empirically 5/21: get_user_deaths returned 0).
+//
+// Use case: plugin calls this AND dodx_get_user_deaths at SAVE time;
+// if they disagree, score_deaths_offset is mis-configured (likely a
+// new OS bump shifted the struct again). Plugin logs + skips persist.
+//
+// native dodx_get_observed_deaths(id);
+extern int g_observedDeaths[33];
+
+static cell AMX_NATIVE_CALL dodx_get_observed_deaths(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients || id >= 33)
+		return 0;
+
+	return g_observedDeaths[id];
+}
+
+// KTP 2026-05-21: Refresh a player's scoreboard row by broadcasting a
+// ScoreShort message in DoD's exact native format. Reads m_iObjScore +
+// pev->frags + m_iDeaths from the player and sends them to all clients.
+//
+// Use case: after dodx_set_user_deaths / dodx_set_user_score writes (score
+// persistence restore), the engine doesn't auto-broadcast until the next
+// score-changing event. Calling this native immediately syncs every client's
+// scoreboard with the just-written values.
+//
+// Format (derived from disassembling CDoDTeamPlay::PlayerKilled broadcast
+// site at b2774-b27ee in dod_i386.so md5 4f4727b2...):
+//   BYTE  player_index
+//   SHORT m_iObjScore
+//   SHORT (int)frags
+//   SHORT m_iDeaths
+//   BYTE  1               (constant; mirrors what engine sends on every death)
+//
+// Bypasses the AMX message_begin Pawn native path that crashed in the
+// 2026-05-21 v1.3.1 RESTORE test (vtable lookup at ktpamx_i386.so:0x561c3
+// segfaulted). Uses the same direct MESSAGE_BEGIN/WRITE_BYTE/MESSAGE_END
+// engine funcs as dodx_broadcast_team_score (proven safe since v0.10.20
+// per CLAUDE.md).
+//
+// native dodx_broadcast_scoreboard(id);
+static cell AMX_NATIVE_CALL dodx_broadcast_scoreboard(AMX *amx, cell *params)
+{
+	int id = params[1];
+	if (id < 1 || id > gpGlobals->maxClients)
+		return 0;
+
+	if (gmsgScoreShort <= 0)
+	{
+		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_scoreboard: ScoreShort message not registered");
+		return 0;
+	}
+
+	edict_t* pEdict = MF_GetPlayerEdict(id);
+	if (!pEdict || !pEdict->pvPrivateData)
+		return 0;
+
+	int score  = *((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_SCORE);
+	int frags  = (int)pEdict->v.frags;
+	int deaths = *((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_DEATHS);
+
+	MESSAGE_BEGIN(MSG_ALL, gmsgScoreShort, NULL);
+	WRITE_BYTE(id);
+	WRITE_SHORT(score);
+	WRITE_SHORT(frags);
+	WRITE_SHORT(deaths);
+	WRITE_BYTE(1);
+	MESSAGE_END();
+
+	return 1;
+}
+
 // KTP: Set team score in gamerules (modifies the scoreboard directly)
 // This allows restoring cumulative scores from 1st half when 2nd half starts
 // native dodx_set_team_score(team, score);
@@ -1474,6 +1632,17 @@ AMX_NATIVE_INFO base_Natives[] =
 
 	// KTP: Scoreboard team name (extension mode compatible)
 	{"dodx_set_pl_teamname", dodx_set_pl_teamname},
+
+	// KTP: Per-player score / deaths pdata read+write (extension mode compatible)
+	// Backs the mid-match disconnect/reconnect score-persistence path in
+	// KTPMatchHandler; the AMXX/ReAPI set_member route requires CS-only
+	// ReGameDll and crashes on DoD.
+	{"dodx_set_user_deaths", dodx_set_user_deaths},
+	{"dodx_get_user_deaths", dodx_get_user_deaths},
+	{"dodx_set_user_score",  dodx_set_user_score},
+	{"dodx_get_user_score",  dodx_get_user_score},
+	{"dodx_get_observed_deaths", dodx_get_observed_deaths},  // engine-authoritative ground truth for the validation gate
+	{"dodx_broadcast_scoreboard", dodx_broadcast_scoreboard},  // safe ScoreShort broadcast (no AMX message_begin)
 
 	// KTP: Gamerules score modification (scoreboard scores)
 	{"dodx_set_team_score", dodx_set_team_score},

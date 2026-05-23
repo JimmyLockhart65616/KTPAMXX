@@ -250,6 +250,58 @@ native dodx_set_stats_paused(paused);
  */
 native dodx_set_pl_teamname(id, const szName[]);
 
+// =============== KTP: Per-player score / deaths pdata access ===============
+// Direct read+write of the DoD game-DLL player private data m_iScore and
+// m_iDeaths fields (offsets in CMisc.h: STEAM_PDOFFSET_SCORE / _DEATHS).
+// Backs the mid-match disconnect/reconnect score-persistence path in
+// KTPMatchHandler. The AMXX/ReAPI set_member route for these fields
+// requires CS-only ReGameDll and crashes on DoD with runtime error 10.
+
+/** Set the player's deaths counter (the scoreboard "Deaths" column). */
+native dodx_set_user_deaths(id, deaths);
+
+/** Get the player's current deaths counter. */
+native dodx_get_user_deaths(id);
+
+/** Set the player's score (the DoD scoreboard "Score" column — caps + kills
+ *  + bonus aggregate, computed by DoD on each scoring event). */
+native dodx_set_user_score(id, score);
+
+/** Get the player's current score. */
+native dodx_get_user_score(id);
+
+/**
+ * Get the engine-authoritative deaths count for a player, observed via
+ * DODX's internal Client_DeathMsg hook. Independent from pdata reads above
+ * (dodx_get_user_deaths reads pvPrivateData at STEAM_PDOFFSET_DEATHS;
+ *  this reads DODX's own counter incremented per engine DeathMsg broadcast).
+ *
+ * Use case: validation gate. Call BOTH at SAVE time; if they disagree, the
+ * score_deaths_offset is wrong for the current dod_i386.so (likely an OS
+ * bump shifted the struct). Log + skip persist for that player. Do NOT
+ * call dodx_set_user_deaths/score until offsets validate.
+ *
+ * Returns 0 for invalid id, bot/HLTV slots, or before any DeathMsg has fired.
+ */
+native dodx_get_observed_deaths(id);
+
+/**
+ * Broadcast a ScoreShort message for `id` to all clients. Refreshes the
+ * scoreboard row immediately by sending the player's current m_iObjScore +
+ * pev->frags + m_iDeaths via DoD's native scoreboard-update message.
+ *
+ * Use case: after dodx_set_user_deaths / dodx_set_user_score writes, the
+ * engine doesn't auto-broadcast until the next score-changing event. Call
+ * this to make the scoreboard update immediately.
+ *
+ * Uses the same direct engine-func pattern as dodx_broadcast_team_score
+ * (proven safe). Avoids the AMX message_begin Pawn native that crashed
+ * on 2026-05-21 (see KTPMatchHandler/research/OFFSETS_RESEARCH).
+ *
+ * Returns 1 on success, 0 if id invalid or ScoreShort not registered.
+ */
+native dodx_broadcast_scoreboard(id);
+
 // =============== KTP: Gamerules Score Modification ===============
 
 /**

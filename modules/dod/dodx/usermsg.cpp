@@ -22,6 +22,19 @@
 // cover the no-Damage cases without double-firing for the normal kill flow.
 static float g_lastDeathReportTime[33] = {0};
 
+// KTP 2026-05-21: per-player observed deaths counter for the score/deaths
+// offset validation gate. Ticks once per death event (any cause — frags,
+// suicides, world damage, kill console command). The 33ms dedup gate above
+// already prevents Damage hook + DeathMsg double-fire for the same death,
+// so this counter stays one-tick-per-death. Reset on Connect(). Exposed via
+// dodx_get_observed_deaths native in NBase.cpp.
+//
+// NOT a replacement for life.deaths / round.deaths — those are stats counters
+// driven through saveKill() and have different semantics (reset on round
+// start, only count damage-flow deaths). This counter is purely for the
+// pdata-offset validation gate.
+int g_observedDeaths[33] = {0};
+
 void Client_ResetHUD_End(void* mValue)
 {
 	if (!mPlayer)
@@ -328,8 +341,10 @@ void Client_Health_End(void* mValue)
 	{
 		pAttacker->saveKill(mPlayer,weapon,( aim == 1 ) ? 1:0 ,TA);
 		MF_ExecuteForward( iFDeath, pAttacker->index, mPlayer->index, weapon, aim, TA );
-		if (mPlayer->index >= 1 && mPlayer->index < 33)
+		if (mPlayer->index >= 1 && mPlayer->index < 33) {
 			g_lastDeathReportTime[mPlayer->index] = gpGlobals ? gpGlobals->time : 0.0f;
+			g_observedDeaths[mPlayer->index]++;
+		}
 	}
 }
 
@@ -745,6 +760,7 @@ void Client_DeathMsg(void* mValue)
 		int TA = 0;    // Teamkill flag — Damage hook owns the proper detection
 		MF_ExecuteForward(iFDeath, killerIdx, victimIdx, weapon, aim, TA);
 		g_lastDeathReportTime[victimIdx] = now;
+		g_observedDeaths[victimIdx]++;
 		break;
 	}
 	}

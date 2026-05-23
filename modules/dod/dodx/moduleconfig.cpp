@@ -35,6 +35,14 @@ static IMessageManager* g_pMessageManager = nullptr;
 int g_iLinuxPdataOffsetAdjust = 4;  // Default to +4 (24.04)
 bool g_bPdataOffsetDetected = false;
 bool g_bPdataOffsetForced = false;  // True if set via config file
+
+// KTP 2026-05-21: SCORE/DEATHS pdata offsets need their own adjust independent
+// from the grenade adjust above. On Ubuntu 24.04 the grenade auto-detect
+// correctly promotes to +5, but disassembly of dod_i386.so md5 4f4727b2...
+// confirmed score/deaths live at +4 on the same binary. Two field families,
+// two different shifts. See dodx.h SCORE/DEATHS section + research note
+// KTPMatchHandler/research/OFFSETS_RESEARCH_2026-05-21.md.
+int g_iScoreDeathsOffsetAdjust = 4;
 #endif
 
 // KTP: Forward declarations for ReHLDS hook handlers
@@ -766,7 +774,24 @@ void OnPluginsLoaded()
 						{
 							MF_PrintSrvConsole("[DODX] Warning: Invalid pdata_offset %d in config (must be 4 or 5)\n", offset);
 						}
-						break;
+						continue;
+					}
+
+					// KTP 2026-05-21: independent override for SCORE/DEATHS offset
+					// (separate from grenade pdata_offset above).
+					if (sscanf(line, "score_deaths_offset = %d", &offset) == 1 ||
+					    sscanf(line, "score_deaths_offset=%d", &offset) == 1)
+					{
+						if (offset == 4 || offset == 5)
+						{
+							g_iScoreDeathsOffsetAdjust = offset;
+							MF_PrintSrvConsole("[DODX] score/deaths offset forced to +%d via config file\n", offset);
+						}
+						else
+						{
+							MF_PrintSrvConsole("[DODX] Warning: Invalid score_deaths_offset %d (must be 4 or 5)\n", offset);
+						}
+						continue;
 					}
 				}
 				fclose(fp);
@@ -776,6 +801,7 @@ void OnPluginsLoaded()
 			{
 				MF_PrintSrvConsole("[DODX] Using default pdata offset +%d (auto-detect on first grenade op)\n", g_iLinuxPdataOffsetAdjust);
 			}
+			MF_PrintSrvConsole("[DODX] Using score/deaths offset +%d (no auto-detect; override via score_deaths_offset in dodx.ini)\n", g_iScoreDeathsOffsetAdjust);
 		}
 #endif
 

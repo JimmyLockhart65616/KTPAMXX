@@ -66,11 +66,36 @@ enum
 };
 
 // KTP: Player private data offsets for scoreboard team name
-// Same offsets as dodfun module, but implemented here for extension mode compatibility
+// Same offsets as dodfun module, but implemented here for extension mode compatibility.
+//
+// HISTORY:
+//   2026-05-11: SCORE/DEATHS originally hardcoded +5, crashed on Ubuntu 24.04
+//               (struct shifted by one int between Ubuntu builds).
+//   2026-05-11: First fix attempt — share `g_iLinuxPdataOffsetAdjust` with
+//               grenade offsets. Loaded without crash but read wrong values.
+//   2026-05-21: 2nd fail mode root-caused via disassembly. Grenade offsets and
+//               SCORE/DEATHS offsets need DIFFERENT runtime adjustments on the
+//               same OS — grenades = +5 on 24.04 (auto-detected, correct),
+//               SCORE/DEATHS = +4 on 24.04 (this commit). The 5/21 test
+//               failed because the shared global got promoted to +5 by the
+//               grenade auto-detect, mis-aligning SCORE/DEATHS by one int.
+//
+// Confirmed 24.04 layout (from disassembling production dod_i386.so md5
+// 4f4727b2..., research in KTPMatchHandler/research/OFFSETS_RESEARCH_2026-05-21.md):
+//   m_iObjScore at byte 0x780 = int-offset 480 (= base 476 + 4)
+//   m_iDeaths   at byte 0x784 = int-offset 481 (= base 477 + 4)
+//
+// TEAMNAME stays at (1400 + 5) char-array — different struct region, didn't
+// shift in our testing.
 #if defined(__linux__) || defined(__APPLE__)
-	#define STEAM_PDOFFSET_TEAMNAME (1400 + 5)  // Linux offset adjustment
-	#define STEAM_PDOFFSET_SCORE    (476 + 5)   // Player score
-	#define STEAM_PDOFFSET_DEATHS   (477 + 5)   // Player deaths
+	#define STEAM_PDOFFSET_TEAMNAME (1400 + 5)  // Linux offset adjustment (char array)
+	// SCORE/DEATHS use g_iScoreDeathsOffsetAdjust (NOT the grenade adjust).
+	// Default 4 (Ubuntu 24.04+, fleet-validated). No runtime auto-detect —
+	// the previous auto-detect (which was designed for grenade offsets) gave
+	// false-positive promotion to +5 on the score/deaths range. Declared
+	// below alongside the grenade adjust.
+	#define STEAM_PDOFFSET_SCORE    (476 + g_iScoreDeathsOffsetAdjust)
+	#define STEAM_PDOFFSET_DEATHS   (477 + g_iScoreDeathsOffsetAdjust)
 #else
 	#define STEAM_PDOFFSET_TEAMNAME 1400        // Windows offset
 	#define STEAM_PDOFFSET_SCORE    476         // Player score
@@ -100,6 +125,15 @@ enum
 	extern int g_iLinuxPdataOffsetAdjust;
 	extern bool g_bPdataOffsetDetected;
 	extern bool g_bPdataOffsetForced;
+
+	// Independent adjust for SCORE/DEATHS offsets (above). NOT shared with
+	// the grenade adjust — they sit in different struct regions and can shift
+	// by different amounts between Ubuntu builds. Currently no auto-detect
+	// (the 2026-05-21 spike showed the grenade auto-detect heuristic gives
+	// false positives on this field family). Fixed at +4 for 24.04 baremetal
+	// fleet; override via dodx.ini `score_deaths_offset = N` if a future
+	// Ubuntu bump shifts the layout.
+	extern int g_iScoreDeathsOffsetAdjust;
 
 	// Phase 1: Write to both +4 and +5 offsets when offset is unknown
 	void DODX_PdataWriteBoth(edict_t* pEdict, int grenadeType, int count);
