@@ -488,6 +488,7 @@ extern int iFScopeForward;
 extern int iFProneForward;
 extern int iFWpnPickupForward;
 extern int iFCurWpnForward;
+extern int iFWeaponFire;   // KTP: Per-shot primary-attack actuation forward
 extern int iFGrenadeExplode;
 extern int iFRocketExplode;
 extern int iFObjectTouched;

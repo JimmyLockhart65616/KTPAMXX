@@ -95,6 +95,12 @@ forward dod_client_prone(id, value);
 /* This will be called whenever a player switches a weapon */
 forward dod_client_weaponswitch(id, wpnew, wpnold);
 
+/* Called on EVERY primary-attack actuation, including pure-miss shots the
+   client_damage hits-stream never sees. Fires for grenades/rockets/melee too
+   (saveShot is the shared actuation chokepoint) — filter by weapon for firearm-only.
+   gametime is gpGlobals->time at the fire. */
+forward dod_client_weapon_fire(id, weapon, Float:gametime);
+
 /* Forward for when a grenade explodes and its location */
 forward dod_grenade_explosion(id, Float:pos[3], wpnid);
 

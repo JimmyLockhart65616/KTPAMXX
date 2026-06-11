@@ -5,6 +5,18 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.18] - 2026-06-11
+
+### Added
+
+#### `dodx`: `dod_client_weapon_fire(id, weapon, Float:gametime)` per-shot forward
+
+Fires on every primary-attack actuation from `CPlayer::saveShot` — the single shot-accounting chokepoint — so it catches pure-miss shots the `client_damage` hits-stream never reports. Server-side enabler for the fire-cadence clock (wheel-turbo detection) and future per-fire timing detectors.
+
+`saveShot` is shared by the clip-decrement path and the hitscan-trace, grenade, rocket, and melee-gated damage paths, so the forward also fires for grenades/rockets/melee. That is correct for an actuation/input-multiplication clock; a firearm-only consumer must filter by weapon id. `gametime` is `gpGlobals->time` at the fire, passed via `amx_ftoc` like other float cells.
+
+Backward-compatible — plugins that don't register the forward are unaffected. Consumers recompile against the updated `dodx.inc`.
+
 ## [2.7.17] - 2026-05-21
 
 ### Added

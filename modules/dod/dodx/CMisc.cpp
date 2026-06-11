@@ -306,6 +306,13 @@ void CPlayer::saveShot(int weapon)
 	if ( ignoreBots(pEdict) )
 		return;
 
+	// Per-fire actuation clock. saveShot is the chokepoint for clip-decrement AND the
+	// hitscan-trace/grenade/rocket/melee-gated paths (8+ callers), so this also fires for
+	// grenades/rockets/melee — correct for an actuation/input-multiplication clock; a
+	// firearm-only consumer must filter by weapon id.
+	if ( iFWeaponFire != -1 )
+		MF_ExecuteForward(iFWeaponFire, index, weapon, amx_ftoc(gpGlobals->time));
+
 	victims[0].shots++;
 	weapons[weapon].shots++;
 	weapons[0].shots++;

@@ -104,6 +104,7 @@ int iFScopeForward = -1;
 int iFProneForward = -1;
 int iFWpnPickupForward = -1;
 int iFCurWpnForward = -1;
+int iFWeaponFire = -1;     // KTP: Per-shot primary-attack actuation (every fire, incl. pure misses)
 int iFGrenadeExplode = -1;
 int iFRocketExplode = -1;
 int iFObjectTouched = -1;
@@ -666,6 +667,7 @@ void OnPluginsLoaded()
 	iFWpnPickupForward = MF_RegisterForward("dod_client_weaponpickup",ET_IGNORE,FP_CELL/*id*/,FP_CELL/*weapon*/,FP_CELL/*value*/,FP_DONE);
 	iFProneForward = MF_RegisterForward("dod_client_prone",ET_IGNORE,FP_CELL/*id*/,FP_CELL/*value*/,FP_DONE);
 	iFCurWpnForward = MF_RegisterForward("dod_client_weaponswitch",ET_IGNORE,FP_CELL/*id*/,FP_CELL/*wpnold*/,FP_CELL/*wpnew*/,FP_DONE);
+	iFWeaponFire = MF_RegisterForward("dod_client_weapon_fire",ET_IGNORE,FP_CELL/*id*/,FP_CELL/*weapon*/,FP_CELL/*gametime*/,FP_DONE);
 	iFGrenadeExplode = MF_RegisterForward("dod_grenade_explosion",ET_IGNORE,FP_CELL/*id*/,FP_ARRAY/*pos[3]*/,FP_CELL/*wpnid*/,FP_DONE);
 	iFRocketExplode = MF_RegisterForward("dod_rocket_explosion",ET_IGNORE,FP_CELL/*id*/,FP_ARRAY/*pos[3]*/,FP_CELL/*wpnid*/,FP_DONE);
 	iFObjectTouched = MF_RegisterForward("dod_client_objectpickup",ET_IGNORE,FP_CELL/*id*/,FP_CELL/*object*/,FP_ARRAY/*pos[3]*/,FP_CELL/*value*/,FP_DONE);
