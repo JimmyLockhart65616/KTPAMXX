@@ -104,6 +104,10 @@ KTP_AMX Files/
 CLAUDE.md
 build_linux.sh
 
+# Operational deploy/diagnostic scripts may hold prod creds — public repo.
+# Shell hook scripts (*.sh) stay tracked; one-off Python tooling does not.
+scripts/*.py
+
 # Build output directories
 obj-linux/
 obj-windows/
