@@ -1480,6 +1480,27 @@ static cell AMX_NATIVE_CALL dodx_debug_dump_ammo(AMX *amx, cell *params)
 // (defensive — should never happen in practice since DODX registers all
 // forwards in OnAmxxAttach).
 
+// dodx_test_dispatch_weapon_fire(id, weapon, Float:gametime)
+// Fires the `dod_client_weapon_fire` forward. params[3] is already a Pawn
+// Float cell — pass it through unchanged (production site amx_ftoc's a raw
+// C++ float; here it's pre-encoded, so re-encoding would corrupt it).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_weapon_fire(AMX *amx, cell *params)
+{
+	if (iFWeaponFire == -1)
+		return 0;
+
+	int id        = params[1];
+	int weapon    = params[2];
+	cell gametime = params[3];   // Float cell, bit-reinterpreted IEEE 754
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	MF_ExecuteForward(iFWeaponFire, id, weapon, gametime);
+	return 1;
+}
+
 // dodx_test_dispatch_damage(attacker, victim, damage, wpnindex, hitplace, TA)
 // Fires the `client_damage` forward. All args are ints.
 static cell AMX_NATIVE_CALL dodx_test_dispatch_damage(AMX *amx, cell *params)
@@ -1679,6 +1700,7 @@ AMX_NATIVE_INFO base_Natives[] =
 	// KTP: TEST-ONLY forward dispatch primitives for Tier 2 integration tests.
 	// Production plugins MUST NOT call these. See function bodies above for
 	// rationale + safety analysis.
+	{"dodx_test_dispatch_weapon_fire",       dodx_test_dispatch_weapon_fire},
 	{"dodx_test_dispatch_damage",            dodx_test_dispatch_damage},
 	{"dodx_test_dispatch_grenade_explosion", dodx_test_dispatch_grenade_explosion},
 	{"dodx_test_dispatch_score",             dodx_test_dispatch_score},
