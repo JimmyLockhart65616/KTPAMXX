@@ -689,6 +689,15 @@ native dodx_area_set_data(index, CA_VALUE:key, ivalue = 0, const szvalue[] = "")
 // modules/dod/dodx/NBase.cpp § "KTP TEST-ONLY: Forward dispatch primitives"
 
 /**
+ * Test-only: dispatch the `dod_client_weapon_fire` forward.
+ * @param id        Firing player slot (1..maxplayers)
+ * @param weapon    Weapon ID (DODW_*)
+ * @param gametime  gpGlobals->time at the shot (Float)
+ * @return          1 on success, 0 if forward not registered
+ */
+native dodx_test_dispatch_weapon_fire(id, weapon, Float:gametime);
+
+/**
  * Test-only: dispatch the `client_damage` forward.
  * @param attacker  Attacker client slot
  * @param victim    Victim client slot
