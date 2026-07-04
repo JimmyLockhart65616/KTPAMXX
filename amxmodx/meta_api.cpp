@@ -2526,6 +2526,7 @@ C_DLLEXPORT	int	Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON	reason)
 	detachModules();
 
 	g_log.CloseFile();
+	g_log.AsyncShutdown();
 
 	Module_UncacheFunctions();
 
@@ -2989,6 +2990,11 @@ static void AlertMessage_RH(IRehldsHook_AlertMessage *chain, ALERT_TYPE atype, c
 // This mimics what C_ServerActivate_Post does in Metamod mode
 static void KTPAMX_ReloadPlugins()
 {
+	// Metamod mode runs g_log.MapChange() from C_Spawn every map; the extension
+	// port never did, so per-map log rotation (amxx_logging 2), the async-mode
+	// re-latch, and the drop-counter report only work if it runs here too.
+	g_log.MapChange();
+
 	// Clear tasks so they don't fire with stale data
 	g_tasksMngr.clear();
 
@@ -3168,9 +3174,11 @@ static void KTPAMX_InitAsRehldsExtension()
 		amx_config.clear();
 	}
 
-	// Initialize logging
+	// Initialize logging. MapChange() rather than bare SetLogType(): Metamod
+	// mode runs it via C_Spawn on the first map too — it creates the log dir,
+	// latches amxx_log_async, and starts the per-map file for amxx_logging 2.
 	g_log_dir = get_localinfo("amxx_logs", "addons/ktpamx/logs");
-	g_log.SetLogType("amxx_logging");
+	g_log.MapChange();
 
 	// Load modules - in extension mode, modules that require Metamod hooks won't fully work,
 	// but pure AMXX modules and modules using Re* API hookchains (like ReAPI) will work

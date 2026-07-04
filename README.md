@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Version 2.7.17** | Modified AMX Mod X with ReHLDS extension mode and real-time client cvar detection
+**Version 2.7.19** | Modified AMX Mod X with ReHLDS extension mode, real-time client cvar detection, and async game-thread-safe logging
 
 A major fork of [AMX Mod X](https://github.com/alliedmodders/amxmodx) featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat servers requiring strict anti-cheat enforcement.
 
@@ -120,7 +120,7 @@ See `plugins/include/dodx.inc` for full API documentation.
 
 Check server console on startup:
 ```
-KTP AMX version 2.6.10 (ReHLDS Extension Mode)
+KTP AMX version 2.7.19 (ReHLDS Extension Mode)
 ```
 
 ---
@@ -190,9 +190,19 @@ KTP AMX registers these hooks when running as a ReHLDS extension:
 
 ---
 
+## Logging (async writer, 2.7.19+)
+
+AMXX log lines (`log_amx`, error logs) are written by a dedicated writer thread — the game thread only formats and enqueues, so a slow or stalling disk can no longer freeze server frames. Behavior and file layout are unchanged (`addons/ktpamx/logs/`, controlled by the standard `amxx_logging` localinfo: `1` daily file, `2` per-map file, `3` HL logs).
+
+- `localinfo amxx_log_async 0` — restore the legacy synchronous write path (latched per map change).
+- If the writer ever drops lines (queue full, disk failure), the count is reported to the server console at the next map change: `[AMXX] async log writer dropped N line(s)…`.
+- Crash durability matches the old behavior: the log file is line-buffered, so at most the in-flight line is lost.
+
+---
+
 ## Version Information
 
-- **Current Version**: 2.6.10 (2026-02)
+- **Current Version**: 2.7.19 (2026-07)
 - **Based on**: AMX Mod X 1.10.0 (upstream)
 - **Platform**: GCC 7.3+ / Visual Studio 2019+
 - **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+

@@ -5,6 +5,31 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.19] - 2026-07-03
+
+### Changed
+
+#### Core: async AMXX log writer — `CLog::Log`/`LogError` no longer touch disk on the game thread
+
+`CLog::Log` (amxx_logging 1/2) and `CLog::LogError` did `fopen("a+")` + `fprintf` + `fclose` per line on the game thread. Each cycle joins an ext4 journal transaction, and on the fleet's consumer SSDs a journal commit in flight blocks that join for up to ~165ms — a whole-server frame freeze. The 2026-07-03 NYC perf/bpftrace investigation proved this was the last remaining 100ms+ spike class (17/17 traced stalls matched AMXX log lines to the second; a live match ate repeated stalls 17:00–18:10 ET), the same disease KTP-ReHLDS 3.22.0.927 cured for engine `Log_Printf`.
+
+The fix mirrors the .927 design: a dedicated writer thread owns the `FILE*`; the game thread only formats the line and enqueues it into a 1024-slot ring (full queue = drop + count, never block). Each op carries its fully resolved target path, so daily rollover (type 1), per-map files (type 2), error logs, and the map-change header/footer lines all flow through one ordered queue — the writer closes/reopens when the path changes. The writer opens files line-buffered (`setvbuf _IOLBF`), so a crash loses at most the in-flight line — the same durability as the old open/write/close cycle. On write error it drops the handle and retries a fresh open on the next line.
+
+- Gate: localinfo `amxx_log_async` — default on; set `localinfo amxx_log_async 0` for the exact legacy synchronous path. Latched per map in `MapChange()`, like the engine's `ktp_log_async` at `Log_Open`.
+- `pthread_create`/`CreateThread` with a synchronous fallback if thread creation fails (built with `-fno-exceptions`; `std::thread` can't fail cleanly).
+- Shutdown: the `CLog` destructor (which runs inside `dlclose` at `Host_Shutdown` → `ReleaseEntityDlls`) drains the queue and joins the writer, so the final lines — including "Log file closed." — hit disk before the `.so` unmaps. This is the real production path: `Meta_Detach` never fires in extension mode, and `dod_i386.so` owns the `pfnGameShutdown` slot (verified via relocations: `GameShutdown__Fv`), so the loader's only-if-empty merge can't take an extension hook. The writer's mutex/condvar are heap-allocated on first use and deliberately never destroyed, so the destructor path is immune to cross-TU static-destruction order.
+- `CreateNewFile` still creates/truncates the file synchronously (one metadata op per map change) — its filename scan probes on-disk existence, so a writer-deferred create would let back-to-back map changes reuse and clobber a name; only the header line is queued. Create failure keeps the legacy behavior (ALERT + `amxx_logging 0`).
+- Dropped lines (full queue, or open/write failure on the writer thread) are counted and reported to the server console at the next map change (`[AMXX] async log writer dropped N line(s)…`), mirroring the engine's `logq_drops=`.
+- Behavior change (accepted tradeoff): with async on, a log file deleted mid-map is no longer recreated per line — the writer holds its handle until the path changes (next map or day), and a persistently broken log path no longer disables AMXX logging mid-map; it surfaces via the drop counter instead.
+- Console echo (`print_srvconsole`) is unchanged and stays synchronous (measured µs).
+- amxx_logging 3 (HL logs) is unaffected — it already routes through the engine's async writer.
+
+### Fixed
+
+#### Extension mode never ran `CLog::MapChange()`
+
+The extension port only called `SetLogType()` once at startup — Metamod mode runs `g_log.MapChange()` from `C_Spawn` on every map. Consequences before this fix: per-map log rotation (`amxx_logging 2`) silently never rotated in extension mode, the `-------- Mapchange to <map> --------` marker never appeared in AMXX daily logs, and (new in this release) the `amxx_log_async` latch and drop-counter report would never have run. Extension startup and `KTPAMX_ReloadPlugins()` now call `MapChange()`, matching Metamod behavior exactly. Observable change: AMXX daily logs on the fleet gain the standard per-map `Mapchange` marker lines.
+
 ## [2.7.18] - 2026-06-11
 
 ### Added

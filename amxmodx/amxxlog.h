@@ -17,15 +17,17 @@ private:
 	int m_LogType;
 	bool m_FoundError;
 	bool m_LoggedErrMap;
+	bool m_Async;      // latched from localinfo amxx_log_async at MapChange
 
 	void GetLastFile(int &outMonth, int &outDay, ke::AString &outFilename);
 	void UseFile(const ke::AString &fileName);
 public:
 	CLog();
 	~CLog();
-	
+
 	void CreateNewFile();
 	void CloseFile();
+	void AsyncShutdown();
 	void SetLogType(const char* localInfo);
 	void MapChange();
 	void Log(const char *fmt, ...);
