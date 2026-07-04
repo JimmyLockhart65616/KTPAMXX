@@ -1605,6 +1605,106 @@ static cell AMX_NATIVE_CALL dodx_test_dispatch_cp_captured(AMX *amx, cell *param
 	return 1;
 }
 
+// dodx_test_dispatch_client_spawn(id)
+// Fires the `dod_client_spawn` forward (production site usermsg.cpp:686).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_client_spawn(AMX *amx, cell *params)
+{
+	if (iFSpawnForward < 0)
+		return 0;
+
+	int id = params[1];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	MF_ExecuteForward(iFSpawnForward, id);
+	return 1;
+}
+
+// dodx_test_dispatch_changeteam(id, team, oldteam)
+// Fires the `dod_client_changeteam` forward (production site CMisc.cpp:409).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_changeteam(AMX *amx, cell *params)
+{
+	if (iFTeamForward < 0)
+		return 0;
+
+	int id      = params[1];
+	int team    = params[2];
+	int oldteam = params[3];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	MF_ExecuteForward(iFTeamForward, id, team, oldteam);
+	return 1;
+}
+
+// dodx_test_dispatch_changeclass(id, class, oldclass)
+// Fires the `dod_client_changeclass` forward (production site CMisc.cpp:412).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_changeclass(AMX *amx, cell *params)
+{
+	if (iFClassForward < 0)
+		return 0;
+
+	int id       = params[1];
+	int newclass = params[2];
+	int oldclass = params[3];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	MF_ExecuteForward(iFClassForward, id, newclass, oldclass);
+	return 1;
+}
+
+// dodx_test_dispatch_client_death(killer, victim, wpnindex, hitplace, TK)
+// Fires the `client_death` forward (production sites NBase.cpp:561 and
+// usermsg.cpp:761 — killer first, victim second).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_client_death(AMX *amx, cell *params)
+{
+	if (iFDeath < 0)
+		return 0;
+
+	int killer   = params[1];
+	int victim   = params[2];
+	int wpnindex = params[3];
+	int hitplace = params[4];
+	int TK       = params[5];
+
+	// Bounds-check the player slots — see dodx_test_dispatch_damage
+	// rationale. killer may be 0 (world/suicide-style), victim must be
+	// a real slot.
+	int maxClients = gpGlobals->maxClients;
+	if (killer < 0 || killer > maxClients) return 0;
+	if (victim < 1 || victim > maxClients) return 0;
+
+	MF_ExecuteForward(iFDeath, killer, victim, wpnindex, hitplace, TK);
+	return 1;
+}
+
+// dodx_test_dispatch_stats_flush(id)
+// Fires the `dod_stats_flush` forward for one player (production site
+// NRank.cpp:410 loops it over all connected players from
+// dodx_flush_all_stats; the per-player form lets a test assert a single
+// synthetic player's flush without touching real engine state).
+static cell AMX_NATIVE_CALL dodx_test_dispatch_stats_flush(AMX *amx, cell *params)
+{
+	if (iFFlushStats < 0)
+		return 0;
+
+	int id = params[1];
+
+	// Bounds-check the player slot — see dodx_test_dispatch_damage rationale.
+	int maxClients = gpGlobals->maxClients;
+	if (id < 1 || id > maxClients) return 0;
+
+	MF_ExecuteForward(iFFlushStats, id);
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1705,6 +1805,11 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_test_dispatch_grenade_explosion", dodx_test_dispatch_grenade_explosion},
 	{"dodx_test_dispatch_score",             dodx_test_dispatch_score},
 	{"dodx_test_dispatch_cp_captured",       dodx_test_dispatch_cp_captured},
+	{"dodx_test_dispatch_client_spawn",      dodx_test_dispatch_client_spawn},
+	{"dodx_test_dispatch_changeteam",        dodx_test_dispatch_changeteam},
+	{"dodx_test_dispatch_changeclass",       dodx_test_dispatch_changeclass},
+	{"dodx_test_dispatch_client_death",      dodx_test_dispatch_client_death},
+	{"dodx_test_dispatch_stats_flush",       dodx_test_dispatch_stats_flush},
 
 	///*******************
 	{ NULL, NULL }

@@ -740,4 +740,50 @@ native dodx_test_dispatch_score(id, score_delta, total_score, cp_index);
  */
 native dodx_test_dispatch_cp_captured(cp_index, new_owner, old_owner);
 
+/**
+ * Test-only: dispatch the `dod_client_spawn` forward.
+ * @param id  Player index (1..maxclients)
+ * @return    1 on success, 0 if forward not registered / bad slot
+ */
+native dodx_test_dispatch_client_spawn(id);
+
+/**
+ * Test-only: dispatch the `dod_client_changeteam` forward.
+ * @param id       Player index (1..maxclients)
+ * @param team     New team (1=Allies, 2=Axis, 3=Spectator)
+ * @param oldteam  Previous team
+ * @return         1 on success, 0 if forward not registered / bad slot
+ */
+native dodx_test_dispatch_changeteam(id, team, oldteam);
+
+/**
+ * Test-only: dispatch the `dod_client_changeclass` forward.
+ * @param id        Player index (1..maxclients)
+ * @param class     New class id
+ * @param oldclass  Previous class id
+ * @return          1 on success, 0 if forward not registered / bad slot
+ */
+native dodx_test_dispatch_changeclass(id, class, oldclass);
+
+/**
+ * Test-only: dispatch the `client_death` forward (killer first, victim
+ * second — matches the production dispatch order).
+ * @param killer    Killer index (0 = world/no killer)
+ * @param victim    Victim index (1..maxclients)
+ * @param wpnindex  Weapon id
+ * @param hitplace  Hit location
+ * @param TK        1 if teamkill, else 0
+ * @return          1 on success, 0 if forward not registered / bad slot
+ */
+native dodx_test_dispatch_client_death(killer, victim, wpnindex, hitplace, TK);
+
+/**
+ * Test-only: dispatch the `dod_stats_flush` forward for one player.
+ * (dodx_flush_all_stats loops it over all connected players; this drives
+ * a single synthetic slot.)
+ * @param id  Player index (1..maxclients)
+ * @return    1 on success, 0 if forward not registered / bad slot
+ */
+native dodx_test_dispatch_stats_flush(id);
+
 // ==================================================================
