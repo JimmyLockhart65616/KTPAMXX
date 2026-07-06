@@ -239,7 +239,11 @@ int CTaskMngr::removeTasks(int iId, AMX *pAmx)
 		if (task->match(iId, pAmx))
 		{
 			task->clear();
-			if (m_ActiveCount > 0)
+			// Self-removal from inside the callback: startFrame()'s
+			// post-execution isFree() check will decrement for this task;
+			// doing it here too skews the counter toward 0 and eventually
+			// stalls the startFrame() fast path with tasks still pending.
+			if (!task->inExecute() && m_ActiveCount > 0)
 				m_ActiveCount--;
 			if (idx < m_FirstFreeHint)
 				m_FirstFreeHint = idx;

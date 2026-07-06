@@ -430,6 +430,12 @@ static cell AMX_NATIVE_CALL dodx_reset_all_stats(AMX *amx, cell *params)
 	if (maxClients < 1 || maxClients > 32)
 		maxClients = 32;
 
+	// Re-baseline the offset-validation death counter for every slot, not
+	// just ingame players — it's slot-inherited and otherwise monotonic for
+	// the whole server process (Connect() never runs in extension mode).
+	extern int g_observedDeaths[33];
+	memset(g_observedDeaths, 0, sizeof(g_observedDeaths));
+
 	for (int i = 1; i <= maxClients; i++)
 	{
 		CPlayer* pPlayer = GET_PLAYER_POINTER_I(i);

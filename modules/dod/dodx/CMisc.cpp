@@ -26,6 +26,15 @@ void CPlayer::Disconnect()
 	bot = false;
 	savedScore = 0;
 
+	// Zero the offset-validation death counter so a mid-map substitute
+	// joining this recycled slot doesn't inherit the leaver's tally (Init()
+	// is skipped for slots that already have a pEdict). Safe ordering: the
+	// drop-client hook runs the chain first, so the plugin's disconnect-save
+	// has already read the counter by the time this POST cleanup runs.
+	extern int g_observedDeaths[33];
+	if (index >= 1 && index < 33)
+		g_observedDeaths[index] = 0;
+
 	oldteam = 0;
 	oldclass = 0;
 	oldprone = 0;
@@ -166,6 +175,13 @@ void CPlayer::Init( int pi, edict_t* pe )
 	object.type = 0;
 	object.carrying = false;
 	object.do_forward = false;
+
+	// Zero the offset-validation death counter here too: Connect() is
+	// unreachable in extension mode, and scoreboard pdata m_iDeaths zeroes
+	// every map load — without this the counter is monotonic per process.
+	extern int g_observedDeaths[33];
+	if (index >= 1 && index < 33)
+		g_observedDeaths[index] = 0;
 }
 
 void CPlayer::saveKill(CPlayer* pVictim, int wweapon, int hhs, int ttk){

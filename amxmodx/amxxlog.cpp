@@ -23,6 +23,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <new>
 #include "amxmodx.h"
 
 #if defined(_WIN32WIN32)
@@ -51,10 +52,13 @@ struct ktp_alogop_s
 #define KTP_ALOGQ_SIZE 1024
 #define KTP_ALOGQ_MASK (KTP_ALOGQ_SIZE - 1)
 
-static ktp_alogop_s s_ktpALogQ[KTP_ALOGQ_SIZE];
+// Ring is heap-allocated on first use (and leaked, like the sync primitives
+// below) — 4.4MB of static BSS would eventually sit resident in every server
+// process even with async logging disabled.
+static ktp_alogop_s *s_ktpALogQ;
 static int s_ktpALogQHead;             // game thread fills
 static int s_ktpALogQTail;             // writer thread drains
-static bool s_ktpALogThreadRunning;
+static std::atomic<bool> s_ktpALogThreadRunning(false);
 static bool s_ktpALogStop;
 static std::atomic<unsigned int> s_ktpALogDrops(0);
 
@@ -104,7 +108,12 @@ static void KTP_ALogWriterLoop()
 		if (s_ktpALogQHead == s_ktpALogQTail && s_ktpALogStop)
 			break;
 
-		ktp_alogop_s op = s_ktpALogQ[s_ktpALogQTail];
+		// Copy only the used bytes while holding the lock — the full struct
+		// is 4.3KB and most lines are far shorter.
+		ktp_alogop_s op;
+		const ktp_alogop_s &slot = s_ktpALogQ[s_ktpALogQTail];
+		memcpy(op.path, slot.path, strlen(slot.path) + 1);
+		memcpy(op.text, slot.text, strlen(slot.text) + 1);
 		s_ktpALogQTail = (s_ktpALogQTail + 1) & KTP_ALOGQ_MASK;
 		lk.unlock();
 
@@ -163,11 +172,24 @@ static void *KTP_ALogWriterThreadMain(void *)
 #endif
 
 // Returns false if the thread can't be created — caller must fall back to the
-// synchronous path for that line, not crash.
+// synchronous path for that line, not crash. Double-checked under the queue
+// mutex so two threads racing here can't spawn two writers (the game thread
+// is the only producer today, but module threads may log).
 static bool KTP_ALogEnsureThread()
 {
-	if (s_ktpALogThreadRunning)
+	if (s_ktpALogThreadRunning.load(std::memory_order_acquire))
 		return true;
+
+	std::lock_guard<std::mutex> lk(KTP_ALogMx());
+	if (s_ktpALogThreadRunning.load(std::memory_order_relaxed))
+		return true;
+
+	if (!s_ktpALogQ)
+	{
+		s_ktpALogQ = new(std::nothrow) ktp_alogop_s[KTP_ALOGQ_SIZE];
+		if (!s_ktpALogQ)
+			return false;
+	}
 #if defined(_WIN32)
 	s_ktpALogThreadHandle = CreateThread(0, 0, KTP_ALogWriterThreadMain, 0, 0, nullptr);
 	if (!s_ktpALogThreadHandle)
@@ -178,7 +200,7 @@ static bool KTP_ALogEnsureThread()
 		print_srvconsole("[AMXX] async log writer thread creation failed, falling back to synchronous logging\n");
 		return false;
 	}
-	s_ktpALogThreadRunning = true;
+	s_ktpALogThreadRunning.store(true, std::memory_order_release);
 	return true;
 }
 

@@ -339,6 +339,17 @@ void Client_Health_End(void* mValue)
 
 	if ( !mPlayer->IsAlive() )
 	{
+		// Symmetric side of the DeathMsg dedup: if DeathMsg already reported
+		// this victim's death inside the window, firing here again would
+		// double-log the kill in HLStatsX and double-count observed deaths.
+		// Negative delta = server time restarted (map change), not a dup.
+		if (mPlayer->index >= 1 && mPlayer->index < 33 && gpGlobals)
+		{
+			float delta = gpGlobals->time - g_lastDeathReportTime[mPlayer->index];
+			if (delta >= 0.0f && delta < 0.033f)
+				return;
+		}
+
 		pAttacker->saveKill(mPlayer,weapon,( aim == 1 ) ? 1:0 ,TA);
 		MF_ExecuteForward( iFDeath, pAttacker->index, mPlayer->index, weapon, aim, TA );
 		if (mPlayer->index >= 1 && mPlayer->index < 33) {
@@ -734,7 +745,9 @@ void Client_DeathMsg(void* mValue)
 		// the Damage hook owns real-time TK detection for the >99% normal
 		// kill path. Revisit if stats regressions surface.
 		float now = gpGlobals->time;
-		if (now - g_lastDeathReportTime[victimIdx] < 0.033f)
+		// Negative delta = server time restarted (map change), not a dup.
+		float delta = now - g_lastDeathReportTime[victimIdx];
+		if (delta >= 0.0f && delta < 0.033f)
 			break;
 
 		// Resolve weapon name to wpnindex (matches xmod_get_wpnlogname behavior).

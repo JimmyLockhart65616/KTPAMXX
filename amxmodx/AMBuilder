@@ -29,6 +29,10 @@ elif builder.target_platform == 'windows':
     '/SECTION:.data,RW',
   ]
 elif builder.target_platform == 'linux':
+  # -pthread explicitly: the async log writer links pthread_create; without
+  # this it only resolves via glibc >= 2.34 folding libpthread into libc.
+  binary.compiler.cflags += ['-pthread']
+  binary.compiler.linkflags += ['-pthread']
   binary.compiler.postlink += [
     binary.Dep(AMXX.stdcxx_path),
   ]

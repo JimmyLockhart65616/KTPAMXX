@@ -14,27 +14,138 @@
 #ifndef _WIN32
 #include <sys/mman.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
 #endif
 
-// KTP: Check whether a pointer is likely safe to read as a string.
-// The previous check rejected only NULL and addresses < 0x1000 (the null page),
-// but stale/UAF pointers often land at high-but-unmapped addresses (e.g.
-// 0x3f145406) which pass that check yet still SEGV inside libc strlen().
-// Use mincore() on the containing page: if it's not mapped we reject the
-// pointer rather than crash. Returns false for NULL, low addresses, or
-// unmapped pages. On _WIN32 falls back to the old low-address check.
-static bool amxx_is_string_ptr_readable(const void *ptr)
+// KTP: Bounded safe string scan for forward string params.
+// Stale/UAF pointers often land at high-but-unmapped addresses (e.g.
+// 0x3f145406) that SEGV inside libc strlen(). mincore() tells us whether a
+// page is mapped, but a single-page check isn't enough: strlen can walk off
+// the end of a mapped page into an unmapped neighbor. So probe every page
+// the scan enters, and give up (treat as garbage) if no terminator shows up
+// within a budget no legitimate forward string approaches.
+// Returns the string length, or -1 if the pointer is NULL/low/unmapped or
+// unterminated within budget. Coverage note: a freed-but-still-mapped heap
+// page (glibc rarely munmaps small chunks) and PROT_NONE regions still pass
+// mincore — those read stale bytes or SEGV; only unmapped-space wild
+// pointers (the class seen in fleet cores) are caught here.
+// On _WIN32 falls back to the old low-address check.
+static int amxx_safe_string_length(const char *str)
+{
+	if (!str || reinterpret_cast<uintptr_t>(str) < 0x1000)
+		return -1;
+#ifndef _WIN32
+	static const long page_size = sysconf(_SC_PAGESIZE);
+	const int MAX_PROBE_PAGES = 8; // 32KB budget with 4KB pages
+	uintptr_t p = reinterpret_cast<uintptr_t>(str);
+	uintptr_t page = p & ~(page_size - 1);
+	size_t len = 0;
+
+	for (int pg = 0; pg < MAX_PROBE_PAGES; pg++)
+	{
+		unsigned char vec;
+		if (mincore(reinterpret_cast<void*>(page), 1, &vec) != 0)
+			return -1;
+		size_t avail = (page + page_size) - p;
+		size_t n = strnlen(reinterpret_cast<const char*>(p), avail);
+		len += n;
+		if (n < avail)
+			return static_cast<int>(len);
+		p = page + page_size;
+		page = p;
+	}
+	return -1;
+#else
+	return static_cast<int>(strlen(str));
+#endif
+}
+
+// KTP: Probe whether [ptr, ptr+len) is writable without risking a SEGV.
+// The FP_STRINGEX write-back used to reuse the read check, but a readable
+// page can still be read-only (e.g. a string literal passed through a
+// mismatched param type) and the write faults. The kernel probes for us:
+// write(pipe, addr, 1) EFAULTs if addr isn't readable, and read(pipe, addr, 1)
+// EFAULTs if it isn't writable — round-tripping the byte through the pipe
+// leaves memory unchanged on success. One probe per page touched.
+// Falls back to "assume writable" (pre-existing behavior) if the pipe can't
+// be created, and on _WIN32.
+static bool amxx_is_range_writable(void *ptr, size_t len)
 {
 	if (!ptr || reinterpret_cast<uintptr_t>(ptr) < 0x1000)
 		return false;
 #ifndef _WIN32
+	static int probe_fds[2] = { -1, -1 };
+	static bool probe_init_failed = false;
+	if (probe_fds[0] == -1)
+	{
+		if (probe_init_failed || pipe(probe_fds) != 0)
+		{
+			probe_fds[0] = probe_fds[1] = -1;
+			probe_init_failed = true;
+			return true;
+		}
+		fcntl(probe_fds[0], F_SETFD, FD_CLOEXEC);
+		fcntl(probe_fds[1], F_SETFD, FD_CLOEXEC);
+		// Nonblocking: if the pipe byte accounting were ever wrong, a probe
+		// degrades to a spurious false instead of hanging the game thread.
+		fcntl(probe_fds[0], F_SETFL, O_NONBLOCK);
+		fcntl(probe_fds[1], F_SETFL, O_NONBLOCK);
+	}
+
 	static const long page_size = sysconf(_SC_PAGESIZE);
-	uintptr_t page_start = reinterpret_cast<uintptr_t>(ptr) & ~(page_size - 1);
-	unsigned char vec;
-	if (mincore(reinterpret_cast<void*>(page_start), 1, &vec) != 0)
+	uintptr_t first = reinterpret_cast<uintptr_t>(ptr);
+	uintptr_t last = first + (len ? len - 1 : 0);
+	// Address wrap (e.g. a (char*)-1 sentinel through a mismatched param):
+	// the page loop below would run zero times and report "writable".
+	if (last < first)
 		return false;
+
+	for (uintptr_t page = first & ~(page_size - 1); page <= (last & ~(page_size - 1)); page += page_size)
+	{
+		char *probe = reinterpret_cast<char*>(page < first ? first : page);
+		ssize_t rc;
+		do { rc = write(probe_fds[1], probe, 1); } while (rc == -1 && errno == EINTR);
+		if (rc != 1)
+			return false; // not readable (EFAULT) — certainly not safe to write
+		do { rc = read(probe_fds[0], probe, 1); } while (rc == -1 && errno == EINTR);
+		if (rc != 1)
+		{
+			// not writable — drain the byte we parked in the pipe
+			char scratch;
+			do { rc = read(probe_fds[0], &scratch, 1); } while (rc == -1 && errno == EINTR);
+			return false;
+		}
+	}
 #endif
 	return true;
+}
+
+// KTP: Bounded FP_STRINGEX write-back. Replaces amx_GetStringOld, which
+// copies until a zero cell with no output bound — a plugin filling the
+// buffer without a terminator would write past the caller's buffer. Copies
+// at most maxCells-1 chars + NUL, and only after a writability probe of the
+// exact byte range.
+static void amxx_stringex_writeback(char *dest, const cell *src, int maxCells,
+                                    const char *fwdName, int paramIdx)
+{
+	if (!dest)
+		return;
+
+	int rlen = 0;
+	while (rlen < maxCells - 1 && src[rlen] != 0)
+		rlen++;
+
+	if (!amxx_is_range_writable(dest, static_cast<size_t>(rlen) + 1))
+	{
+		AMXXLOG_Log("[AMXX] WARNING: Skipping unwritable string write-back %p in forward \"%s\" param %d (likely param type mismatch or use-after-free)",
+			(void*)dest, fwdName, paramIdx);
+		return;
+	}
+
+	for (int s = 0; s < rlen; s++)
+		dest[s] = static_cast<char>(src[s] & 0xFF);
+	dest[rlen] = '\0';
 }
 
 CForward::CForward(const char *name, ForwardExecType et, int numParams, const ForwardParam *paramTypes)
@@ -94,8 +205,9 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				{
 					const char *str = reinterpret_cast<const char*>(params[i]);
 					cell *tmp;
-					// KTP: NULL / low-page / unmapped-page check (see amxx_is_string_ptr_readable).
-					if (!amxx_is_string_ptr_readable(str))
+					// KTP: bounded page-probed scan (see amxx_safe_string_length).
+					int strLen = amxx_safe_string_length(str);
+					if (strLen < 0)
 					{
 						if (str)
 						{
@@ -103,8 +215,11 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 								(void*)str, m_FuncName, i);
 						}
 						str = "";
+						strLen = 0;
 					}
-					int strLen = strlen(str);
+					// STRINGEX allot is fixed-size; clamp so the copy can't overrun the AMX heap block
+					if (m_ParamTypes[i] == FP_STRINGEX && strLen > STRINGEX_MAXLENGTH - 1)
+						strLen = STRINGEX_MAXLENGTH - 1;
 					amx_Allot(amx, (m_ParamTypes[i] == FP_STRING) ? strLen + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
 					// Inline unpacked char-to-cell copy (avoids second strlen in amx_SetStringOld)
 					for (int s = 0; s < strLen; s++)
@@ -192,10 +307,9 @@ cell CForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 				}
 				else if (m_ParamTypes[i] == FP_STRINGEX)
 				{
-					// KTP: Skip writeback if pointer is NULL/low-page/unmapped — would SEGV inside
-					// amx_GetStringOld's memcpy just like the strlen read path did before this check.
-					if (amxx_is_string_ptr_readable(reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<unsigned int>(params[i])))))
-						amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
+					// KTP: bounded write-back behind a writability probe (see amxx_stringex_writeback)
+					amxx_stringex_writeback(reinterpret_cast<char*>(params[i]), physAddrs[i],
+						STRINGEX_MAXLENGTH, m_FuncName, i);
 					amx_Release(amx, realParams[i]);
 				}
 				else if (m_ParamTypes[i] == FP_ARRAY)
@@ -317,10 +431,9 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		{
 			const char *str = reinterpret_cast<const char*>(params[i]);
 			cell *tmp;
-			// KTP: NULL / low-page / unmapped-page check (see amxx_is_string_ptr_readable).
-			// Previously only NULL and <0x1000 were rejected, which missed
-			// high-but-unmapped UAF pointers (e.g. 0x3f145406) that crashed strlen().
-			if (!amxx_is_string_ptr_readable(str))
+			// KTP: bounded page-probed scan (see amxx_safe_string_length).
+			int strLen = amxx_safe_string_length(str);
+			if (strLen < 0)
 			{
 				if (str)
 				{
@@ -328,8 +441,11 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 						(void*)str, m_Name.chars(), i, m_Func);
 				}
 				str = "";
+				strLen = 0;
 			}
-			int strLen = strlen(str);
+			// STRINGEX allot is fixed-size; clamp so the copy can't overrun the AMX heap block
+			if (m_ParamTypes[i] == FP_STRINGEX && strLen > STRINGEX_MAXLENGTH - 1)
+				strLen = STRINGEX_MAXLENGTH - 1;
 			amx_Allot(m_Amx, (m_ParamTypes[i] == FP_STRING) ? strLen + 1 : STRINGEX_MAXLENGTH, &realParams[i], &tmp);
 			// Inline unpacked char-to-cell copy (avoids second strlen in amx_SetStringOld)
 			for (int s = 0; s < strLen; s++)
@@ -411,10 +527,9 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		}
 		else if (m_ParamTypes[i] == FP_STRINGEX)
 		{
-			// KTP: Skip writeback if pointer is NULL/low-page/unmapped — would SEGV inside
-			// amx_GetStringOld's memcpy just like the strlen read path did before this check.
-			if (amxx_is_string_ptr_readable(reinterpret_cast<const void*>(static_cast<uintptr_t>(static_cast<unsigned int>(params[i])))))
-				amx_GetStringOld(reinterpret_cast<char*>(params[i]), physAddrs[i], 0);
+			// KTP: bounded write-back behind a writability probe (see amxx_stringex_writeback)
+			amxx_stringex_writeback(reinterpret_cast<char*>(params[i]), physAddrs[i],
+				STRINGEX_MAXLENGTH, m_Name.chars(), i);
 			amx_Release(m_Amx, realParams[i]);
 		}
 		else if (m_ParamTypes[i] == FP_ARRAY)

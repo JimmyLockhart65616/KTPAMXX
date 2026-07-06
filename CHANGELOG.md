@@ -5,6 +5,46 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.20] - 2026-07-05
+
+Fix wave from the 2026-07-05 full-stack code review (P0 #1/#2/#3, P1 #9, plus Part-1 P2 hygiene). No new natives, no include changes — plugins do not need a recompile.
+
+### Fixed
+
+#### `dodx`: `g_observedDeaths[]` never reset in extension mode — score-persistence validation gate rejected nearly all saves
+
+The only reset lived in `CPlayer::Connect()`, which extension mode deliberately never calls, so the counter was monotonic for the whole server process while scoreboard pdata `m_iDeaths` zeroes every map load. KTPMatchHandler's offset-validation gate (`save_player_score`) compared the two and rejected nearly everything — the feature has been silently no-oping in production even though the `+4` pdata offset is correct (confirmed by the 2026-07-04 fleet log sweep). Four lifecycle sites now keep the counter in step with pdata:
+
+- `dodx_reset_all_stats()` zeroes all slots (match-start baseline);
+- `CPlayer::Init()` zeroes per-slot (per-map, matches pdata's map-load zero);
+- `CPlayer::Disconnect()` zeroes per-slot so a mid-map substitute joining a recycled slot doesn't inherit the leaver's tally (`Init()` is skipped for slots that already have an edict; safe vs the disconnect-save because the drop-client hook runs the chain — and therefore the plugin's save — before this POST cleanup);
+- `dodx_set_user_deaths()` re-baselines the counter to the value it writes, so a restored player's next save doesn't mismatch by exactly their restored deaths (restore→re-disconnect flow).
+
+Companion plugin-side fixes (slot leak, intermission gate, cross-half staleness) land in KTPMatchHandler 0.10.141.
+
+#### `dodx`: death dedup guard made symmetric — DeathMsg-first ordering double-counted deaths
+
+The 33ms `g_lastDeathReportTime` window was only checked in `Client_DeathMsg`; the Damage-hook death branch fired `saveKill()` + the `client_death` forward + the observed-deaths increment unconditionally. When DeathMsg processed first, the same death was reported twice — double kill/death log lines into HLStatsX (silent stats corruption in fleet builds) and a further-inflated observed-deaths counter. The Damage-hook side now checks the same window before reporting. Also fixed on both sides: a negative time delta (server time restarts at map change) is no longer treated as "inside the window" — stale timestamps from the previous map could suppress legitimate death reports early in the next map.
+
+Known limitation (symmetric counterpart of the one already documented in `Client_DeathMsg`): when the guard suppresses the Damage-side fire because DeathMsg won the race, `saveKill()` is skipped — the attacker's DODX weapon-stat kill credit is lost for that death, same as any DeathMsg-only death (world/suicide) today. The forward still fires exactly once.
+
+#### Core: `CTask` active-count double-decrement on task self-removal — all `set_task` timers could silently stall
+
+`removeTasks()` decremented `m_ActiveCount` even when the removed task was the one currently executing; `startFrame()`'s post-execution free check then decremented again for the same task. One `remove_task(own_id)` inside a task callback — a standard AMXX idiom, used by six self-removing tick tasks in KTPMatchHandler alone — skewed the counter toward 0. Once it hit 0 with real tasks pending, `startFrame()`'s fast path stopped iterating and **every timer on the server went dead** until some new `set_task` call bumped the counter. Matches the field-reported ".ready/.confirm HUD not persisting" symptom. `removeTasks()` now skips the decrement for an in-execute task and lets the post-execution check own that transition.
+
+#### Core: `CForward` string-pointer mitigation widened (bounded scan, page-crossing probes, write-back writability)
+
+The 2.7.12 `mincore()` check covered less than its commit message claimed: it probed only the first page (so `strlen` could still walk off a mapped page into an unmapped neighbor and SEGV), and the FP_STRINGEX write-back reused the read check (a readable-but-read-only page — e.g. a string literal passed through a mismatched param type — still SEGV'd on write). Now: the read side does a bounded per-page-probed scan (32KB budget; unterminated-within-budget is treated as garbage, logged, and passed as `""`), the STRINGEX read copy is clamped to the 128-cell allot (an over-long incoming string could overrun the AMX heap block), and the write-back is bounded (replaces `amx_GetStringOld`'s copy-until-zero-cell, which had no output bound) behind a pipe-based writability probe of the exact byte range (`write()`/`read()` round-trip through a pipe EFAULTs instead of faulting; falls back to prior behavior if the pipe can't be created). Documented residual: freed-but-still-mapped heap and PROT_NONE regions still pass the mapped-page check — the mitigation catches wild pointers into unmapped space, which is the class seen in fleet cores.
+
+### Changed
+
+#### Core: async log writer hygiene
+
+- Writer-thread spawn is now double-checked under the queue mutex (the old check-then-act could double-spawn if a module thread ever logged concurrently with the game thread).
+- The 4.4MB ring is heap-allocated on first use instead of static BSS (allocation failure falls back to synchronous logging).
+- Dequeue copies only the used bytes of each op instead of the full 4.3KB struct while holding the mutex.
+- Linux link now passes `-pthread` explicitly (previously resolved only via glibc ≥ 2.34 folding libpthread into libc).
+
 ## [2.7.19] - 2026-07-03
 
 ### Changed

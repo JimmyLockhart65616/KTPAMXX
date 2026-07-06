@@ -826,6 +826,14 @@ static cell AMX_NATIVE_CALL dodx_set_user_deaths(AMX *amx, cell *params)
 		return 0;
 
 	*((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_DEATHS) = params[2];
+
+	// Re-baseline the offset-validation counter to the restored value —
+	// otherwise a restored player's next save mismatches by exactly the
+	// restored deaths and the gate refuses to persist (restore→re-disconnect).
+	extern int g_observedDeaths[33];
+	if (id < 33)
+		g_observedDeaths[id] = params[2];
+
 	return 1;
 }
 
