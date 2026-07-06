@@ -5,11 +5,26 @@
  * Uses discord.ini for configuration and AMXX curl module for HTTP requests.
  *
  * AUTHOR: Nein_
- * VERSION: 1.3.5
- * DATE: 2026-04-13
+ * VERSION: 1.3.6
+ * DATE: 2026-07-06
  * GITHUB: https://github.com/KTP-Community
  *
  * CHANGELOG:
+ * v1.3.6 (2026-07-06)
+ *   * FIXED: escape stripped every byte >= 128, mangling non-ASCII player
+ *     names (Cyrillic/CJK/accents) in every audit embed fleet-wide. Valid
+ *     UTF-8 sequences now pass through (JSON strings are UTF-8); malformed
+ *     high bytes (e.g. Windows-1252 from old clients) are dropped so they
+ *     can't invalidate the whole payload.
+ *   * FIXED: ktp_discord_init_headers freed the previous slist before
+ *     rebuilding — but load_config re-runs every map change in extension
+ *     mode, so a request in flight across a changelevel held the freed
+ *     list (the KTPHLTVRecorder v1.5.0 UAF class). The old list is now
+ *     deliberately leaked (two small headers per map change, cleared by
+ *     the nightly restart).
+ *   * FIXED: KTP_DISCORD_VERSION said 1.3.4 while the changelog was at
+ *     1.3.5 (constant is identification-only, nothing reads it).
+ *
  * v1.3.5 (2026-04-13)
  *   * FIXED: 164ms spike on first Discord request — new curl handle created per request
  *     triggered DNS + TLS handshake every time. Added CONNECTTIMEOUT (2s),
@@ -101,7 +116,9 @@
 // CONSTANTS
 // ============================================================================
 
-#define KTP_DISCORD_VERSION "1.3.4"
+// NOTE: nothing reads this constant at runtime — it exists so bundled
+// copies of the include can be identified; keep it matching the changelog.
+#define KTP_DISCORD_VERSION "1.3.6"
 
 // Channel types
 #define KTP_DISCORD_CHANNEL_DEFAULT     0   // Main channel (discord_channel_id)
@@ -421,10 +438,51 @@ stock ktp_discord_escape_json(const input[], output[], maxlen)
                 }
             }
             default: {
-                // Only include printable ASCII characters
-                if (input[i] >= 32 && input[i] < 127) {
-                    output[outPos++] = input[i];
+                new ch = input[i];
+                if (ch >= 32 && ch < 127) {
+                    // Printable ASCII
+                    output[outPos++] = ch;
                 }
+                else if (ch >= 194 && ch <= 244) {
+                    // UTF-8 lead byte (2-4 byte sequence). JSON strings are
+                    // UTF-8 — the old "printable ASCII only" filter dropped
+                    // every byte >= 128, mangling non-ASCII player names in
+                    // every embed. Copy the sequence only if well-formed:
+                    // a stray high byte (e.g. Windows-1252 from an old
+                    // client) would make the whole payload invalid UTF-8
+                    // and kill the embed, so malformed bytes are dropped.
+                    new seqLen = (ch >= 240) ? 4 : ((ch >= 224) ? 3 : 2);
+                    // RFC 3629: four leads constrain the SECOND byte tighter
+                    // than the generic 80-BF — without this, crafted names
+                    // (overlongs, UTF-16 surrogates like ED A0 80, > U+10FFFF)
+                    // still poison the payload. Names are attacker-controlled.
+                    new lo2 = 128, hi2 = 191;
+                    if (ch == 224) lo2 = 160;       // E0: second byte A0-BF
+                    else if (ch == 237) hi2 = 159;  // ED: second byte 80-9F
+                    else if (ch == 240) lo2 = 144;  // F0: second byte 90-BF
+                    else if (ch == 244) hi2 = 143;  // F4: second byte 80-8F
+                    new bool:wellFormed = true;
+                    for (new k = 1; k < seqLen; k++) {
+                        new cont = input[i + k];
+                        if (!cont) { wellFormed = false; break; }  // EOS mid-sequence (also stops the lookahead)
+                        if (k == 1) {
+                            if (cont < lo2 || cont > hi2) { wellFormed = false; break; }
+                        } else {
+                            if (cont < 128 || cont > 191) { wellFormed = false; break; }
+                        }
+                    }
+                    if (wellFormed && outPos + seqLen < maxlen - 1) {
+                        for (new k = 0; k < seqLen; k++)
+                            output[outPos++] = input[i + k];
+                        i += seqLen - 1;
+                    }
+                    // malformed or no room: drop the lead byte only
+                }
+                // Everything else dropped: control chars < 32 (JSON requires
+                // escaping; none belong in names), DEL, stray continuation
+                // bytes 128-193, invalid leads 245-255. Cells are unsigned
+                // bytes 0-255 from AMXX natives — no masking needed, and
+                // masking only in this branch would diverge from the switch.
             }
         }
     }
@@ -643,16 +701,16 @@ stock ktp_discord_send_raw_to(const endpoint[], const payload[])
 
 /**
  * Initialize persistent curl headers.
- * Called once from ktp_discord_load_config() after auth secret is loaded.
- * Headers are reused across all requests — never freed per-request.
+ * Called from ktp_discord_load_config() — which plugin_cfg re-fires EVERY
+ * map change in extension mode, so this is per-map, not once-per-process.
+ * The old list is deliberately LEAKED, never freed: a request posted just
+ * before changelevel can still be in flight holding it when the next map's
+ * config load runs (the v1.5.0 UAF class — freeing here handed libcurl a
+ * dangling header list). Two small headers per map change is a bounded,
+ * negligible leak; the nightly restart clears it.
  */
 stock ktp_discord_init_headers()
 {
-    if (g_ktpDiscordCurlHeaders != SList_Empty) {
-        curl_slist_free_all(g_ktpDiscordCurlHeaders);
-        g_ktpDiscordCurlHeaders = SList_Empty;
-    }
-
     g_ktpDiscordCurlHeaders = curl_slist_append(SList_Empty, "Content-Type: application/json");
     formatex(g_ktpDiscordAuthHeader, charsmax(g_ktpDiscordAuthHeader), "X-Relay-Auth: %s", g_ktpDiscordAuthSecret);
     g_ktpDiscordCurlHeaders = curl_slist_append(g_ktpDiscordCurlHeaders, g_ktpDiscordAuthHeader);
