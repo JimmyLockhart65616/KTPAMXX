@@ -10,6 +10,10 @@
 //
 // DODX Stats Functions
 //
+// NOTE: the file-backed rank system never loads in extension mode, so
+// get_user_stats always returns 0 with zero-filled arrays and get_statsnum
+// returns 0. The session-scope natives (get_user_wstats etc.) are unaffected.
+//
 
 #if defined _dodstats_included
   #endinput

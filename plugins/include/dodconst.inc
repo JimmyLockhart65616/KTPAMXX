@@ -25,6 +25,9 @@
 #define FUSE_SET		0
 #define FUSE_RESET		1
 
+// WARNING: the module's own bound is 47 (xmod_get_maxweapons() returns 47).
+// Do NOT size a Pawn array with this constant and then loop to
+// xmod_get_maxweapons() — that overruns by one.
 #define DODMAX_WEAPONS		46 // 5 slots for custom weapons
 
 // DoD Weapon Types
@@ -46,7 +49,7 @@ enum
 #define AMMO_HEAVY 6 		// bar, bren, stg44, fg42, scoped fg42
 #define AMMO_MG42 7    		// mg42
 #define AMMO_30CAL 8 		// 30cal
-#define AMMO_GREN 9 		// grenades (should be all 3 types)
+#define AMMO_GREN 9 		// hand/Mills grenades only; stick grenades use 11 (EX variants share these same channels)
 #define AMMO_ROCKET 13 		// bazooka, piat, panzerschreck
 enum { 
 	PS_NOPRONE =0,

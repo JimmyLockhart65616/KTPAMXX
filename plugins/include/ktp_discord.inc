@@ -79,7 +79,9 @@
  * File: <configsdir>/discord.ini
  *
  * Required keys:
- *   discord_relay_url=https://your-relay.example.com
+ *   discord_relay_url=https://your-relay.example.com/reply
+ *     (full endpoint — the include POSTs to this URL verbatim, and the
+ *      prewarm assumes the /reply suffix)
  *   discord_auth_secret=your_secret_here
  *   discord_channel_id=default_channel_id
  *
@@ -395,7 +397,12 @@ stock bool:ktp_discord_get_channel(channelType, output[], maxlen)
 // ============================================================================
 
 /**
- * Escape a string for JSON embedding
+ * Escape a string for JSON embedding.
+ *
+ * Valid UTF-8 passes through with RFC 3629 strict validation (overlongs,
+ * surrogates, and > U+10FFFF are rejected); malformed bytes are dropped, and
+ * a partial multi-byte sequence is never emitted at truncation. JSON control
+ * characters are backslash-escaped.
  *
  * @param input     Input string to escape
  * @param output    Buffer for escaped output

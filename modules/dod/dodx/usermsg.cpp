@@ -26,8 +26,9 @@ static float g_lastDeathReportTime[33] = {0};
 // offset validation gate. Ticks once per death event (any cause — frags,
 // suicides, world damage, kill console command). The 33ms dedup gate above
 // already prevents Damage hook + DeathMsg double-fire for the same death,
-// so this counter stays one-tick-per-death. Reset on Connect(). Exposed via
-// dodx_get_observed_deaths native in NBase.cpp.
+// so this counter stays one-tick-per-death. Reset in player Init, Disconnect,
+// and dodx_reset_all_stats (the Connect path is unreachable in extension
+// mode). Exposed via dodx_get_observed_deaths native in NBase.cpp.
 //
 // NOT a replacement for life.deaths / round.deaths — those are stats counters
 // driven through saveKill() and have different semantics (reset on round

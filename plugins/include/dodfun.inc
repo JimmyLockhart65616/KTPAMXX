@@ -10,6 +10,12 @@
 //
 // DoD Fun Functions
 //
+// WARNING: this include targets the dodfun module, which is NOT loaded on the
+// KTP fleet (it is Metamod-dependent). A plugin including it compiles fine but
+// dies at load or on the first native call. Its CP_VALUE/CA_VALUE enums have
+// DIFFERENT ordinals than dodx.inc's — never mix the two. Use dodx.inc's CP
+// natives instead.
+//
 
 #if defined _dodfun_included
 	#endinput

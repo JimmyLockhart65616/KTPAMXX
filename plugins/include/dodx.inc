@@ -33,7 +33,8 @@ enum {
   XMF_SCORE,
 };
 
-/* Use this function to register forwards */
+/* Compatibility no-op — stats forwards are registered unconditionally at
+   plugin load; calling this changes nothing. */
 native register_statsfwd(ftype);
 
 /* Function is called after player to player attacks ,
@@ -44,7 +45,9 @@ forward client_damage(attacker, victim, damage, wpnindex, hitplace, TA);
  * KTP: Pre-damage forward for damage modification.
  * Called BEFORE damage is finalized - return value modifies the damage.
  *
- * @param attacker   Attacker player index (0 for world/environment)
+ * @param attacker   Attacker player index. Never 0: for world/environment or
+ *                   self damage the module falls back to the victim, so
+ *                   attacker == victim (client_damage behaves the same way)
  * @param victim     Victim player index
  * @param damage     Original damage amount
  * @param wpnindex   Weapon ID (DODW_* constants from dodconst.inc)
@@ -56,12 +59,16 @@ forward client_damage(attacker, victim, damage, wpnindex, hitplace, TA);
  *                   - Return 0 to completely block damage
  *
  * @note Grenade weapon IDs: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
- *       DODW_HANDGRENADE_EX (37), DODW_STICKGRENADE_EX (38)
+ *       DODW_STICKGRENADE_EX (15), DODW_HANDGRENADE_EX (16)
  */
 forward dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA);
 
 /* Function is called after player death ,
-* if player was killed by teammate TK is set to 1 */
+* if player was killed by teammate TK is set to 1.
+* Suicides and world kills arrive via the DeathMsg path with TK=0, hitplace=0,
+* killer possibly 0, and the weapon resolved from the kill logname. If the
+* Damage hook and DeathMsg race past the 33ms dedup window, the TK flag can
+* be lost. */
 forward client_death(killer, victim, wpnindex, hitplace, TK);
 
 /* Function is called if player scored  */
@@ -95,9 +102,14 @@ forward dod_client_prone(id, value);
 /* This will be called whenever a player switches a weapon */
 forward dod_client_weaponswitch(id, wpnew, wpnold);
 
-/* Called on EVERY primary-attack actuation, including pure-miss shots the
-   client_damage hits-stream never sees. Fires for grenades/rockets/melee too
-   (saveShot is the shared actuation chokepoint) — filter by weapon for firearm-only.
+/* Fired per weapon actuation, including pure-miss shots the client_damage
+   hits-stream never sees. Coverage envelope:
+   - Firearm shots are detected via CurWeapon clip decrement: never fires for
+     bots, suppressed while stats are paused (dodx_set_stats_paused), no
+     dry-fire events, and MG42 uses a clip+2 heuristic.
+   - Grenades/rockets also dispatch here via a separate TraceLine path that
+     is NOT pause-gated; melee arrives via the damage path (pause-gated,
+     hit-only). Filter by firearm weapon id for shots-only use.
    gametime is gpGlobals->time at the fire. */
 forward dod_client_weapon_fire(id, weapon, Float:gametime);
 
@@ -107,17 +119,22 @@ forward dod_grenade_explosion(id, Float:pos[3], wpnid);
 /* Forward for when a rocket explodes and its location */
 forward dod_rocket_explosion(id, Float:pos[3], wpnid);
 
-/* Forward for when a player picks up a object */
+/* Forward for when a player picks up a object.
+   objid is the dod_object ENTITY INDEX, not an object-type id. */
 forward dod_client_objectpickup(id, objid, Float:pos[3], value);
 
 /* Forward for when a users stamina decreases */
 forward dod_client_stamina(id, stamina);
 
-/* We want to get just the weapon of whichever type that the player is on him 
-Use DODWT_* in dodconst.inc for type */
+/* We want to get just the weapon of whichever type that the player is on him
+Use DODWT_* in dodconst.inc for type.
+Note: the Webley (id 28) is typed PRIMARY in the module's weapon table, so
+DODWT_SECONDARY queries never return it. */
 native dod_weapon_type(id, type);
 
-/* This native will change the position of a weapon within the users slots and its ammo ammount */
+/* This native will change the position of a weapon within the users slots and its ammo ammount.
+   slot is the 1-based HUD bucket (module stores slot-1); dropslot is the
+   position within that bucket (stored as-is). */
 native dod_set_weaponlist(id, wpnID, slot, dropslot, totalrds);
 
 /* Sets the model for a player */
@@ -210,6 +227,8 @@ native dodx_flush_all_stats();
  * Reset all accumulated stats for all connected players.
  * Call this after flushing warmup stats to start fresh for match.
  * Clears: weapons[], attackers[], victims[], weaponsLife[], weaponsRnd[], life, round
+ * Also zeroes the observed-deaths counter (dodx_get_observed_deaths) for
+ * every slot.
  *
  * @return          Number of players reset
  */
@@ -220,7 +239,8 @@ native dodx_reset_all_stats();
  * When set, weaponstats log lines will include (matchid "xxx") property.
  * Pass empty string to clear match context (for post-match/warmup).
  *
- * @param matchId   Match ID string (e.g., "KTP-1734355200-dod_charlie")
+ * @param matchId   Match ID string (e.g., "KTP-1734355200-dod_charlie").
+ *                  Silently truncated at 63 chars.
  * @return          1 on success
  */
 native dodx_set_match_id(const matchId[]);
@@ -238,6 +258,15 @@ native dodx_get_match_id(output[], maxlen);
  * Pause or unpause stats collection.
  * When paused, kills/damage/shots are not accumulated in DODX stats.
  * Used by KTPMatchHandler to filter round-freeze kills during matches.
+ *
+ * Pausing gates the module's message hooks, so it suppresses more than
+ * accumulation: dod_damage_pre stops firing (its damage-modification effect
+ * included — grenade damage reduction plugins go inert), along with
+ * client_damage, the Damage-path client_death, score events, the
+ * CurWeapon-driven weapon_fire, and the PreThink-polled forwards
+ * (changeteam/changeclass/prone/stamina/weaponpickup). DeathMsg-path
+ * client_death still fires (with degraded args); the TraceLine
+ * grenade/rocket forwards are NOT gated.
  *
  * @param paused    1 to pause, 0 to resume
  * @return          1 on success
@@ -263,7 +292,9 @@ native dodx_set_pl_teamname(id, const szName[]);
 // KTPMatchHandler. The AMXX/ReAPI set_member route for these fields
 // requires CS-only ReGameDll and crashes on DoD with runtime error 10.
 
-/** Set the player's deaths counter (the scoreboard "Deaths" column). */
+/** Set the player's deaths counter (the scoreboard "Deaths" column).
+ *  Also re-baselines the observed-deaths counter (dodx_get_observed_deaths)
+ *  to the written value. */
 native dodx_set_user_deaths(id, deaths);
 
 /** Get the player's current deaths counter. */
@@ -287,7 +318,12 @@ native dodx_get_user_score(id);
  * bump shifted the struct). Log + skip persist for that player. Do NOT
  * call dodx_set_user_deaths/score until offsets validate.
  *
- * Returns 0 for invalid id, bot/HLTV slots, or before any DeathMsg has fired.
+ * Lifecycle: the counter resets per-slot on client disconnect and player
+ * init, is zeroed for every slot by dodx_reset_all_stats, and is
+ * re-baselined to the written value by dodx_set_user_deaths.
+ *
+ * Returns 0 for invalid id or before any DeathMsg has fired. Bots DO
+ * accumulate observed deaths; HLTV reads 0 only because it never dies.
  */
 native dodx_get_observed_deaths(id);
 
@@ -432,18 +468,28 @@ native dodx_send_ammox(id, ammo_slot, count);
  *
  * @param id            Player index
  * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
- * @return              1 on success, 0 on failure
+ * @return              1 on success, 0 on failure, -1 if the created weapon
+ *                      entity was removed on pickup (typically the player
+ *                      already has that grenade weapon). Callers set ammo
+ *                      separately, so treat -1 as "entity not granted",
+ *                      not success.
+ * @error               Invalid grenade_type raises a native error that
+ *                      aborts the calling public — the 0 return is not
+ *                      observable for that case.
  */
 native dodx_give_grenade(id, grenade_type);
 
 /**
- * Strip a grenade weapon from a player.
- * Removes the grenade weapon entity and clears all ammo slots.
- * Use this before giving grenades to ensure clean state.
+ * Strip grenade ammo from a player.
+ * Zeroes the ammo slots for the grenade type — it never removes a weapon
+ * entity. Use this before giving grenades to ensure clean state.
  *
  * @param id            Player index
  * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
- * @return              Number of weapon entities removed, 0 if none found
+ * @return              1 on success, 0 on failure
+ * @error               Invalid grenade_type raises a native error that
+ *                      aborts the calling public — the 0 return is not
+ *                      observable for that case.
  */
 native dodx_strip_grenade(id, grenade_type);
 
@@ -461,7 +507,9 @@ native dodx_debug_dump_ammo(id);
  * Ported from dodfun module for extension mode compatibility.
  *
  * @param id        Player index
- * @param classId   Class ID (1-6 depending on team), or 0 for random class
+ * @param classId   Class ID (DODC_* in dodconst.inc: Allies 1-8, Axis 10-19,
+ *                  British 21-25), or 0 for random class. The value is
+ *                  written to player data unvalidated.
  * @return          1 on success, 0 on failure
  */
 native dodx_set_user_class(id, classId);
