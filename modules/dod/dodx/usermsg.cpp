@@ -24,11 +24,9 @@ static float g_lastDeathReportTime[33] = {0};
 
 // KTP 2026-05-21: per-player observed deaths counter for the score/deaths
 // offset validation gate. Ticks once per death event (any cause — frags,
-// suicides, world damage, kill console command). The 33ms dedup gate above
-// already prevents Damage hook + DeathMsg double-fire for the same death,
-// so this counter stays one-tick-per-death. Reset in player Init, Disconnect,
-// and dodx_reset_all_stats (the Connect path is unreachable in extension
-// mode). Exposed via dodx_get_observed_deaths native in NBase.cpp.
+// suicides, world damage, kill console command). Reset in player Init,
+// Disconnect, and dodx_reset_all_stats (the Connect path is unreachable in
+// extension mode). Exposed via dodx_get_observed_deaths native in NBase.cpp.
 //
 // NOT a replacement for life.deaths / round.deaths — those are stats counters
 // driven through saveKill() and have different semantics (reset on round
@@ -36,11 +34,39 @@ static float g_lastDeathReportTime[33] = {0};
 // pdata-offset validation gate.
 int g_observedDeaths[33] = {0};
 
+// Per-life gate for the counter above.
+// INVARIANT: a victim dies at most once per life, so g_observedDeaths[i]
+// increments at most once between consecutive life starts. The flag is set
+// by the first counted death of a life and cleared only at points that
+// begin a new life or a new tracking epoch: spawn (PStatus / ResetHUD),
+// PreThink observing the player alive, CPlayer Init/Connect/Disconnect,
+// and dodx_reset_all_stats. This makes the counter immune to the
+// Damage-hook/DeathMsg double-report race regardless of timing; the 33ms
+// g_lastDeathReportTime window above stays as the dedup for saveKill()
+// and the iFDeath forward (HLStatsX kill-log semantics unchanged).
+bool g_deathCountedThisLife[33] = {false};
+
+// Count a death exactly once per life. Both death-report paths call this
+// instead of touching g_observedDeaths directly.
+static void countObservedDeath(int victimIdx)
+{
+	if (victimIdx < 1 || victimIdx >= 33)
+		return;
+	if (g_deathCountedThisLife[victimIdx])
+		return;
+	g_deathCountedThisLife[victimIdx] = true;
+	g_observedDeaths[victimIdx]++;
+}
+
 void Client_ResetHUD_End(void* mValue)
 {
 	if (!mPlayer)
 		return;
 	mPlayer->clearStats = gpGlobals->time + 0.25f;
+	// ResetHUD also marks a spawn — second re-arm point for the
+	// observed-deaths per-life gate (see g_deathCountedThisLife).
+	if (mPlayer->index >= 1 && mPlayer->index < 33)
+		g_deathCountedThisLife[mPlayer->index] = false;
 }
 
 void Client_RoundState(void* mValue)
@@ -342,7 +368,8 @@ void Client_Health_End(void* mValue)
 	{
 		// Symmetric side of the DeathMsg dedup: if DeathMsg already reported
 		// this victim's death inside the window, firing here again would
-		// double-log the kill in HLStatsX and double-count observed deaths.
+		// double-log the kill in HLStatsX. (The observed-deaths counter has
+		// its own per-life gate and doesn't rely on this window.)
 		// Negative delta = server time restarted (map change), not a dup.
 		if (mPlayer->index >= 1 && mPlayer->index < 33 && gpGlobals)
 		{
@@ -353,10 +380,9 @@ void Client_Health_End(void* mValue)
 
 		pAttacker->saveKill(mPlayer,weapon,( aim == 1 ) ? 1:0 ,TA);
 		MF_ExecuteForward( iFDeath, pAttacker->index, mPlayer->index, weapon, aim, TA );
-		if (mPlayer->index >= 1 && mPlayer->index < 33) {
+		if (mPlayer->index >= 1 && mPlayer->index < 33)
 			g_lastDeathReportTime[mPlayer->index] = gpGlobals ? gpGlobals->time : 0.0f;
-			g_observedDeaths[mPlayer->index]++;
-		}
+		countObservedDeath(mPlayer->index);
 	}
 }
 
@@ -695,7 +721,14 @@ void Client_PStatus(void* mValue)
 				break;
 
 			if (playerIdx >= 1 && playerIdx <= maxClients)
+			{
+				// New life begins — re-arm the observed-deaths per-life gate.
+				// PStatus is not stats-pause gated, so this stays reliable
+				// through round-freeze pauses (PreThink does not run then).
+				if (playerIdx < 33)
+					g_deathCountedThisLife[playerIdx] = false;
 				MF_ExecuteForward(iFSpawnForward, playerIdx);
+			}
 			break;
 		}
 	}
@@ -774,7 +807,7 @@ void Client_DeathMsg(void* mValue)
 		int TA = 0;    // Teamkill flag — Damage hook owns the proper detection
 		MF_ExecuteForward(iFDeath, killerIdx, victimIdx, weapon, aim, TA);
 		g_lastDeathReportTime[victimIdx] = now;
-		g_observedDeaths[victimIdx]++;
+		countObservedDeath(victimIdx);
 		break;
 	}
 	}

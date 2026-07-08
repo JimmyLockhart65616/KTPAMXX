@@ -138,10 +138,15 @@ class CSPForward
 	bool m_InExec;
 	bool m_ToDelete;
 
+	// Live holders of this handle. The registration dedup hands the same id to
+	// every identical (amx, func, params) registration, so the first unregister
+	// must not free a handle others still execute.
+	int m_RefCount;
+
 public:
 	bool isFree;
 public:
-	CSPForward() { m_HasFunc = false; }
+	CSPForward() { m_HasFunc = false; m_RefCount = 0; }
 	void Set(const char *funcName, AMX *amx, int numParams, const ForwardParam * paramTypes);
 	void Set(int func, AMX *amx, int numParams, const ForwardParam * paramTypes);
 

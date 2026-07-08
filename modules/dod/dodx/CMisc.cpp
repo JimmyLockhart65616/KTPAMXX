@@ -32,8 +32,12 @@ void CPlayer::Disconnect()
 	// drop-client hook runs the chain first, so the plugin's disconnect-save
 	// has already read the counter by the time this POST cleanup runs.
 	extern int g_observedDeaths[33];
+	extern bool g_deathCountedThisLife[33];
 	if (index >= 1 && index < 33)
+	{
 		g_observedDeaths[index] = 0;
+		g_deathCountedThisLife[index] = false;
+	}
 
 	oldteam = 0;
 	oldclass = 0;
@@ -118,8 +122,12 @@ void CPlayer::Connect(const char* nn,const char* ippp ){
 	// counter for this slot so a reconnect doesn't inherit the prior
 	// session's death tally.
 	extern int g_observedDeaths[33];
+	extern bool g_deathCountedThisLife[33];
 	if (index >= 1 && index < 33)
+	{
 		g_observedDeaths[index] = 0;
+		g_deathCountedThisLife[index] = false;
+	}
 }
 
 void CPlayer::restartStats(bool all)
@@ -180,8 +188,12 @@ void CPlayer::Init( int pi, edict_t* pe )
 	// unreachable in extension mode, and scoreboard pdata m_iDeaths zeroes
 	// every map load — without this the counter is monotonic per process.
 	extern int g_observedDeaths[33];
+	extern bool g_deathCountedThisLife[33];
 	if (index >= 1 && index < 33)
+	{
 		g_observedDeaths[index] = 0;
+		g_deathCountedThisLife[index] = false;
+	}
 }
 
 void CPlayer::saveKill(CPlayer* pVictim, int wweapon, int hhs, int ttk){
@@ -417,6 +429,15 @@ void CPlayer::PreThink()
 	// KTP: Safety check - pEdict must be valid before any access
 	if (!pEdict || pEdict->free)
 		return;
+
+	// Player observed alive = current life's death can't have been counted
+	// yet. Backstop for the observed-deaths per-life gate in case a spawn
+	// message was missed (PStatus/ResetHUD are the primary re-arm points).
+	{
+		extern bool g_deathCountedThisLife[33];
+		if (index >= 1 && index < 33 && g_deathCountedThisLife[index] && IsAlive())
+			g_deathCountedThisLife[index] = false;
+	}
 
 	if(!ingame || ignoreBots(pEdict))
 		return;

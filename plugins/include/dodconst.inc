@@ -25,10 +25,11 @@
 #define FUSE_SET		0
 #define FUSE_RESET		1
 
-// WARNING: the module's own bound is 47 (xmod_get_maxweapons() returns 47).
-// Do NOT size a Pawn array with this constant and then loop to
-// xmod_get_maxweapons() — that overruns by one.
-#define DODMAX_WEAPONS		46 // 5 slots for custom weapons
+// Matches the module bound (xmod_get_maxweapons() returns 47):
+// 42 stock weapon ids (0-41) + 5 custom-weapon slots (42-46).
+// Was 46 before 2.7.21 — arrays sized with the old value and looped to
+// xmod_get_maxweapons() overran by one.
+#define DODMAX_WEAPONS		47
 
 // DoD Weapon Types
 enum

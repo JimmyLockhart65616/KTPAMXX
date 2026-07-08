@@ -16,7 +16,11 @@
 #include "dodx.h"
 
 /* Weapon names aren't send in WeaponList message in DoD */
-weapon_t weaponData[] = 
+// Sized to DODMAX_WEAPONS (47): 42 stock entries below + 5 zero-initialized
+// custom-weapon slots (needcheck=false until custom_weapon_add claims one).
+// An unsized definition here left every DODMAX_WEAPONS-bounded loop reading
+// past the array.
+weapon_t weaponData[DODMAX_WEAPONS] =
 {
 	{ false,	false,	{"mortar"},			{"mortar"},			0, DODWT_OTHER },
 	{ true,		true,	{"amerknife"},		{"knife"},			0, DODWT_MELEE }, // aknife->bknife

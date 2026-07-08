@@ -385,6 +385,7 @@ void CSPForward::Set(int func, AMX *amx, int numParams, const ForwardParam *para
 	m_Name = name;
 	m_ToDelete = false;
 	m_InExec = false;
+	m_RefCount = 1;
 }
 
 void CSPForward::Set(const char *funcName, AMX *amx, int numParams, const ForwardParam *paramTypes)
@@ -397,6 +398,7 @@ void CSPForward::Set(const char *funcName, AMX *amx, int numParams, const Forwar
 	m_Name = funcName;
 	m_ToDelete = false;
 	m_InExec = false;
+	m_RefCount = 1;
 }
 
 cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
@@ -617,6 +619,10 @@ int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const For
 			&& fwd->m_NumParams == numParams
 			&& memcmp(fwd->m_ParamTypes, paramTypes, numParams * sizeof(ForwardParam)) == 0)
 		{
+			// Shared handle: count the new holder, and rescue a forward whose
+			// last holder let go while it was executing.
+			fwd->m_ToDelete = false;
+			fwd->m_RefCount++;
 			return (int)((i << 1) | 1);
 		}
 	}
@@ -634,6 +640,7 @@ int CForwardMngr::registerSPForward(int func, AMX *amx, int numParams, const For
 		if (pForward->getFuncsNum() == 0)
 		{
 			pForward->isFree = true;  // KTP: Mark free again since registration failed
+			pForward->m_RefCount = 0;
 			m_FreeSPForwards.push(retVal);
 			return -1;
 		}
@@ -673,6 +680,10 @@ int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParam
 			&& fwd->m_NumParams == numParams
 			&& memcmp(fwd->m_ParamTypes, paramTypes, numParams * sizeof(ForwardParam)) == 0)
 		{
+			// Shared handle: count the new holder, and rescue a forward whose
+			// last holder let go while it was executing.
+			fwd->m_ToDelete = false;
+			fwd->m_RefCount++;
 			return (int)((i << 1) | 1);
 		}
 	}
@@ -690,6 +701,7 @@ int CForwardMngr::registerSPForward(const char *funcName, AMX *amx, int numParam
 		if (pForward->getFuncsNum() == 0)
 		{
 			pForward->isFree = true;  // KTP: Mark free again since registration failed
+			pForward->m_RefCount = 0;
 			m_FreeSPForwards.push(retVal);
 			return -1;
 		}
@@ -810,6 +822,24 @@ void CForwardMngr::unregisterSPForward(int id)
 	}
 
 	CSPForward *fwd = m_SPForwards.at(id >> 1);
+
+	// Dedup'd registrations share one handle. Freeing it while other holders
+	// remain lets the free list recycle the id onto a different function —
+	// live holders (set_task timers, menu callbacks) then execute the wrong
+	// callback. Only the last release frees the slot.
+	if (fwd->m_RefCount > 1)
+	{
+		fwd->m_RefCount--;
+		return;
+	}
+	// Invariant tripwire: refcount 0 on a live, non-executing forward means a
+	// holder released a handle it didn't own (the caller-bug class refcounting
+	// can't defend against) — log it before it becomes a wrong-callback hunt.
+	if (fwd->m_RefCount == 0 && !fwd->m_InExec)
+	{
+		AMXXLOG_Log("[AMXX] Warning: SP forward %d released with refcount already 0 (double release?)", id);
+	}
+	fwd->m_RefCount = 0;
 
 	if (fwd->m_InExec)
 	{

@@ -98,6 +98,12 @@ void CTaskMngr::CTask::resetNextExecTime(float fCurrentTime)
 
 void CTaskMngr::CTask::executeIfRequired(float fCurrentTime, float fTimeLimit, float fTimeLeft)
 {
+	// Re-entry (a nested frame while the callback runs) would fire the forward
+	// again before the outer invocation marks the task done. The outer call
+	// owns completion.
+	if (m_bInExecute)
+		return;
+
 	bool execute = false;
 	bool done = false;
 

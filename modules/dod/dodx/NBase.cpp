@@ -204,7 +204,7 @@ static cell AMX_NATIVE_CALL dodx_set_user_team(AMX *amx, cell *params)
 	int iTeam = params[2];
 
 	if (iTeam < 1 || iTeam > 3) {
-		MF_LogError(amx, AMX_ERR_NATIVE, "Invalid team id %d", iTeam);
+		MF_Log("dodx_set_user_team: invalid team id %d", iTeam);
 		return 0;
 	}
 
@@ -880,12 +880,14 @@ static cell AMX_NATIVE_CALL dodx_get_user_score(AMX *amx, cell *params)
 	return *((int*)pEdict->pvPrivateData + STEAM_PDOFFSET_SCORE);
 }
 
-// KTP 2026-05-21: Per-player observed-deaths counter for the score/deaths
-// offset validation gate. Ticks ONCE per death event in usermsg.cpp's
-// death paths (Damage hook AND Client_DeathMsg, deduplicated via the
-// existing 33ms guard). Covers normal frags, suicides (`kill` console
-// command), and world deaths — same coverage as DoD's m_iDeaths
-// increment in dod_i386.so.
+// KTP: Per-player observed-deaths counter for the score/deaths offset
+// validation gate. Ticks ONCE per death via countObservedDeath() in
+// usermsg.cpp's death paths (Damage hook AND Client_DeathMsg) — the
+// per-life exactly-once gate (g_deathCountedThisLife) is the dedup; the
+// 33ms window only guards saveKill/iFDeath forward semantics, not this
+// counter. Covers normal frags, suicides (`kill` console command), and
+// world deaths — same coverage as DoD's m_iDeaths increment in
+// dod_i386.so.
 //
 // Why not life.deaths: that counter is updated via CPlayer::saveKill
 // which is only invoked from the Damage hook path. Suicides via `kill`
@@ -945,7 +947,7 @@ static cell AMX_NATIVE_CALL dodx_broadcast_scoreboard(AMX *amx, cell *params)
 
 	if (gmsgScoreShort <= 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_scoreboard: ScoreShort message not registered");
+		MF_Log("dodx_broadcast_scoreboard: ScoreShort message not registered");
 		return 0;
 	}
 
@@ -973,10 +975,11 @@ static cell AMX_NATIVE_CALL dodx_broadcast_scoreboard(AMX *amx, cell *params)
 // native dodx_set_team_score(team, score);
 static cell AMX_NATIVE_CALL dodx_set_team_score(AMX *amx, cell *params)
 {
-	// Check if gamerules is available
+	// Recoverable failures log + return 0 instead of raising a native error —
+	// callers (KTPScoreTracker) check the return and continue.
 	if (!DODX_HasGameRules())
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_team_score: gamerules not available");
+		MF_Log("dodx_set_team_score: gamerules not available");
 		return 0;
 	}
 
@@ -985,7 +988,7 @@ static cell AMX_NATIVE_CALL dodx_set_team_score(AMX *amx, cell *params)
 
 	if (team < 1 || team > 2)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_team_score: invalid team %d (must be 1 or 2)", team);
+		MF_Log("dodx_set_team_score: invalid team %d (must be 1 or 2)", team);
 		return 0;
 	}
 
@@ -1018,7 +1021,7 @@ static cell AMX_NATIVE_CALL dodx_get_team_score(AMX *amx, cell *params)
 
 	if (team < 1 || team > 2)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_get_team_score: invalid team %d (must be 1 or 2)", team);
+		MF_Log("dodx_get_team_score: invalid team %d (must be 1 or 2)", team);
 		return 0;
 	}
 
@@ -1044,7 +1047,7 @@ static cell AMX_NATIVE_CALL dodx_broadcast_team_score(AMX *amx, cell *params)
 
 	if (team < 1 || team > 2)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_team_score: invalid team %d (must be 1 or 2)", team);
+		MF_Log("dodx_broadcast_team_score: invalid team %d (must be 1 or 2)", team);
 		return 0;
 	}
 
@@ -1064,7 +1067,7 @@ static cell AMX_NATIVE_CALL dodx_broadcast_team_score(AMX *amx, cell *params)
 	// Check if we have the TeamScore message ID
 	if (gmsgTeamScore <= 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_broadcast_team_score: TeamScore message not registered");
+		MF_Log("dodx_broadcast_team_score: TeamScore message not registered");
 		return 0;
 	}
 
@@ -1087,14 +1090,14 @@ static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params
 
 	if (team < 1 || team > 2)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: invalid team %d (must be 1 or 2)", team);
+		MF_Log("dodx_set_scoreboard_team_name: invalid team %d (must be 1 or 2)", team);
 		return 0;
 	}
 
 	// Check if we have the TeamInfo message ID
 	if (gmsgTeamInfo <= 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: TeamInfo message not registered");
+		MF_Log("dodx_set_scoreboard_team_name: TeamInfo message not registered");
 		return 0;
 	}
 
@@ -1103,7 +1106,7 @@ static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params
 	char *teamName = MF_GetAmxString(amx, params[2], 0, &len);
 	if (!teamName || len == 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_scoreboard_team_name: empty team name");
+		MF_Log("dodx_set_scoreboard_team_name: empty team name");
 		return 0;
 	}
 
@@ -1181,7 +1184,7 @@ static cell AMX_NATIVE_CALL dodx_set_grenade_ammo(AMX *amx, cell *params)
 			break;
 
 		default:
-			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_set_grenade_ammo: invalid grenade type %d", grenadeType);
+			MF_Log("dodx_set_grenade_ammo: invalid grenade type %d", grenadeType);
 			return 0;
 	}
 
@@ -1217,7 +1220,7 @@ static cell AMX_NATIVE_CALL dodx_get_grenade_ammo(AMX *amx, cell *params)
 			return *((int*)pPlayer->pEdict->pvPrivateData + PDOFFSET_AMMO_STICKGRENADE_1);
 
 		default:
-			MF_LogError(amx, AMX_ERR_NATIVE, "dodx_get_grenade_ammo: invalid grenade type %d", grenadeType);
+			MF_Log("dodx_get_grenade_ammo: invalid grenade type %d", grenadeType);
 			return 0;
 	}
 }
@@ -1291,7 +1294,7 @@ static cell AMX_NATIVE_CALL dodx_send_ammox(AMX *amx, cell *params)
 
 	if (gmsgAmmoX <= 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_send_ammox: AmmoX message not registered");
+		MF_Log("dodx_send_ammox: AmmoX message not registered");
 		return 0;
 	}
 

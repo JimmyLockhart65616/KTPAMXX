@@ -18,7 +18,7 @@
 #include "CRank.h"
 
 #define DODMAX_CUSTOMWPNS	5	// custom weapons
-#define DODMAX_WEAPONS		42 + DODMAX_CUSTOMWPNS
+#define DODMAX_WEAPONS		(42 + DODMAX_CUSTOMWPNS)
 
 #if defined(_WIN32)
 #define LINUXOFFSET	0

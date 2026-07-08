@@ -5,6 +5,47 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.21] - unreleased
+
+The platform wave: core (CForward refcount + CTask re-entry guard + `KTP_ExtensionShutdown`) and DODX/includes (2026-07-06 includes assessment A1/A2/A5/A6 + 07-05 review follow-ups) in one cut.
+
+**Deploy notes:** ship no earlier than ReHLDS .928 activation (the shutdown export is inert until the engine calls it — .928 activates 07-09); ship the module with or before any plugin written to the new checkable-return contracts (older modules still abort); build the ship artifacts with operator WIP stashed out of the tree (2.7.20 procedure).
+
+### Fixed
+
+#### Core: SP-forward dedup handed out shared handles with no reference counting — live tasks executed the WRONG callback
+
+The 2.6.10 dedup returns the same `CSPForward` handle for identical (amx, function, params) registrations — common under `set_task` (many plugins register the same callback from several sites). `unregisterSPForward` freed the handle when the FIRST holder died, pushing the id onto the free list while other holders lived; the next registration of a *different* function recycled the id, and the surviving holder's timer then executed that other function. Production signature: `task_deferred_discord_fwd` executed 9 times for 8 registrations (the 0.10.137 plugin guard suppressed the extras); the historic 5×-in-1s multi-fire was a *repeating* stale holder; a freed-but-held forward returning 0 silently is the companion lost-timer class (a plausible contributor to the old `.ready` HUD non-persistence reports beyond the 2.7.20 CTask counter fix). `CSPForward` is now reference-counted: `Set()` = 1, each dedup hit increments (and rescues a mid-execute deferred-delete), release decrements, only the last release frees the slot. Non-shared forwards behave byte-identically. An invariant tripwire logs any release observed at refcount 0 on a live, non-executing forward (caller double-release — the class refcounting can't defend against).
+
+#### Core: `CTask::executeIfRequired` re-entry guard
+
+A one-shot task's completion state was only written after its forward returned, so a nested engine frame during the callback could re-enter and double-fire it. Re-entrant calls on the same task object now return immediately; the outer invocation still completes/reschedules it (no starvation).
+
+### Added
+
+#### Core: `KTP_ExtensionShutdown` export — orderly extension-mode shutdown (the CHI1 root fix)
+
+In extension mode nothing ever called the module-detach path at full server shutdown (`Meta_Detach` is Metamod-only; the engine dlclosed extensions cold), so module exit-time destructors ran against an unmapped core — the CHI1:27015 shutdown-segfault class that amxxcurl's atexit guard backstops. ReHLDS .928 dlsym's and calls `KTP_ExtensionShutdown` before its dlclose loop; KTPAMXX now exports it: idempotency latch → extension-init gate (Metamod mode untouched) → teardown-window guard (no Pawn can run) → `PluginsUnloading` forwards → the `Meta_Detach` core-state clear set → `detachModules()` (dodx/reapi/amxxcurl `AMXX_Detach`/`OnAmxxDetach` finally run at shutdown, with core and engine still mapped) → CLog close + async-writer drain (idempotent vs the later `~CLog` at dlclose). Honors the engine contract (post-`Cmd/Cvar/NET_Shutdown`: no cvars, no commands, no engine networking anywhere in the transitive teardown — verified per module). `plugin_end` is deliberately NOT fired here (already fired per map by `SV_InactivateClients`; on direct quit it has never fired in extension mode and running Pawn post-`Cvar_Shutdown` would violate the contract).
+
+#### `dodx`: `weaponData[]` sized to `DODMAX_WEAPONS` — out-of-bounds reads on every DODMAX_WEAPONS-bounded loop (A1+A2)
+
+The table was defined unsized with 42 initializers while its extern declaration (and every loop bound, including hot-path `Client_AmmoX` on every ammo update) used `DODMAX_WEAPONS` = 47. Indices 42-46 read (and, in the deactivate/rank-save clear-loop and `custom_weapon_add`, wrote) past the array into adjacent `.data`. The definition is now `weaponData[DODMAX_WEAPONS]`; the 5 trailing custom-weapon slots zero-initialize (`needcheck=false`) — same state the attach loop was already writing. Pawn side: `dodconst.inc` `DODMAX_WEAPONS` reconciled 46 → 47 to match `xmod_get_maxweapons()` (arrays sized with the old constant and looped to the native overran by one).
+
+#### `dodx`: observed-deaths counter gated per life — structurally exactly-once (defense-in-depth over the 2.7.20 33ms window)
+
+Both death-report paths (Damage hook and `Client_DeathMsg`) shared only the 33ms `g_lastDeathReportTime` window; production still showed `observed = pdata+1` skews when the two reports raced past it. New invariant: a victim dies at most once per life, so `g_observedDeaths[i]` increments at most once between life starts (`g_deathCountedThisLife` flag, re-armed on spawn via PStatus/ResetHUD — both un-gated by stats-pause — plus a PreThink alive-observation backstop, and cleared by the existing lifecycle resets: Init/Connect/Disconnect/`dodx_reset_all_stats`). The 33ms window is retained unchanged as the dedup for `saveKill()` and the `client_death` forward (HLStatsX kill-log semantics untouched).
+
+#### `dodx`: recoverable native failures log + return 0 instead of aborting the calling public (A5 + the filed `dodx_set_team_score` defect)
+
+`MF_LogError(..., AMX_ERR_NATIVE, ...)` raises a runtime error that aborts the caller, so documented "returns 0 on failure" branches were unreachable. Converted to `MF_Log` + `return 0` (10 natives): `dodx_set_team_score` (gamerules missing / invalid team — makes KTPScoreTracker 1.1.2's checked branch live), `dodx_get_team_score` (invalid team), `dodx_broadcast_team_score` (invalid team / message not registered), `dodx_set_scoreboard_team_name` (invalid team / message / empty name), `dodx_broadcast_scoreboard` (ScoreShort not registered), `dodx_set_grenade_ammo` / `dodx_get_grenade_ammo` (invalid grenade type), `dodx_send_ammox` (AmmoX not registered), `dodx_set_user_team` (invalid team), `dodx_flush_all_stats` (forward not registered). Kept as genuine aborts: out-of-range weapon/player ids, `dod_weapon_type`/`get_map_info` bad constants, the `custom_weapon_*` domain checks, and `dodx_give_grenade`/`dodx_strip_grenade` invalid type (contract documents `@error`). dodx.inc return-contract docs updated to match.
+
+### Changed
+
+- `dodx.inc`: `dod_damage_pre` now documents that grenade damage reduction is a post-hoc heal-back gated on the victim being alive — 100% reduction cannot save a raw-lethal hit (the pre-TakeDamage hook is deliberately not built).
+- `dodx.inc`: declared the registered-but-undeclared aliases `dod_get_user_team`, `dod_get_wpnname`, `dod_get_wpnlogname`, `dod_is_melee`.
+- `reapi.inc` / `reapi_gamedll.inc` / `reapi_gamedll_const.inc` / `reapi_rechecker.inc`: mirrored KTPReAPI `3d88291` contract docs (RegisterHookChain failures now log + return INVALID_HOOKCHAIN, no abort) — copies byte-identical again per the dual-copy rule.
+- `reapi_version.inc`: `REAPI_VERSION` 529362 → 529365 (sync with KTPReAPI 5.29.0.365).
+
 ## [2.7.20] - 2026-07-05
 
 Fix wave from the 2026-07-05 full-stack code review (P0 #1/#2/#3, P1 #9, plus Part-1 P2 hygiene). No new natives, no include changes — plugins do not need a recompile.

@@ -386,10 +386,11 @@ static cell AMX_NATIVE_CALL dodx_flush_all_stats(AMX *amx, cell *params)
 	if (!gpGlobals)
 		return 0;
 
-	// KTP: Check if forward is registered
+	// KTP: Check if forward is registered. Recoverable — log + return 0 so
+	// checked callers keep running instead of aborting their public.
 	if (iFFlushStats < 0)
 	{
-		MF_LogError(amx, AMX_ERR_NATIVE, "dodx_flush_all_stats: dod_stats_flush forward not registered");
+		MF_Log("dodx_flush_all_stats: dod_stats_flush forward not registered");
 		return 0;
 	}
 
@@ -434,7 +435,9 @@ static cell AMX_NATIVE_CALL dodx_reset_all_stats(AMX *amx, cell *params)
 	// just ingame players — it's slot-inherited and otherwise monotonic for
 	// the whole server process (Connect() never runs in extension mode).
 	extern int g_observedDeaths[33];
+	extern bool g_deathCountedThisLife[33];
 	memset(g_observedDeaths, 0, sizeof(g_observedDeaths));
+	memset(g_deathCountedThisLife, 0, sizeof(g_deathCountedThisLife));
 
 	for (int i = 1; i <= maxClients; i++)
 	{

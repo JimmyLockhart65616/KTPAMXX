@@ -58,6 +58,10 @@ forward client_damage(attacker, victim, damage, wpnindex, hitplace, TA);
  *                   - Return lower value to reduce damage (player is healed by difference)
  *                   - Return 0 to completely block damage
  *
+ * @note Reduction is a post-hoc heal-back off the Damage usermsg, gated on the
+ *       victim still being alive — if the raw damage kills, the heal-back never
+ *       runs, so 100% reduction cannot save a raw-lethal hit. A true
+ *       pre-TakeDamage hook is deliberately not built.
  * @note Grenade weapon IDs: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
  *       DODW_STICKGRENADE_EX (15), DODW_HANDGRENADE_EX (16)
  */
@@ -200,6 +204,22 @@ native dod_get_user_score(index);
 /* values are: 0-no prone, 1-prone, 2-prone + w_deploy */
 native dod_get_pronestate(index);
 
+/* Registered aliases that were historically undeclared. The module also
+ * registers get_weaponname/get_user_weapon overrides of the core natives —
+ * those keep their amxmodx.inc declarations. */
+
+/* Returns player team (1=Allies, 2=Axis) from the edict. */
+native dod_get_user_team(index);
+
+/* Alias of xmod_get_wpnname. */
+native dod_get_wpnname(wpnindex, name[], len);
+
+/* Alias of xmod_get_wpnlogname. */
+native dod_get_wpnlogname(wpnindex, name[], len);
+
+/* Alias of xmod_is_melee_wpn. */
+native dod_is_melee(wpnindex);
+
 /* It is not as safe as original but player deaths will not be increased */
 native dod_user_kill(index);
 
@@ -219,7 +239,8 @@ forward dod_stats_flush(id);
  * Flush all pending player stats by firing dod_stats_flush forward.
  * Call this before match starts to log warmup stats.
  *
- * @return          Number of players for which stats were flushed
+ * @return          Number of players for which stats were flushed; 0 (logged,
+ *                  no abort) if the dod_stats_flush forward isn't registered
  */
 native dodx_flush_all_stats();
 
@@ -320,7 +341,9 @@ native dodx_get_user_score(id);
  *
  * Lifecycle: the counter resets per-slot on client disconnect and player
  * init, is zeroed for every slot by dodx_reset_all_stats, and is
- * re-baselined to the written value by dodx_set_user_deaths.
+ * re-baselined to the written value by dodx_set_user_deaths. Increments are
+ * gated per life (a victim counts at most one death between spawns), so
+ * duplicate death reports can never skew it.
  *
  * Returns 0 for invalid id or before any DeathMsg has fired. Bots DO
  * accumulate observed deaths; HLTV reads 0 only because it never dies.
@@ -340,7 +363,8 @@ native dodx_get_observed_deaths(id);
  * (proven safe). Avoids the AMX message_begin Pawn native that crashed
  * on 2026-05-21 (see KTPMatchHandler/research/OFFSETS_RESEARCH).
  *
- * Returns 1 on success, 0 if id invalid or ScoreShort not registered.
+ * Returns 1 on success, 0 if id invalid or ScoreShort not registered
+ * (logged, no abort — the 0 return is real as of 2.7.21).
  */
 native dodx_broadcast_scoreboard(id);
 
@@ -362,7 +386,9 @@ native dodx_has_gamerules();
  *
  * @param team      Team index (1=Allies, 2=Axis)
  * @param score     Score value to set
- * @return          1 on success, 0 on failure (gamerules not available)
+ * @return          1 on success, 0 on failure (gamerules not available or
+ *                  invalid team). Failures log and return — they no longer
+ *                  abort the calling public (2.7.21), so check the return.
  */
 native dodx_set_team_score(team, score);
 
@@ -371,7 +397,7 @@ native dodx_set_team_score(team, score);
  * If gamerules is not available, falls back to DODX message-tracked score.
  *
  * @param team      Team index (1=Allies, 2=Axis)
- * @return          Current team score
+ * @return          Current team score; 0 for an invalid team (logged, no abort)
  */
 native dodx_get_team_score(team);
 
@@ -382,7 +408,8 @@ native dodx_get_team_score(team);
  *
  * @param team      Team index (1=Allies, 2=Axis)
  * @param score     Score value to broadcast
- * @return          1 on success, 0 on failure
+ * @return          1 on success, 0 on failure (invalid team or TeamScore
+ *                  message not registered; logged, no abort)
  */
 native dodx_broadcast_team_score(team, score);
 
@@ -393,7 +420,8 @@ native dodx_broadcast_team_score(team, score);
  *
  * @param team      Team index (1=Allies, 2=Axis)
  * @param name      Custom team name string (e.g., "Team Alpha")
- * @return          Number of players updated
+ * @return          Number of players updated; 0 on failure (invalid team,
+ *                  empty name, or TeamInfo not registered; logged, no abort)
  */
 native dodx_set_scoreboard_team_name(team, const name[]);
 
@@ -407,7 +435,8 @@ native dodx_set_scoreboard_team_name(team, const name[]);
  * @param id            Player index
  * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
  * @param count         Number of grenades to set (0-10)
- * @return              1 on success, 0 on failure
+ * @return              1 on success, 0 on failure (invalid player state or
+ *                      invalid grenade_type; logged, no abort)
  *
  * @note DODW_HANDGRENADE and DODW_MILLS_BOMB share the same ammo pool (Allies grenades)
  * @note DODW_STICKGRENADE is the Axis grenade type
@@ -420,7 +449,8 @@ native dodx_set_grenade_ammo(id, grenade_type, count);
  *
  * @param id            Player index
  * @param grenade_type  Grenade weapon ID: DODW_HANDGRENADE (13), DODW_STICKGRENADE (14), DODW_MILLS_BOMB (36)
- * @return              Current grenade count, or 0 on failure
+ * @return              Current grenade count, or 0 on failure (invalid
+ *                      grenade_type logs and returns 0, no abort)
  */
 native dodx_get_grenade_ammo(id, grenade_type);
 
@@ -457,7 +487,8 @@ native dodx_debug_player_state(id);
  * @param id         Player index
  * @param ammo_slot  Ammo slot ID: 9 = hand grenade/mills bomb, 11 = stick grenade
  * @param count      Ammo count to display (0-254)
- * @return           1 on success, 0 on failure
+ * @return           1 on success, 0 on failure (AmmoX not registered logs
+ *                   and returns 0, no abort)
  */
 native dodx_send_ammox(id, ammo_slot, count);
 
@@ -522,7 +553,8 @@ native dodx_set_user_class(id, classId);
  * @param id        Player index
  * @param teamId    Team ID: 1 = Allies, 2 = Axis, 3 = Spectators
  * @param refresh   1 = broadcast team change to all clients, 0 = silent
- * @return          1 on success, 0 on failure
+ * @return          1 on success, 0 on failure (invalid teamId logs and
+ *                  returns 0, no abort)
  */
 native dodx_set_user_team(id, teamId, refresh = 1);
 

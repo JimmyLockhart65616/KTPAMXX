@@ -2553,6 +2553,85 @@ C_DLLEXPORT	int	Meta_Detach(PLUG_LOADTIME now, PL_UNLOAD_REASON	reason)
 	return (TRUE);
 }
 
+// KTP: called by KTP-ReHLDS (3.22.0.928+) from ReleaseEntityDlls, before the
+// extension dlclose loop. This is the extension-mode stand-in for Meta_Detach,
+// which never runs without Metamod: without it dodx/reapi/amxxcurl get no
+// AMXX_Detach, and their exit-time destructors later run against an unmapped
+// core (the CHI1 shutdown-segfault class).
+//
+// Engine contract (sys_dll.cpp): Cmd_Shutdown / Cvar_Shutdown / NET_Shutdown
+// have already run — nothing here may touch cvars, engine commands, or engine
+// networking. That is also why no plugin forward fires from here: plugin_end
+// runs arbitrary Pawn that is free to call cvar natives. On a changelevel-quit
+// the final map's plugin_end already fired in SV_InactivateClients_RH; on a
+// direct quit it stays unfired, as before — firing it safely needs an earlier
+// engine hook, not this one.
+C_DLLEXPORT void KTP_ExtensionShutdown(void)
+{
+	static bool s_extShutdownDone = false;
+	if (s_extShutdownDone)
+		return;
+	s_extShutdownDone = true;
+
+	// Attach never completed (e.g. fatal exit before SV_ActivateServer), or
+	// we're under Metamod where Meta_Detach owns teardown: nothing to do.
+	if (!g_bRehldsExtensionInit)
+		return;
+
+	// Make AlertMessage_RH and SV_Frame_RH early-out for the rest of teardown —
+	// an at_logged alert here (amxx_logging 3, module MF_Log) would otherwise
+	// run plugin_log Pawn code after the engine destroyed cvars and commands.
+	g_bMapChangeInProgress = true;
+
+	AMXXLOG_Log("[AMXX] Extension shutdown: detaching modules");
+
+	// Same order as Meta_Detach: plugin-owned state, module notifications,
+	// module detach, then logging last so modules can log from AMXX_Detach.
+	modules_callPluginsUnloading();
+
+	g_auth.clear();
+	g_frameActionMngr.clear();
+	g_forwards.clear();
+	g_commands.clear();
+	g_forcemodels.clear();
+	g_forcesounds.clear();
+	g_forcegeneric.clear();
+	g_grenades.clear();
+	g_tasksMngr.clear();
+	g_logevents.clearLogEvents();
+	g_events.clearEvents();
+	g_menucmds.clear();
+	ClearMenus();
+	g_vault.clear();
+	g_xvars.clear();
+	g_plugins.clear();
+	g_langMngr.Clear();
+
+	ArrayHandles.clear();
+	TrieHandles.clear();
+	TrieIterHandles.clear();
+	TrieSnapshotHandles.clear();
+	DataPackHandles.clear();
+	TextParsersHandles.clear();
+	GameConfigHandle.clear();
+
+	ClearMessages();
+
+	modules_callPluginsUnloaded();
+
+	// AMXX_Detach + dlclose per module while this core (and the engine) are
+	// still mapped — module static destructors run here, not at process exit.
+	detachModules();
+
+	g_log.CloseFile();
+	g_log.AsyncShutdown();
+
+	Module_UncacheFunctions();
+
+	ClearLibraries(LibSource_Plugin);
+	ClearLibraries(LibSource_Module);
+}
+
 // KTP: Forward declarations for ReHLDS extension initialization
 static void KTPAMX_InitAsRehldsExtension();
 static void KTPAMX_ReloadPlugins();
