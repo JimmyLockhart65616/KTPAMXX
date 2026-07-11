@@ -5,13 +5,17 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.21] - unreleased
+## [2.7.22] - unreleased
 
-The platform wave: core (CForward refcount + CTask re-entry guard + `KTP_ExtensionShutdown`) and DODX/includes (2026-07-06 includes assessment A1/A2/A5/A6 + 07-05 review follow-ups) in one cut.
+Supersedes the staged-but-never-activated 2.7.21 (`.new` on the fleet, superseded before its 07-11 nightly). A **core-only** delta over 2.7.21 — the one crash fix below (`ktpamx_i386.so` only). The DODX module and includes are unchanged from 2.7.21 (ship the 2.7.21 `dodx_ktp_i386.so`; no new dodx `.new`). Same platform wave as 2.7.21: core (CForward refcount + CTask re-entry guard + `KTP_ExtensionShutdown`) and DODX/includes (2026-07-06 includes assessment A1/A2/A5/A6 + 07-05 review follow-ups) in one cut.
 
-**Deploy notes:** ship no earlier than ReHLDS .928 activation (the shutdown export is inert until the engine calls it — .928 activates 07-09); ship the module with or before any plugin written to the new checkable-return contracts (older modules still abort); build the ship artifacts with operator WIP stashed out of the tree (2.7.20 procedure).
+**Deploy notes:** ship no earlier than ReHLDS .928 activation (the shutdown export is inert until the engine calls it — .928 already live since 07-09); ship the module with or before any plugin written to the new checkable-return contracts (older modules still abort); build the ship artifacts with operator WIP stashed out of the tree (2.7.20 procedure).
 
 ### Fixed
+
+#### Core: `hostname` cvar pointer NULL in extension mode — `get_user_name()`/`show_motd()` one deref from a game-thread crash
+
+`cvar_t* hostname` is assigned in exactly one place — `C_Spawn` (the Metamod `pfnSpawn` hook), which never runs as a ReHLDS extension. The extension-mode init path re-does `C_Spawn`'s `mp_timelimit` cache but omitted `hostname`, so it stayed NULL for the whole process lifetime on every ext-mode boot. `get_user_name()` with an out-of-range index (index `< 1` or `> maxClients`, e.g. `get_user_name(0)` for the server name), `show_motd()` with no explicit title, and the per-client `gmsgServerName` write all deref `hostname->string` — NULL+4 → SIGSEGV on the game thread. Version-independent latent bug; surfaced as DAL1's 2026-07-11 mid-match crash (a plugin hit the out-of-range path). Root fix: the ext-init path now caches `hostname = CVAR_GET_POINTER("hostname")` alongside `mp_timelimit`. The three deref sites are also NULL-guarded (degrade to `""`) as defense-in-depth.
 
 #### Core: SP-forward dedup handed out shared handles with no reference counting — live tasks executed the WRONG callback
 

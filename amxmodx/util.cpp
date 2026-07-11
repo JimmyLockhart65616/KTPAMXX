@@ -98,7 +98,7 @@ void UTIL_ShowMOTD(edict_t *client, char *motd, int mlen, const char *name)
 	if (gmsgServerName)
 	{
 		MESSAGE_BEGIN(MSG_ONE, gmsgServerName, NULL, client);
-		WRITE_STRING(hostname->string);
+		WRITE_STRING((hostname && hostname->string) ? hostname->string : "");
 		MESSAGE_END();
 	}
 }

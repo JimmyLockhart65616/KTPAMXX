@@ -475,7 +475,7 @@ static cell AMX_NATIVE_CALL show_motd(AMX *amx, cell *params) /* 3 param */
 	const char* szHead = get_amxstring(amx, params[3], 0, ilen);
 
 	if (!ilen)
-		szHead = hostname->string;
+		szHead = (hostname && hostname->string) ? hostname->string : "";
 
 	char* szBody = get_amxstring(amx, params[2], 1, ilen);
 	int iFile = 0;
@@ -748,7 +748,10 @@ static cell AMX_NATIVE_CALL get_user_name(AMX *amx, cell *params) /* 3 param */
 	int maxlen = params[3];
 
 	if (index < 1 || index > gpGlobals->maxClients)
-		return set_amxstring_utf8(amx, params[2], hostname->string, strlen(hostname->string), maxlen);
+	{
+		const char* host = (hostname && hostname->string) ? hostname->string : "";
+		return set_amxstring_utf8(amx, params[2], host, strlen(host), maxlen);
+	}
 	else
 		return set_amxstring_utf8(amx, params[2], g_players[index].name.chars(), g_players[index].name.length(), maxlen);
 }

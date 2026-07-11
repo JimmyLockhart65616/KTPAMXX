@@ -3376,6 +3376,10 @@ static void KTPAMX_InitAsRehldsExtension()
 		mp_timelimit = &timelimit_holder_ext;
 	}
 
+	// KTP: Metamod caches this in C_Spawn, which never runs in extension mode — leaving
+	// hostname NULL, so get_user_name(0)/show_motd() would deref a NULL cvar and crash.
+	hostname = CVAR_GET_POINTER("hostname");
+
 	// KTP: Initialize task manager timers - CRITICAL for set_task to work!
 	g_tasksMngr.registerTimers(&gpGlobals->time, &mp_timelimit->value, &g_game_timeleft);
 
