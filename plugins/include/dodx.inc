@@ -881,4 +881,18 @@ native dodx_test_dispatch_stats_flush(id);
  */
 native dodx_test_dump_round_timers();
 
+/**
+ * Test/diagnostic-only: change-scanner over the first 1KB of the gamerules
+ * private data. First call snapshots (logs `grscan baseline`); later calls
+ * log one `grscan` line per changed dword (offset + old/new as float and
+ * int) then refresh the snapshot. Used to locate the real half-clock anchor
+ * member in CDoDTeamPlay by diffing across the mp_clan_restartround
+ * completion edge. Log volume capped per call. Read-only.
+ * Production plugins MUST NOT call this.
+ *
+ * @return  Number of changed dwords since the previous call, 0 on the
+ *          baseline call, -1 if gamerules is unavailable
+ */
+native dodx_test_scan_gamerules();
+
 // ==================================================================

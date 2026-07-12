@@ -1795,6 +1795,67 @@ static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 	return found;
 }
 
+// dodx_test_scan_gamerules()
+// Diagnostic: change-scanner over the first GR_SCAN_BYTES of the gamerules
+// private data. First call snapshots and logs a baseline marker; every later
+// call logs one line per dword that CHANGED since the previous call (offset,
+// old/new as both float and int), then refreshes the snapshot. Purpose: the
+// shipped-gamedata round-timer fields all proved dead on standard maps, but
+// the DoD half clock demonstrably rebases inside gamerules at the
+// mp_clan_restartround completion — diffing the struct across that edge
+// exposes the real anchor member (a float jumping to ~restart gametime, to
+// ~half-end gametime, or a fresh countdown). Capped at GR_SCAN_MAX_LINES
+// lines per call to bound log volume. Read-only; test/diagnostic only.
+// Returns the number of changed dwords (may exceed the log cap), -1 if no
+// gamerules pointer.
+#define GR_SCAN_BYTES     1024
+#define GR_SCAN_MAX_LINES 40
+static cell AMX_NATIVE_CALL dodx_test_scan_gamerules(AMX *amx, cell *params)
+{
+	static unsigned char s_snap[GR_SCAN_BYTES];
+	static void *s_snapFrom = nullptr;   // gamerules ptr the snapshot was taken from
+
+	if (!DODX_HasGameRules())
+		return -1;
+
+	char *gr = (char*)*g_pGameRulesAddress;
+
+	if (s_snapFrom != (void*)gr)
+	{
+		// First call, or gamerules was reallocated (new map) — new baseline.
+		memcpy(s_snap, gr, GR_SCAN_BYTES);
+		s_snapFrom = (void*)gr;
+		MF_Log("[DODX] grscan baseline t=%.3f gr=%p bytes=%d", gpGlobals->time, (void*)gr, GR_SCAN_BYTES);
+		return 0;
+	}
+
+	int changed = 0, logged = 0;
+	for (int off = 0; off <= GR_SCAN_BYTES - 4; off += 4)
+	{
+		unsigned int oldv, newv;
+		memcpy(&oldv, s_snap + off, 4);
+		memcpy(&newv, gr + off, 4);
+		if (oldv == newv)
+			continue;
+
+		changed++;
+		if (logged < GR_SCAN_MAX_LINES)
+		{
+			float oldf, newf;
+			memcpy(&oldf, &oldv, 4);
+			memcpy(&newf, &newv, 4);
+			MF_Log("[DODX] grscan t=%.3f off=%d old_f=%.3f new_f=%.3f old_i=%d new_i=%d",
+				gpGlobals->time, off, oldf, newf, (int)oldv, (int)newv);
+			logged++;
+		}
+	}
+	if (changed > logged)
+		MF_Log("[DODX] grscan t=%.3f (%d more changed dwords suppressed)", gpGlobals->time, changed - logged);
+
+	memcpy(s_snap, gr, GR_SCAN_BYTES);
+	return changed;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1901,8 +1962,9 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_test_dispatch_client_death",      dodx_test_dispatch_client_death},
 	{"dodx_test_dispatch_stats_flush",       dodx_test_dispatch_stats_flush},
 
-	// KTP: Round-timer diagnostic (test/diagnostic only — see impl comment)
+	// KTP: Round-timer diagnostics (test/diagnostic only — see impl comments)
 	{"dodx_test_dump_round_timers",          dodx_test_dump_round_timers},
+	{"dodx_test_scan_gamerules",             dodx_test_scan_gamerules},
 
 	///*******************
 	{ NULL, NULL }
