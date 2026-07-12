@@ -1037,6 +1037,63 @@ static cell AMX_NATIVE_CALL dodx_has_gamerules(AMX *amx, cell *params)
 	return DODX_HasGameRules() ? 1 : 0;
 }
 
+// KTP: Authoritative seconds remaining in the current half, straight from the
+// engine's own half-clock accounting — the closed-loop source for broadcast
+// overlays (KTPHudObserver), replacing open-loop anchor estimates.
+//
+// DoD accounts the half clock as  timelimit·60 − (time − m_flDoDMapTime):
+// m_flDoDMapTime is 0 from map load (pub behavior == get_timeleft) and is
+// rewritten to the restart-completion gametime by a clan restart
+// (mp_clan_restartround), which is when the client HUD clock rebases. During
+// the restart countdown (m_bRoundRestarting set), m_flRestartRoundTime already
+// holds the scheduled completion time, so the post-rebase clock is projected
+// from it — callers get the correct post-go-live value for the entire
+// countdown window instead of a stale pre-restart clock. Members confirmed
+// against a live go-live via dodx_test_scan_gamerules (2026-07-11); offsets
+// from shipped gamedata (identical across platforms for these members).
+//
+// Returns seconds remaining as a float; -1.0 when unavailable (no gamerules,
+// offsets unresolved, mp_timelimit unset/0 = no time limit, or an implausible
+// read). Never raises; callers must handle -1.0 by falling back.
+// native Float:dodx_get_round_time();
+static cell AMX_NATIVE_CALL dodx_get_round_time(AMX *amx, cell *params)
+{
+	static const float FAIL = -1.0f;
+
+	if (!DODX_HasGameRules() || g_iDoDMapTimeOffset < 0 || !g_pcvarMpTimelimit)
+		return amx_ftoc(FAIL);
+
+	float limit_sec = g_pcvarMpTimelimit->value * 60.0f;
+	if (limit_sec <= 0.0f)
+		return amx_ftoc(FAIL);   // no time limit — "remaining" is undefined
+
+	char *gr = (char*)*g_pGameRulesAddress;
+	float base = *(float*)(gr + g_iDoDMapTimeOffset);
+
+	// Countdown window: the engine has committed to a restart at
+	// m_flRestartRoundTime but hasn't rebased m_flDoDMapTime yet — project.
+	if (g_iRoundRestartingOffset >= 0 && g_iRestartRoundTimeOffset >= 0
+		&& *(int*)(gr + g_iRoundRestartingOffset))
+	{
+		float target = *(float*)(gr + g_iRestartRoundTimeOffset);
+		if (target > 0.0f)
+			base = target;
+	}
+
+	// base is a past-or-imminent gametime; negative/garbage means a read gone
+	// wrong (struct shift on a future dod.so update) — fail soft, never lie.
+	if (base < 0.0f || base > gpGlobals->time + 3600.0f)
+		return amx_ftoc(FAIL);
+
+	float remaining = limit_sec - (gpGlobals->time - base);
+	if (remaining < 0.0f)
+		remaining = 0.0f;
+	else if (remaining > 86400.0f)
+		return amx_ftoc(FAIL);
+
+	return amx_ftoc(remaining);
+}
+
 // KTP: Broadcast TeamScore message to all clients
 // This properly updates client scoreboards after modifying gamerules scores
 // native dodx_broadcast_team_score(team, score);
@@ -1921,6 +1978,9 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_get_team_score", dodx_get_team_score},
 	{"dodx_has_gamerules", dodx_has_gamerules},
 	{"dodx_broadcast_team_score", dodx_broadcast_team_score},
+
+	// KTP: Engine-authoritative half clock (closed-loop broadcast overlay time)
+	{"dodx_get_round_time", dodx_get_round_time},
 
 	// KTP: Custom scoreboard team names
 	{"dodx_set_scoreboard_team_name", dodx_set_scoreboard_team_name},

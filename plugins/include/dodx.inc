@@ -414,6 +414,25 @@ native dodx_get_team_score(team);
 native dodx_broadcast_team_score(team, score);
 
 /**
+ * Engine-authoritative seconds remaining in the current half, read straight
+ * from DoD's own half-clock accounting (CDoDTeamPlay::m_flDoDMapTime, which a
+ * clan restart rebases and the client HUD clock counts from) — the closed-loop
+ * time source for broadcast overlays, replacing open-loop anchor estimates.
+ *
+ * During an mp_clan_restartround countdown the post-rebase clock is projected
+ * from the engine's scheduled completion time (m_flRestartRoundTime), so this
+ * already returns the correct post-go-live value for the whole countdown
+ * window. On pubs (no clan restart) it matches get_timeleft(). Tracks every
+ * engine rebase with no signal dependency: go-live, .restarthalf, OT restarts.
+ *
+ * @return  Seconds remaining as a float; -1.0 when unavailable (no gamerules
+ *          pointer, offsets unresolved, mp_timelimit 0 = no time limit, or an
+ *          implausible read — e.g. struct drift on a future dod.so update).
+ *          Callers MUST handle -1.0 by falling back to their own estimate.
+ */
+native Float:dodx_get_round_time();
+
+/**
  * Set custom team name on scoreboard for all players on a team.
  * Sends TeamInfo message to all clients - may override "Allies"/"Axis" display.
  * Call this after players join teams to show custom names on scoreboard.

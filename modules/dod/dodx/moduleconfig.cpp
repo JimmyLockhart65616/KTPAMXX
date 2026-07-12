@@ -158,6 +158,22 @@ int g_iRTimerRoundTimeOffset = -1;   // CDodRoundTimer::m_fRoundTime (float)
 int g_iRTimerLengthOffset = -1;      // CDodRoundTimer::m_fTimerLength (float)
 int g_iRTimerBTimerOffset = -1;      // CDodRoundTimer::m_bTimer (bool)
 
+// KTP: DoD half-clock members (dodx_get_round_time). Empirically confirmed
+// against a live mp_clan_restartround go-live via dodx_test_scan_gamerules
+// (2026-07-11): m_flDoDMapTime is the half-clock base the client HUD counts
+// from (0 from map load on pubs; rewritten to the restart-completion gametime
+// by a clan restart), m_flRestartRoundTime is the scheduled restart target
+// (request + mp_clan_timer, written when the restart is requested), and
+// m_bRoundRestarting is the pending flag bridging the two.
+int g_iDoDMapTimeOffset = -1;        // CDoDTeamPlay::m_flDoDMapTime (float)
+int g_iRestartRoundTimeOffset = -1;  // CDoDTeamPlay::m_flRestartRoundTime (float)
+int g_iRoundRestartingOffset = -1;   // CDoDTeamPlay::m_bRoundRestarting (BOOL)
+
+// KTP: cached mp_timelimit cvar pointer for dodx_get_round_time — same
+// extension-mode-safe pattern as the 2.7.22 hostname fix (string-lookup
+// CVAR_GET_FLOAT is unsafe in extension-mode engine paths).
+cvar_t *g_pcvarMpTimelimit = nullptr;
+
 cvar_t init_dodstats_maxsize ={"dodstats_maxsize","3500", 0 , 3500.0 };
 cvar_t init_dodstats_reset ={"dodstats_reset","0"};
 cvar_t init_dodstats_rank ={"dodstats_rank","0"};
@@ -785,8 +801,29 @@ void OnPluginsLoaded()
 			MF_Log("[DODX] round-timer offsets: gr.flRT=%d gr.pParaTimer=%d para.fRT=%d para.bT=%d rt.fRT=%d rt.fLen=%d rt.bT=%d",
 				g_iGrRoundTimeOffset, g_iParaTimerPtrOffset, g_iParaRoundTimerOffset,
 				g_iParaBTimerOffset, g_iRTimerRoundTimeOffset, g_iRTimerLengthOffset, g_iRTimerBTimerOffset);
+
+			// Half-clock members for dodx_get_round_time (see globals block)
+			IGameConfig *cfgs[2] = { g_pGamerulesConfig, g_pCommonConfig };
+			for (int c = 0; c < 2; c++)
+			{
+				if (!cfgs[c]) continue;
+				if (g_iDoDMapTimeOffset < 0 && cfgs[c]->GetOffsetByClass("CDoDTeamPlay", "m_flDoDMapTime", &data))
+					g_iDoDMapTimeOffset = data.fieldOffset;
+				if (g_iRestartRoundTimeOffset < 0 && cfgs[c]->GetOffsetByClass("CDoDTeamPlay", "m_flRestartRoundTime", &data))
+					g_iRestartRoundTimeOffset = data.fieldOffset;
+				if (g_iRoundRestartingOffset < 0 && cfgs[c]->GetOffsetByClass("CDoDTeamPlay", "m_bRoundRestarting", &data))
+					g_iRoundRestartingOffset = data.fieldOffset;
+			}
+			MF_Log("[DODX] half-clock offsets: flDoDMapTime=%d flRestartRoundTime=%d bRoundRestarting=%d",
+				g_iDoDMapTimeOffset, g_iRestartRoundTimeOffset, g_iRoundRestartingOffset);
 		}
 	}
+
+	// KTP: cache mp_timelimit for dodx_get_round_time (engine is ready here in
+	// both modes; CVAR_GET_POINTER once, then read ->value — never the string
+	// lookup on a hot path)
+	if (!g_pcvarMpTimelimit)
+		g_pcvarMpTimelimit = CVAR_GET_POINTER("mp_timelimit");
 
 	// KTP: In extension mode, do deferred engine-dependent initialization
 	// Engine functions aren't ready during OnAmxxAttach in extension mode
