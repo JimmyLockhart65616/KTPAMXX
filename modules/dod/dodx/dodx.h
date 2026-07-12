@@ -592,6 +592,15 @@ extern IGameConfig *g_pGamerulesConfig;
 extern void **g_pGameRulesAddress;  // Pointer to g_pGameRules pointer
 extern int g_iTeamScoreOffset;       // Offset of m_iTeamScores in CDoDTeamPlay (56)
 
+// KTP: DoD round-timer field offsets (see moduleconfig.cpp; -1 = unresolved)
+extern int g_iGrRoundTimeOffset;     // CDoDTeamPlay::m_flRoundTime
+extern int g_iParaTimerPtrOffset;    // CDoDTeamPlay::m_pParaTimer
+extern int g_iParaRoundTimerOffset;  // CDodParaRoundTimer::m_fRoundTimer
+extern int g_iParaBTimerOffset;      // CDodParaRoundTimer::m_bTimer
+extern int g_iRTimerRoundTimeOffset; // CDodRoundTimer::m_fRoundTime
+extern int g_iRTimerLengthOffset;    // CDodRoundTimer::m_fTimerLength
+extern int g_iRTimerBTimerOffset;    // CDodRoundTimer::m_bTimer
+
 // Check if gamerules is available for score modification
 inline bool DODX_HasGameRules()
 {

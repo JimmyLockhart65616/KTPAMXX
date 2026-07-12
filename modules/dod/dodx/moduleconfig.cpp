@@ -147,6 +147,17 @@ IGameConfig *g_pGamerulesConfig = nullptr;
 void **g_pGameRulesAddress = nullptr;
 int g_iTeamScoreOffset = 56;  // Default offset from gamedata, may be overridden
 
+// KTP: DoD round-timer field offsets (dodx_get_round_time + diagnostics).
+// Resolved from shipped gamedata in OnPluginsLoaded; -1 = unresolved, the
+// corresponding read is skipped (natives fail soft, never crash).
+int g_iGrRoundTimeOffset = -1;       // CDoDTeamPlay::m_flRoundTime (float)
+int g_iParaTimerPtrOffset = -1;      // CDoDTeamPlay::m_pParaTimer (CDodParaRoundTimer*)
+int g_iParaRoundTimerOffset = -1;    // CDodParaRoundTimer::m_fRoundTimer (float)
+int g_iParaBTimerOffset = -1;        // CDodParaRoundTimer::m_bTimer (bool)
+int g_iRTimerRoundTimeOffset = -1;   // CDodRoundTimer::m_fRoundTime (float)
+int g_iRTimerLengthOffset = -1;      // CDodRoundTimer::m_fTimerLength (float)
+int g_iRTimerBTimerOffset = -1;      // CDodRoundTimer::m_bTimer (bool)
+
 cvar_t init_dodstats_maxsize ={"dodstats_maxsize","3500", 0 , 3500.0 };
 cvar_t init_dodstats_reset ={"dodstats_reset","0"};
 cvar_t init_dodstats_rank ={"dodstats_rank","0"};
@@ -735,6 +746,45 @@ void OnPluginsLoaded()
 		else if (error[0])
 		{
 			MF_Log("[DODX] Warning: Could not load gamerules.games: %s", error);
+		}
+
+		// KTP: Resolve DoD round-timer offsets (dodx_get_round_time + the
+		// dodx_test_dump_round_timers diagnostic). The gamedata already ships
+		// all of these (offsets-cdodteamplay.txt, offsets-cdodroundtimer.txt,
+		// offsets-cdodpararoundtimer.txt) — this only consumes what's there.
+		// Gamerules-level fields resolve from either config (gamerules first,
+		// common as fallback); the timer entity classes live in common.games.
+		// Every lookup is optional: a miss leaves the -1 sentinel and the
+		// dependent read is skipped.
+		{
+			TypeDescription data;
+			if (g_pGamerulesConfig && g_pGamerulesConfig->GetOffsetByClass("CDoDTeamPlay", "m_flRoundTime", &data))
+				g_iGrRoundTimeOffset = data.fieldOffset;
+			else if (g_pCommonConfig && g_pCommonConfig->GetOffsetByClass("CDoDTeamPlay", "m_flRoundTime", &data))
+				g_iGrRoundTimeOffset = data.fieldOffset;
+
+			if (g_pGamerulesConfig && g_pGamerulesConfig->GetOffsetByClass("CDoDTeamPlay", "m_pParaTimer", &data))
+				g_iParaTimerPtrOffset = data.fieldOffset;
+			else if (g_pCommonConfig && g_pCommonConfig->GetOffsetByClass("CDoDTeamPlay", "m_pParaTimer", &data))
+				g_iParaTimerPtrOffset = data.fieldOffset;
+
+			if (g_pCommonConfig)
+			{
+				if (g_pCommonConfig->GetOffsetByClass("CDodParaRoundTimer", "m_fRoundTimer", &data))
+					g_iParaRoundTimerOffset = data.fieldOffset;
+				if (g_pCommonConfig->GetOffsetByClass("CDodParaRoundTimer", "m_bTimer", &data))
+					g_iParaBTimerOffset = data.fieldOffset;
+				if (g_pCommonConfig->GetOffsetByClass("CDodRoundTimer", "m_fRoundTime", &data))
+					g_iRTimerRoundTimeOffset = data.fieldOffset;
+				if (g_pCommonConfig->GetOffsetByClass("CDodRoundTimer", "m_fTimerLength", &data))
+					g_iRTimerLengthOffset = data.fieldOffset;
+				if (g_pCommonConfig->GetOffsetByClass("CDodRoundTimer", "m_bTimer", &data))
+					g_iRTimerBTimerOffset = data.fieldOffset;
+			}
+
+			MF_Log("[DODX] round-timer offsets: gr.flRT=%d gr.pParaTimer=%d para.fRT=%d para.bT=%d rt.fRT=%d rt.fLen=%d rt.bT=%d",
+				g_iGrRoundTimeOffset, g_iParaTimerPtrOffset, g_iParaRoundTimerOffset,
+				g_iParaBTimerOffset, g_iRTimerRoundTimeOffset, g_iRTimerLengthOffset, g_iRTimerBTimerOffset);
 		}
 	}
 

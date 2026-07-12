@@ -1716,6 +1716,85 @@ static cell AMX_NATIVE_CALL dodx_test_dispatch_stats_flush(AMX *amx, cell *param
 	return 1;
 }
 
+// dodx_test_dump_round_timers()
+// Diagnostic: logs every known DoD round/half-timer candidate field in one
+// line, plus one line per timer-suspect entity found by classname scan.
+// Used by the KTPHudObserver timer-probe harness to empirically identify
+// which field drives the client's visible half clock on standard (non-para)
+// maps and its semantics (absolute end-gametime vs seconds-remaining) — the
+// decision input for dodx_get_round_time(). For each float two derived
+// interpretations are logged: A = raw − gpGlobals->time (remaining if the
+// field is an absolute end time), B = gpGlobals->time − raw (elapsed if it
+// is a start anchor). Read-only; safe on any map in any state. Offsets come
+// from shipped gamedata (see moduleconfig.cpp OnPluginsLoaded); -1 =
+// unresolved, that field is skipped. Returns the number of timer-suspect
+// entities found. Production plugins MUST NOT call this (diagnostic only).
+static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
+{
+	float now = gpGlobals->time;
+	char line[512];
+	int len = snprintf(line, sizeof(line), "[DODX] rtdump t=%.3f gr=%d",
+		now, DODX_HasGameRules() ? 1 : 0);
+
+	if (DODX_HasGameRules())
+	{
+		char *gr = (char*)*g_pGameRulesAddress;
+		if (g_iGrRoundTimeOffset >= 0)
+		{
+			float flRoundTime = *(float*)(gr + g_iGrRoundTimeOffset);
+			len += snprintf(line + len, sizeof(line) - len,
+				" gr.flRT=%.2f grA=%.2f grB=%.2f",
+				flRoundTime, flRoundTime - now, now - flRoundTime);
+		}
+		if (g_iParaTimerPtrOffset >= 0 && len < (int)sizeof(line))
+		{
+			char *para = *(char**)(gr + g_iParaTimerPtrOffset);
+			len += snprintf(line + len, sizeof(line) - len, " para=%p", (void*)para);
+			if (para)
+			{
+				if (g_iParaRoundTimerOffset >= 0 && len < (int)sizeof(line))
+				{
+					float fRoundTimer = *(float*)(para + g_iParaRoundTimerOffset);
+					len += snprintf(line + len, sizeof(line) - len,
+						" para.fRT=%.2f paraA=%.2f paraB=%.2f",
+						fRoundTimer, fRoundTimer - now, now - fRoundTimer);
+				}
+				if (g_iParaBTimerOffset >= 0 && len < (int)sizeof(line))
+				{
+					len += snprintf(line + len, sizeof(line) - len, " para.bT=%d",
+						(int)*(unsigned char*)(para + g_iParaBTimerOffset));
+				}
+			}
+		}
+	}
+	MF_Log("%s", line);
+
+	// Entity scan: any edict whose classname smells like a timer, dumped at
+	// the CDodRoundTimer offsets — the fallback source if the gamerules-level
+	// fields turn out to be dead on standard maps.
+	int found = 0;
+	for (int i = gpGlobals->maxClients + 1; i < gpGlobals->maxEntities; i++)
+	{
+		edict_t *pEnt = INDEXENT(i);
+		if (!pEnt || pEnt->free || !pEnt->pvPrivateData)
+			continue;
+		const char *cls = STRING(pEnt->v.classname);
+		if (!cls || !cls[0])
+			continue;
+		if (!strstr(cls, "timer") && !strstr(cls, "round") && !strstr(cls, "clock"))
+			continue;
+
+		char *pd = (char*)pEnt->pvPrivateData;
+		float fRT  = (g_iRTimerRoundTimeOffset >= 0) ? *(float*)(pd + g_iRTimerRoundTimeOffset) : -1.0f;
+		float fLen = (g_iRTimerLengthOffset    >= 0) ? *(float*)(pd + g_iRTimerLengthOffset)    : -1.0f;
+		int   bT   = (g_iRTimerBTimerOffset    >= 0) ? (int)*(unsigned char*)(pd + g_iRTimerBTimerOffset) : -1;
+		MF_Log("[DODX] rtdump-ent idx=%d cls=%s rt.fRT=%.2f entA=%.2f entB=%.2f rt.fLen=%.2f rt.bT=%d",
+			i, cls, fRT, fRT - now, now - fRT, fLen, bT);
+		found++;
+	}
+	return found;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1821,6 +1900,9 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_test_dispatch_changeclass",       dodx_test_dispatch_changeclass},
 	{"dodx_test_dispatch_client_death",      dodx_test_dispatch_client_death},
 	{"dodx_test_dispatch_stats_flush",       dodx_test_dispatch_stats_flush},
+
+	// KTP: Round-timer diagnostic (test/diagnostic only — see impl comment)
+	{"dodx_test_dump_round_timers",          dodx_test_dump_round_timers},
 
 	///*******************
 	{ NULL, NULL }

@@ -866,4 +866,19 @@ native dodx_test_dispatch_client_death(killer, victim, wpnindex, hitplace, TK);
  */
 native dodx_test_dispatch_stats_flush(id);
 
+/**
+ * Test/diagnostic-only: log every known DoD round/half-timer candidate field
+ * (gamerules CDoDTeamPlay::m_flRoundTime, CDoDTeamPlay::m_pParaTimer ->
+ * CDodParaRoundTimer::m_fRoundTimer, plus a classname entity scan dumped at
+ * the CDodRoundTimer offsets), each with both derived interpretations
+ * (remaining-if-end-time / elapsed-if-start-anchor). One `[DODX] rtdump`
+ * line per call plus one `rtdump-ent` line per timer-suspect entity.
+ * Read-only and safe on any map in any state. Used to empirically identify
+ * the authoritative half-clock field for dodx_get_round_time().
+ * Production plugins MUST NOT call this.
+ *
+ * @return  Number of timer-suspect entities found by the classname scan
+ */
+native dodx_test_dump_round_timers();
+
 // ==================================================================
