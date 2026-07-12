@@ -12,6 +12,7 @@
 // DODX Module
 //
 
+#include <stdarg.h>   // dump_append (round-timer diagnostic)
 #include "amxxmodule.h"
 #include "dodx.h"
 
@@ -1786,11 +1787,28 @@ static cell AMX_NATIVE_CALL dodx_test_dispatch_stats_flush(AMX *amx, cell *param
 // from shipped gamedata (see moduleconfig.cpp OnPluginsLoaded); -1 =
 // unresolved, that field is skipped. Returns the number of timer-suspect
 // entities found. Production plugins MUST NOT call this (diagnostic only).
+// Saturating snprintf-append: snprintf returns the WOULD-HAVE-written length,
+// so naive `len += snprintf(...)` can push len past the buffer and turn the
+// next `sizeof - len` into unsigned wraparound. Clamps len to cap.
+static int dump_append(char *buf, int len, int cap, const char *fmt, ...)
+{
+	if (len < 0 || len >= cap)
+		return cap;
+	va_list ap;
+	va_start(ap, fmt);
+	int wrote = vsnprintf(buf + len, cap - len, fmt, ap);
+	va_end(ap);
+	if (wrote < 0)
+		return cap;
+	len += wrote;
+	return (len > cap) ? cap : len;
+}
+
 static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 {
 	float now = gpGlobals->time;
 	char line[512];
-	int len = snprintf(line, sizeof(line), "[DODX] rtdump t=%.3f gr=%d",
+	int len = dump_append(line, 0, sizeof(line), "[DODX] rtdump t=%.3f gr=%d",
 		now, DODX_HasGameRules() ? 1 : 0);
 
 	if (DODX_HasGameRules())
@@ -1799,26 +1817,26 @@ static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 		if (g_iGrRoundTimeOffset >= 0)
 		{
 			float flRoundTime = *(float*)(gr + g_iGrRoundTimeOffset);
-			len += snprintf(line + len, sizeof(line) - len,
+			len = dump_append(line, len, sizeof(line),
 				" gr.flRT=%.2f grA=%.2f grB=%.2f",
 				flRoundTime, flRoundTime - now, now - flRoundTime);
 		}
-		if (g_iParaTimerPtrOffset >= 0 && len < (int)sizeof(line))
+		if (g_iParaTimerPtrOffset >= 0)
 		{
 			char *para = *(char**)(gr + g_iParaTimerPtrOffset);
-			len += snprintf(line + len, sizeof(line) - len, " para=%p", (void*)para);
+			len = dump_append(line, len, sizeof(line), " para=%p", (void*)para);
 			if (para)
 			{
-				if (g_iParaRoundTimerOffset >= 0 && len < (int)sizeof(line))
+				if (g_iParaRoundTimerOffset >= 0)
 				{
 					float fRoundTimer = *(float*)(para + g_iParaRoundTimerOffset);
-					len += snprintf(line + len, sizeof(line) - len,
+					len = dump_append(line, len, sizeof(line),
 						" para.fRT=%.2f paraA=%.2f paraB=%.2f",
 						fRoundTimer, fRoundTimer - now, now - fRoundTimer);
 				}
-				if (g_iParaBTimerOffset >= 0 && len < (int)sizeof(line))
+				if (g_iParaBTimerOffset >= 0)
 				{
-					len += snprintf(line + len, sizeof(line) - len, " para.bT=%d",
+					len = dump_append(line, len, sizeof(line), " para.bT=%d",
 						(int)*(unsigned char*)(para + g_iParaBTimerOffset));
 				}
 			}
@@ -1865,7 +1883,13 @@ static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 // lines per call to bound log volume. Read-only; test/diagnostic only.
 // Returns the number of changed dwords (may exceed the log cap), -1 if no
 // gamerules pointer.
-#define GR_SCAN_BYTES     1024
+//
+// GR_SCAN_BYTES stays within the gamedata-documented CDoDTeamPlay extent
+// (last documented member m_iEndIntermissionButtonHit at 572 + 4 = 576) —
+// scanning past the allocation would be a genuine OOB read even if only a
+// diagnostic. The 2026-07-11 half-clock discovery landed well inside this
+// (m_flDoDMapTime@36, m_flRestartRoundTime@560).
+#define GR_SCAN_BYTES     576
 #define GR_SCAN_MAX_LINES 40
 static cell AMX_NATIVE_CALL dodx_test_scan_gamerules(AMX *amx, cell *params)
 {
