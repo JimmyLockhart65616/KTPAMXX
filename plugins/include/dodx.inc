@@ -414,6 +414,25 @@ native dodx_get_team_score(team);
 native dodx_broadcast_team_score(team, score);
 
 /**
+ * Engine-authoritative seconds remaining in the current half, read straight
+ * from DoD's own half-clock accounting (CDoDTeamPlay::m_flDoDMapTime, which a
+ * clan restart rebases and the client HUD clock counts from) — the closed-loop
+ * time source for broadcast overlays, replacing open-loop anchor estimates.
+ *
+ * During an mp_clan_restartround countdown the post-rebase clock is projected
+ * from the engine's scheduled completion time (m_flRestartRoundTime), so this
+ * already returns the correct post-go-live value for the whole countdown
+ * window. On pubs (no clan restart) it matches get_timeleft(). Tracks every
+ * engine rebase with no signal dependency: go-live, .restarthalf, OT restarts.
+ *
+ * @return  Seconds remaining as a float; -1.0 when unavailable (no gamerules
+ *          pointer, offsets unresolved, mp_timelimit 0 = no time limit, or an
+ *          implausible read — e.g. struct drift on a future dod.so update).
+ *          Callers MUST handle -1.0 by falling back to their own estimate.
+ */
+native Float:dodx_get_round_time();
+
+/**
  * Set custom team name on scoreboard for all players on a team.
  * Sends TeamInfo message to all clients - may override "Allies"/"Axis" display.
  * Call this after players join teams to show custom names on scoreboard.
@@ -865,5 +884,34 @@ native dodx_test_dispatch_client_death(killer, victim, wpnindex, hitplace, TK);
  * @return    1 on success, 0 if forward not registered / bad slot
  */
 native dodx_test_dispatch_stats_flush(id);
+
+/**
+ * Test/diagnostic-only: log every known DoD round/half-timer candidate field
+ * (gamerules CDoDTeamPlay::m_flRoundTime, CDoDTeamPlay::m_pParaTimer ->
+ * CDodParaRoundTimer::m_fRoundTimer, plus a classname entity scan dumped at
+ * the CDodRoundTimer offsets), each with both derived interpretations
+ * (remaining-if-end-time / elapsed-if-start-anchor). One `[DODX] rtdump`
+ * line per call plus one `rtdump-ent` line per timer-suspect entity.
+ * Read-only and safe on any map in any state. Used to empirically identify
+ * the authoritative half-clock field for dodx_get_round_time().
+ * Production plugins MUST NOT call this.
+ *
+ * @return  Number of timer-suspect entities found by the classname scan
+ */
+native dodx_test_dump_round_timers();
+
+/**
+ * Test/diagnostic-only: change-scanner over the first 576 bytes (the documented CDoDTeamPlay extent) of the gamerules
+ * private data. First call snapshots (logs `grscan baseline`); later calls
+ * log one `grscan` line per changed dword (offset + old/new as float and
+ * int) then refresh the snapshot. Used to locate the real half-clock anchor
+ * member in CDoDTeamPlay by diffing across the mp_clan_restartround
+ * completion edge. Log volume capped per call. Read-only.
+ * Production plugins MUST NOT call this.
+ *
+ * @return  Number of changed dwords since the previous call, 0 on the
+ *          baseline call, -1 if gamerules is unavailable
+ */
+native dodx_test_scan_gamerules();
 
 // ==================================================================

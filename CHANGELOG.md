@@ -5,6 +5,20 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.23] - unreleased
+
+DODX-only delta over 2.7.22 (`dodx_ktp_i386.so` + `dodx.inc`; core unchanged). Groundwork for the closed-loop broadcast half-clock in KTPHudObserver: the overlay clock currently runs on an open-loop `mp_clan_timer` anchor estimate because the engine emits no usable go-live signal (RoundState==1 confirmed never sent at `mp_clan_restartround` completion — prod NY1 4/4 matches + local repro with a real client, 2026-07-11).
+
+### Added
+
+#### dodx: `dodx_get_round_time()` — engine-authoritative half-clock remaining
+
+New native `Float:dodx_get_round_time()` returns the current half's seconds-remaining read straight from CDoDTeamPlay gamerules — the same clock the client HUD renders — replacing KTPHudObserver's open-loop `mp_clan_timer` estimate. Accounting is `mp_timelimit*60 - (gpGlobals->time - m_flDoDMapTime)`, projected from `m_flRestartRoundTime` through the `mp_clan_restartround` countdown so callers get the correct post-go-live value across the whole restart window; `mp_timelimit` is read via a cached cvar pointer resolved in `OnPluginsLoaded` (extension-mode-safe, NULL-checked). Fail-soft `-1.0` on any unavailable/implausible read (no gamerules, unresolved offset, NULL cvar, out-of-range base/remaining); freezes correctly under pause (keys off `gpGlobals->time`). All three gamerules members (`m_flDoDMapTime`, `m_flRestartRoundTime`, `m_bRoundRestarting`) resolve from the shipped `offsets-cdodteamplay.txt` (no new gamedata) and are read only behind the `DODX_HasGameRules()` guard.
+
+#### dodx: round-timer offset resolution + diagnostics (`dodx_test_dump_round_timers()`, `dodx_test_scan_gamerules()`)
+
+Resolves the DoD round-timer field offsets the gamedata has always shipped but nothing consumed — `CDoDTeamPlay::m_flRoundTime`/`m_pParaTimer`, `CDodParaRoundTimer::m_fRoundTimer`/`m_bTimer`, `CDodRoundTimer::m_fRoundTime`/`m_fTimerLength`/`m_bTimer` — at `OnPluginsLoaded` alongside the existing `m_iTeamScores` lookup (all optional, −1 sentinel, fail-soft). Two always-compiled diagnostic natives (house style of the `dodx_test_dispatch_*` set): `dodx_test_dump_round_timers()` logs every candidate field with both derived interpretations (remaining-if-end-time / elapsed-if-start-anchor) plus a timer-suspect entity scan; `dodx_test_scan_gamerules()` is a change-scanner over the documented CDoDTeamPlay extent (576 bytes) that logs each changed dword across the `mp_clan_restartround` completion edge — the tool that located the `m_flDoDMapTime` anchor. Read-only, safe on any map in any state; production plugins must not call them.
+
 ## [2.7.22] - unreleased
 
 Supersedes the staged-but-never-activated 2.7.21 (`.new` on the fleet, superseded before its 07-11 nightly). A **core-only** delta over 2.7.21 — the one crash fix below (`ktpamx_i386.so` only). The DODX module and includes are unchanged from 2.7.21 (ship the 2.7.21 `dodx_ktp_i386.so`; no new dodx `.new`). Same platform wave as 2.7.21: core (CForward refcount + CTask re-entry guard + `KTP_ExtensionShutdown`) and DODX/includes (2026-07-06 includes assessment A1/A2/A5/A6 + 07-05 review follow-ups) in one cut.

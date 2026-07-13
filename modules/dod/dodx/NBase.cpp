@@ -12,6 +12,7 @@
 // DODX Module
 //
 
+#include <stdarg.h>   // dump_append (round-timer diagnostic)
 #include "amxxmodule.h"
 #include "dodx.h"
 
@@ -1037,6 +1038,63 @@ static cell AMX_NATIVE_CALL dodx_has_gamerules(AMX *amx, cell *params)
 	return DODX_HasGameRules() ? 1 : 0;
 }
 
+// KTP: Authoritative seconds remaining in the current half, straight from the
+// engine's own half-clock accounting — the closed-loop source for broadcast
+// overlays (KTPHudObserver), replacing open-loop anchor estimates.
+//
+// DoD accounts the half clock as  timelimit·60 − (time − m_flDoDMapTime):
+// m_flDoDMapTime is 0 from map load (pub behavior == get_timeleft) and is
+// rewritten to the restart-completion gametime by a clan restart
+// (mp_clan_restartround), which is when the client HUD clock rebases. During
+// the restart countdown (m_bRoundRestarting set), m_flRestartRoundTime already
+// holds the scheduled completion time, so the post-rebase clock is projected
+// from it — callers get the correct post-go-live value for the entire
+// countdown window instead of a stale pre-restart clock. Members confirmed
+// against a live go-live via dodx_test_scan_gamerules (2026-07-11); offsets
+// from shipped gamedata (identical across platforms for these members).
+//
+// Returns seconds remaining as a float; -1.0 when unavailable (no gamerules,
+// offsets unresolved, mp_timelimit unset/0 = no time limit, or an implausible
+// read). Never raises; callers must handle -1.0 by falling back.
+// native Float:dodx_get_round_time();
+static cell AMX_NATIVE_CALL dodx_get_round_time(AMX *amx, cell *params)
+{
+	static const float FAIL = -1.0f;
+
+	if (!DODX_HasGameRules() || g_iDoDMapTimeOffset < 0 || !g_pcvarMpTimelimit)
+		return amx_ftoc(FAIL);
+
+	float limit_sec = g_pcvarMpTimelimit->value * 60.0f;
+	if (limit_sec <= 0.0f)
+		return amx_ftoc(FAIL);   // no time limit — "remaining" is undefined
+
+	char *gr = (char*)*g_pGameRulesAddress;
+	float base = *(float*)(gr + g_iDoDMapTimeOffset);
+
+	// Countdown window: the engine has committed to a restart at
+	// m_flRestartRoundTime but hasn't rebased m_flDoDMapTime yet — project.
+	if (g_iRoundRestartingOffset >= 0 && g_iRestartRoundTimeOffset >= 0
+		&& *(int*)(gr + g_iRoundRestartingOffset))
+	{
+		float target = *(float*)(gr + g_iRestartRoundTimeOffset);
+		if (target > 0.0f)
+			base = target;
+	}
+
+	// base is a past-or-imminent gametime; negative/garbage means a read gone
+	// wrong (struct shift on a future dod.so update) — fail soft, never lie.
+	if (base < 0.0f || base > gpGlobals->time + 3600.0f)
+		return amx_ftoc(FAIL);
+
+	float remaining = limit_sec - (gpGlobals->time - base);
+	if (remaining < 0.0f)
+		remaining = 0.0f;
+	else if (remaining > 86400.0f)
+		return amx_ftoc(FAIL);
+
+	return amx_ftoc(remaining);
+}
+
 // KTP: Broadcast TeamScore message to all clients
 // This properly updates client scoreboards after modifying gamerules scores
 // native dodx_broadcast_team_score(team, score);
@@ -1716,6 +1774,169 @@ static cell AMX_NATIVE_CALL dodx_test_dispatch_stats_flush(AMX *amx, cell *param
 	return 1;
 }
 
+// dodx_test_dump_round_timers()
+// Diagnostic: logs every known DoD round/half-timer candidate field in one
+// line, plus one line per timer-suspect entity found by classname scan.
+// Used by the KTPHudObserver timer-probe harness to empirically identify
+// which field drives the client's visible half clock on standard (non-para)
+// maps and its semantics (absolute end-gametime vs seconds-remaining) — the
+// decision input for dodx_get_round_time(). For each float two derived
+// interpretations are logged: A = raw − gpGlobals->time (remaining if the
+// field is an absolute end time), B = gpGlobals->time − raw (elapsed if it
+// is a start anchor). Read-only; safe on any map in any state. Offsets come
+// from shipped gamedata (see moduleconfig.cpp OnPluginsLoaded); -1 =
+// unresolved, that field is skipped. Returns the number of timer-suspect
+// entities found. Production plugins MUST NOT call this (diagnostic only).
+// Saturating snprintf-append: snprintf returns the WOULD-HAVE-written length,
+// so naive `len += snprintf(...)` can push len past the buffer and turn the
+// next `sizeof - len` into unsigned wraparound. Clamps len to cap.
+static int dump_append(char *buf, int len, int cap, const char *fmt, ...)
+{
+	if (len < 0 || len >= cap)
+		return cap;
+	va_list ap;
+	va_start(ap, fmt);
+	int wrote = vsnprintf(buf + len, cap - len, fmt, ap);
+	va_end(ap);
+	if (wrote < 0)
+		return cap;
+	len += wrote;
+	return (len > cap) ? cap : len;
+}
+
+static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
+{
+	float now = gpGlobals->time;
+	char line[512];
+	int len = dump_append(line, 0, sizeof(line), "[DODX] rtdump t=%.3f gr=%d",
+		now, DODX_HasGameRules() ? 1 : 0);
+
+	if (DODX_HasGameRules())
+	{
+		char *gr = (char*)*g_pGameRulesAddress;
+		if (g_iGrRoundTimeOffset >= 0)
+		{
+			float flRoundTime = *(float*)(gr + g_iGrRoundTimeOffset);
+			len = dump_append(line, len, sizeof(line),
+				" gr.flRT=%.2f grA=%.2f grB=%.2f",
+				flRoundTime, flRoundTime - now, now - flRoundTime);
+		}
+		if (g_iParaTimerPtrOffset >= 0)
+		{
+			char *para = *(char**)(gr + g_iParaTimerPtrOffset);
+			len = dump_append(line, len, sizeof(line), " para=%p", (void*)para);
+			if (para)
+			{
+				if (g_iParaRoundTimerOffset >= 0)
+				{
+					float fRoundTimer = *(float*)(para + g_iParaRoundTimerOffset);
+					len = dump_append(line, len, sizeof(line),
+						" para.fRT=%.2f paraA=%.2f paraB=%.2f",
+						fRoundTimer, fRoundTimer - now, now - fRoundTimer);
+				}
+				if (g_iParaBTimerOffset >= 0)
+				{
+					len = dump_append(line, len, sizeof(line), " para.bT=%d",
+						(int)*(unsigned char*)(para + g_iParaBTimerOffset));
+				}
+			}
+		}
+	}
+	MF_Log("%s", line);
+
+	// Entity scan: any edict whose classname smells like a timer, dumped at
+	// the CDodRoundTimer offsets — the fallback source if the gamerules-level
+	// fields turn out to be dead on standard maps.
+	int found = 0;
+	for (int i = gpGlobals->maxClients + 1; i < gpGlobals->maxEntities; i++)
+	{
+		edict_t *pEnt = INDEXENT(i);
+		if (!pEnt || pEnt->free || !pEnt->pvPrivateData)
+			continue;
+		const char *cls = STRING(pEnt->v.classname);
+		if (!cls || !cls[0])
+			continue;
+		if (!strstr(cls, "timer") && !strstr(cls, "round") && !strstr(cls, "clock"))
+			continue;
+
+		char *pd = (char*)pEnt->pvPrivateData;
+		float fRT  = (g_iRTimerRoundTimeOffset >= 0) ? *(float*)(pd + g_iRTimerRoundTimeOffset) : -1.0f;
+		float fLen = (g_iRTimerLengthOffset    >= 0) ? *(float*)(pd + g_iRTimerLengthOffset)    : -1.0f;
+		int   bT   = (g_iRTimerBTimerOffset    >= 0) ? (int)*(unsigned char*)(pd + g_iRTimerBTimerOffset) : -1;
+		MF_Log("[DODX] rtdump-ent idx=%d cls=%s rt.fRT=%.2f entA=%.2f entB=%.2f rt.fLen=%.2f rt.bT=%d",
+			i, cls, fRT, fRT - now, now - fRT, fLen, bT);
+		found++;
+	}
+	return found;
+}
+
+// dodx_test_scan_gamerules()
+// Diagnostic: change-scanner over the first GR_SCAN_BYTES of the gamerules
+// private data. First call snapshots and logs a baseline marker; every later
+// call logs one line per dword that CHANGED since the previous call (offset,
+// old/new as both float and int), then refreshes the snapshot. Purpose: the
+// shipped-gamedata round-timer fields all proved dead on standard maps, but
+// the DoD half clock demonstrably rebases inside gamerules at the
+// mp_clan_restartround completion — diffing the struct across that edge
+// exposes the real anchor member (a float jumping to ~restart gametime, to
+// ~half-end gametime, or a fresh countdown). Capped at GR_SCAN_MAX_LINES
+// lines per call to bound log volume. Read-only; test/diagnostic only.
+// Returns the number of changed dwords (may exceed the log cap), -1 if no
+// gamerules pointer.
+//
+// GR_SCAN_BYTES stays within the gamedata-documented CDoDTeamPlay extent
+// (last documented member m_iEndIntermissionButtonHit at 572 + 4 = 576) —
+// scanning past the allocation would be a genuine OOB read even if only a
+// diagnostic. The 2026-07-11 half-clock discovery landed well inside this
+// (m_flDoDMapTime@36, m_flRestartRoundTime@560).
+#define GR_SCAN_BYTES     576
+#define GR_SCAN_MAX_LINES 40
+static cell AMX_NATIVE_CALL dodx_test_scan_gamerules(AMX *amx, cell *params)
+{
+	static unsigned char s_snap[GR_SCAN_BYTES];
+	static void *s_snapFrom = nullptr;   // gamerules ptr the snapshot was taken from
+
+	if (!DODX_HasGameRules())
+		return -1;
+
+	char *gr = (char*)*g_pGameRulesAddress;
+
+	if (s_snapFrom != (void*)gr)
+	{
+		// First call, or gamerules was reallocated (new map) — new baseline.
+		memcpy(s_snap, gr, GR_SCAN_BYTES);
+		s_snapFrom = (void*)gr;
+		MF_Log("[DODX] grscan baseline t=%.3f gr=%p bytes=%d", gpGlobals->time, (void*)gr, GR_SCAN_BYTES);
+		return 0;
+	}
+
+	int changed = 0, logged = 0;
+	for (int off = 0; off <= GR_SCAN_BYTES - 4; off += 4)
+	{
+		unsigned int oldv, newv;
+		memcpy(&oldv, s_snap + off, 4);
+		memcpy(&newv, gr + off, 4);
+		if (oldv == newv)
+			continue;
+
+		changed++;
+		if (logged < GR_SCAN_MAX_LINES)
+		{
+			float oldf, newf;
+			memcpy(&oldf, &oldv, 4);
+			memcpy(&newf, &newv, 4);
+			MF_Log("[DODX] grscan t=%.3f off=%d old_f=%.3f new_f=%.3f old_i=%d new_i=%d",
+				gpGlobals->time, off, oldf, newf, (int)oldv, (int)newv);
+			logged++;
+		}
+	}
+	if (changed > logged)
+		MF_Log("[DODX] grscan t=%.3f (%d more changed dwords suppressed)", gpGlobals->time, changed - logged);
+
+	memcpy(s_snap, gr, GR_SCAN_BYTES);
+	return changed;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -1782,6 +2003,9 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_has_gamerules", dodx_has_gamerules},
 	{"dodx_broadcast_team_score", dodx_broadcast_team_score},
 
+	// KTP: Engine-authoritative half clock (closed-loop broadcast overlay time)
+	{"dodx_get_round_time", dodx_get_round_time},
+
 	// KTP: Custom scoreboard team names
 	{"dodx_set_scoreboard_team_name", dodx_set_scoreboard_team_name},
 
@@ -1821,6 +2045,10 @@ AMX_NATIVE_INFO base_Natives[] =
 	{"dodx_test_dispatch_changeclass",       dodx_test_dispatch_changeclass},
 	{"dodx_test_dispatch_client_death",      dodx_test_dispatch_client_death},
 	{"dodx_test_dispatch_stats_flush",       dodx_test_dispatch_stats_flush},
+
+	// KTP: Round-timer diagnostics (test/diagnostic only — see impl comments)
+	{"dodx_test_dump_round_timers",          dodx_test_dump_round_timers},
+	{"dodx_test_scan_gamerules",             dodx_test_scan_gamerules},
 
 	///*******************
 	{ NULL, NULL }
