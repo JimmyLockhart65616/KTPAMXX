@@ -303,7 +303,9 @@ void PlayerPreThink_Post(edict_t *pEntity)
 		// KTP: Resolve pending CP index (ObjScore fires before SetObj)
 		if (pPlayer->lastScoreCP == -2)
 		{
-			if ((gpGlobals->time - g_lastCapturedTime) < 2.0f)
+			// Negative delta = server time restarted (map change), not a fresh capture.
+			float capDelta = gpGlobals->time - g_lastCapturedTime;
+			if (capDelta >= 0.0f && capDelta < 2.0f)
 				pPlayer->lastScoreCP = g_lastCapturedCP;
 			else
 				pPlayer->lastScoreCP = -1;
@@ -1149,7 +1151,9 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 		// g_lastCapturedCP yet". By now (~0.2s later), SetObj has fired.
 		if (pPlayer->lastScoreCP == -2)
 		{
-			if ((gpGlobals->time - g_lastCapturedTime) < 2.0f)
+			// Negative delta = server time restarted (map change), not a fresh capture.
+			float capDelta = gpGlobals->time - g_lastCapturedTime;
+			if (capDelta >= 0.0f && capDelta < 2.0f)
 				pPlayer->lastScoreCP = g_lastCapturedCP;
 			else
 				pPlayer->lastScoreCP = -1;
@@ -1287,6 +1291,15 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 	// KTPMatchHandler reads scores during its changelevel hook for half-time save.
 	AlliesScore = 0;
 	AxisScore = 0;
+
+	// KTP: Per-map resets that ServerDeactivate does — it is Metamod-only, so in
+	// extension mode these carry over. A stale g_lastCapturedTime from the previous
+	// map is in the future relative to the new map's clock, so the 2s correlation
+	// window in the ObjScore path would tag scores with the old map's CP index.
+	g_lastCapturedCP = -1;
+	g_lastCapturedTime = 0.0f;
+	for (int i = DODMAX_WEAPONS - DODMAX_CUSTOMWPNS; i < DODMAX_WEAPONS; i++)
+		weaponData[i].needcheck = false;
 
 	// KTP: Set up g_pFirstEdict and g_bServerActive BEFORE chain->callNext().
 	// Entities are already spawned (SV_SpawnServer ran before SV_ActivateServer).
@@ -1582,6 +1595,18 @@ static bool DODX_SetupExtensionHooks()
 	// 2. Scanning dod_control_point entities (InitObj was missed)
 	if (g_pRehldsHookchains->SV_ActivateServer())
 		g_pRehldsHookchains->SV_ActivateServer()->registerHook(DODX_OnSV_ActivateServer, HC_PRIORITY_DEFAULT);
+
+	// KTP: Register SV_DropClient hook - the extension-mode replacement for FN_ClientDisconnect.
+	// Without it CPlayer::Disconnect() never runs in production, so a slot's ingame flag,
+	// weapons[] stats, savedScore and observed-death tally are inherited by the next player
+	// who reuses the slot mid-map.
+	// Chain order is load-bearing: the handler calls chain->callNext() first so the core's
+	// SV_DropClient hook fires client_disconnected while the slot is still ingame (plugins
+	// save stats there). dodx registers from OnAmxxAttach, i.e. before the core registers its
+	// own SV_DropClient hook, and addHook appends equal priorities — so dodx sits outermost
+	// and its cleanup runs after the forward. Re-check that if either registration moves.
+	if (g_pRehldsHookchains->SV_DropClient())
+		g_pRehldsHookchains->SV_DropClient()->registerHook(DODX_OnSV_DropClient, HC_PRIORITY_DEFAULT);
 
 	// KTP: Initialize g_pFirstEdict NOW as fallback.
 	// The SV_ActivateServer hook fires on map changes, but on the FIRST map load
@@ -2019,6 +2044,10 @@ static void DODX_CleanupExtensionHooks()
 		// Unregister SV_ActivateServer hook
 		if (g_pRehldsHookchains->SV_ActivateServer())
 			g_pRehldsHookchains->SV_ActivateServer()->unregisterHook(DODX_OnSV_ActivateServer);
+
+		// Unregister SV_DropClient hook
+		if (g_pRehldsHookchains->SV_DropClient())
+			g_pRehldsHookchains->SV_DropClient()->unregisterHook(DODX_OnSV_DropClient);
 	}
 
 	// KTP: Unregister InitObj IMessage hook

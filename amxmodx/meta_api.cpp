@@ -1186,8 +1186,15 @@ void SV_Spawn_f_RH(IRehldsHook_SV_Spawn_f *chain)
 // This is called when the changelevel command is executed, BEFORE SV_InactivateClients
 static void PF_changelevel_I_RH(IRehldsHook_PF_changelevel_I *chain, const char *s1, const char *s2)
 {
-	// Set the flag BEFORE calling the chain so all subsequent hooks see it
-	g_bMapChangeInProgress = true;
+	// Only latch for a map that actually exists. This call merely queues "changelevel s1"
+	// into Cbuf; Host_Changelevel_f runs it next frame and rejects an unknown map with the
+	// same IS_MAP_VALID test, returning before SV_ActivateServer — the only place the flag
+	// clears. Latching unconditionally therefore wedges every AMXX path that early-outs on
+	// it (tasks, module frame callbacks, events, logevents, client commands) for the rest
+	// of the map. A real map change still latches here, and SV_InactivateClients_RH latches
+	// again once the change is genuinely under way.
+	if (s1 && IS_MAP_VALID(s1))
+		g_bMapChangeInProgress = true;
 
 	// Continue with the map change
 	chain->callNext(s1, s2);
@@ -1499,6 +1506,43 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 	pPlayer->pEdict = pEntity;
 	pPlayer->index = index;
 
+	// KTP: Retire a stale session before reusing the slot. On a mid-map crash-reconnect
+	// ReHLDS's SV_ConnectClient reconnect path calls pfnClientDisconnect directly, and in
+	// extension mode nothing wraps the DLL table — so CPlayer::Disconnect() never ran and
+	// `ingame` is still true from the dead session. Connect() below wipes flags[] and
+	// clears `authorized`, while SV_Spawn_f_RH's `initialized && !ingame` gate stays false:
+	// the player never gets re-authorized or put in server, and their admin access is gone
+	// until a full disconnect. Replaying the C_ClientDisconnect flow here clears `ingame`,
+	// so the normal Steam/Spawn_f path re-authorizes the new session.
+	// Gate on `ingame` ALONE — not `initialized`. On a map-change reconnect
+	// SV_InactivateClients_RH already disconnected the slot (ingame=false) and
+	// Steam_NotifyClientConnect_RH re-Connect()ed it since (initialized=true), so gating on
+	// `initialized` would fire disconnect forwards for every player on every map change.
+	if (pPlayer->ingame)
+	{
+		if (pPlayer->initialized)
+		{
+			// deprecated
+			executeForwards(FF_ClientDisconnect, static_cast<cell>(index));
+
+			if (g_isDropClientHookAvailable && !pPlayer->disconnecting)
+			{
+				executeForwards(FF_ClientDisconnected, static_cast<cell>(index), FALSE, prepareCharArray(const_cast<char*>(""), 0), 0);
+			}
+		}
+
+		--g_players_num;
+
+		auto wasDisconnecting = pPlayer->disconnecting;
+
+		pPlayer->Disconnect();
+
+		if (!wasDisconnecting && g_isDropClientHookAvailable)
+		{
+			executeForwards(FF_ClientRemove, static_cast<cell>(index), FALSE, const_cast<char*>(""));
+		}
+	}
+
 	// Initialize player first so forwards have valid player data
 	pPlayer->Connect(pszName ? pszName : "", pszAddress);
 
@@ -1660,8 +1704,11 @@ void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IG
 	if (!name || !*name)
 		return;
 
-	pPlayer->name = name;
+	// Fire BEFORE refreshing the cache, matching C_ClientUserInfoChanged_Post. Plugins
+	// detect a rename by comparing cached get_user_name() against get_user_info("name");
+	// updating pPlayer->name first makes those equal and the rename undetectable.
 	executeForwards(FF_ClientInfoChanged, static_cast<cell>(index));
+	pPlayer->name = name;
 }
 
 // KTP: Disabled — pass-through hook with no functionality

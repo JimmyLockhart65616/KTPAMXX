@@ -5,6 +5,50 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.24] - unreleased
+
+Stack-review cut (`reviews/stack-review-2026-07-15/KTPAMXX.md`): five CONFIRMED P2s, one P3 ride-along, and one ordering fix that `.929` makes reachable. **Core + DODX** delta over 2.7.23 (`ktpamx_i386.so` + `dodx_ktp_i386.so`) — the first cut since 2.7.22 that moves the core, so the console banner (`2.7.24.5551`) matches the shipped artifacts again.
+
+Every item is an instance of one class: **init/teardown that only exists on the Metamod path**. `C_Spawn`, `C_ServerDeactivate_Post` and the DLL-table wrappers never run in extension mode, so the state they own is never reset and the forwards they fire never arrive.
+
+**Deploy notes:** ships alone on its own nightly (never stacked with an engine cut). AX-ORDER must land **before** ReHLDS `.929`, which enables the `SV_ClientUserInfoChanged` call site this fix corrects the ordering for.
+
+### Fixed
+
+#### AX-01: a failed changelevel wedged all AMXX processing for the rest of the map
+
+`PF_changelevel_I_RH` latched `g_bMapChangeInProgress` unconditionally, but the flag only ever clears in `SV_ActivateServer_RH`. `pfnChangeLevel` merely queues `changelevel <map>` into Cbuf; `Host_Changelevel_f` runs it next frame and rejects an unknown map (`!PF_IsMapValid_I`) *before* `SV_InactivateClients`/`SV_SpawnServer`/`SV_ActivateServer`. The server kept playing, with the flag stuck true — early-outing `SV_Frame_RH` (all `set_task` timers, all module frame callbacks incl. Discord/HTTP), `MessageHook_Handler` (every `register_event`), `AlertMessage_RH` (every logevent) and `SV_ClientCommand_RH` (every `.` chat command) until a later valid map change or a restart. Now latches only when the target map exists, using `IS_MAP_VALID` — literally `PF_IsMapValid_I`, the same predicate `Host_Changelevel_f` rejects on (`sys_dll.cpp:160`), so the guard cannot disagree with the engine and skip a latch on a real map change. A genuine change still latches here, and `SV_InactivateClients_RH` latches again once it is actually under way.
+
+#### AX-02: a mid-map crash-reconnect silently lost authorization and admin flags
+
+ReHLDS's `SV_ConnectClient` reconnect path calls `pfnClientDisconnect` **directly**, and extension mode wraps no DLL table — so `CPlayer::Disconnect()` never ran and `ingame` stayed true from the dead session. `ClientConnected_RH` then re-ran `Connect()` (wiping `flags[]`, clearing `authorized`) while `SV_Spawn_f_RH`'s `initialized && !ingame` gate stayed false: no `client_authorized`, no `client_putinserver`, `is_user_authorized()` permanently 0, and **an admin who crashed lost admin until a full disconnect**. `ClientConnected_RH` now replays the `C_ClientDisconnect` flow (disconnect/disconnected/remove forwards + `Disconnect()` + the `g_players_num` decrement) before `Connect()` when the slot is still `ingame`.
+
+Gated on `ingame` **alone, deliberately not `initialized`** (which the review's fix sketch proposed): `Connect()` sets `initialized = true` (`CMisc.cpp:96`) and `Steam_NotifyClientConnect_RH` re-`Connect()`s every slot on a map-change reconnect, so an `initialized` gate would fire spurious disconnect forwards for every player on every map change — including the `client_disconnected` handlers score-persistence saves from. `ingame` is stale-true only on the crash-reconnect path.
+
+#### AX-03: heap out-of-bounds write on any message with >= 32 parameters
+
+The KTP rewrite of `EventsMngr::NextParam()` pre-allocated a 32-entry parse vault and **removed upstream's growth path**, but every caller writes `m_ParseVault[m_ParsePos]` immediately after `NextParam()` returns. Once `m_ParsePos` reached 32 the guard (`m_ParsePos < m_ParseVaultSize`) went false, nothing grew, and the store went off the end of the heap block. Growth is restored (doubling to fit, copying the old contents) — upstream's initial size was **also** 32, so the pre-allocation optimisation and the growth safety were never in conflict; the fast path still never allocates, and the vault lives for the process, so growth is one-shot rather than per-message churn.
+
+#### AX-04 / AX-05: DODX disconnect cleanup never ran — slot-reuse state inheritance
+
+`DODX_OnSV_DropClient` was fully implemented and documented as live ("replaces FN_ClientDisconnect", and the 2.7.20 entry claims the disconnect-time reset) but **never registered**, so `CPlayer::Disconnect()` never ran in production. A substitute reusing a slot mid-map inherited the leaver's `ingame` flag (so `PutInServer()`/`restartStats()` never ran for them), `weapons[]` stats, `savedScore` (first `ObjScore` computing a negative delta), and `g_observedDeaths` — pushing observed-vs-offset drift past the +1 band KTPMatchHandler 0.10.144 tolerates, silently vetoing the substitute's score saves. LAN substitutes are exactly the trigger. Now registered in `DODX_SetupExtensionHooks`, with the unregister mirrored in `DODX_CleanupExtensionHooks`.
+
+Chain order is load-bearing and left as-is: the handler calls `chain->callNext()` first so the core's `SV_DropClient` hook fires `client_disconnected` while the slot is still `ingame` (plugins save stats there). dodx registers from `OnAmxxAttach` — i.e. during `loadModules()`, before the core registers its own `SV_DropClient` hook — and `addHook` appends equal priorities, so dodx sits outermost and its cleanup runs after the forward. Commented at the registration site.
+
+#### AX-07: previous map's CP index attributed to scores on the next map
+
+`g_lastCapturedCP`/`g_lastCapturedTime` were reset only in the Metamod-only `ServerDeactivate`, so they survived a map change in extension mode. With the new map's clock restarting near 0, `gpGlobals->time - g_lastCapturedTime` went *negative* and stayed under the 2.0s freshness gate for ~30 minutes, letting `dod_score_event` fire with the previous map's CP index (KTPScoreTracker capture logging, match stats). Both globals are now reset in `DODX_OnSV_ActivateServer` beside the `AlliesScore`/`AxisScore` zeroing, along with the custom-weapon `weaponData[].needcheck` flags for parity with the same skipped teardown.
+
+#### AX-15 (P3, ride-along): CP-score correlation window had no negative-delta guard
+
+The pending-CP resolution check `(gpGlobals->time - g_lastCapturedTime) < 2.0f` is trivially true for a negative delta, making the 2-second window effectively infinite after a map change. Now `delta >= 0.0f && delta < 2.0f` at **both** resolution sites (extension and Metamod paths), matching the sibling stale-timestamp guard 2.7.20 already shipped for `g_lastDeathReportTime`. Belt-and-braces with AX-07: AX-07 stops the timestamp going stale, this stops a stale one being trusted.
+
+#### AX-ORDER: `client_infochanged` fired after the name cache was already refreshed
+
+`SV_ClientUserInfoChanged_RH` assigned `pPlayer->name` **before** `executeForwards(FF_ClientInfoChanged)`; the Metamod path (`C_ClientUserInfoChanged_Post`) does the opposite. Plugins detect a rename with the stock idiom — compare cached `get_user_name()` against `get_user_info("name")` — and saw them already equal, so **the rename was undetectable**; `plugins/admin.sma:767-794`'s name-change re-auth is dead in extension mode. The forward now fires before the cache refresh, matching Metamod ordering (`chain->callNext(cl)` still runs first, so the engine has applied the userinfo before we re-read the infobuffer).
+
+Fail-safe and cosmetic today — it can only *suppress* a re-auth, never add one, and fleet admin auth is SteamID-keyed. It ships now purely for ordering: the handler is dead code until `.929` enables the engine call site, and this is the only KTPAMXX nightly before it. Found by the `.929` review, not the stack review.
+
 ## [2.7.23] - unreleased
 
 DODX-only delta over 2.7.22 (`dodx_ktp_i386.so` + `dodx.inc`; core unchanged). Groundwork for the closed-loop broadcast half-clock in KTPHudObserver: the overlay clock currently runs on an open-loop `mp_clan_timer` anchor estimate because the engine emits no usable go-live signal (RoundState==1 confirmed never sent at `mp_clan_restartround` completion — prod NY1 4/4 matches + local repro with a real client, 2026-07-11).
