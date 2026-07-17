@@ -101,7 +101,6 @@ support/amxmodx/
 # KTP AMX build artifacts and local files
 KTPAMXX/
 KTP_AMX Files/
-CLAUDE.md
 build_linux.sh
 
 # Operational deploy/diagnostic scripts may hold prod creds — public repo.
