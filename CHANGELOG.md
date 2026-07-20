@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **DODX control-point / area string setters aliased a transient buffer.** The six
+  CP/area string setters in `NCP.cpp` (`CP_name`, `CP_reset_capsound`,
+  `CP_allies_capsound`, `CP_axis_capsound`, `CP_targetname`, `CA_target`) stored
+  `MAKE_STRING(szValue)`, which aliases AMXX's shared string buffer instead of
+  copying — the next native string fetch overwrites it, corrupting the CP/area
+  name. Switched to `ALLOC_STRING` (copies into the engine string pool), matching
+  the module's other string-setter sites. Latent today: no plugin calls these
+  setters, so the fix is inert until a caller exists. Landed on `master` now so it
+  is in place before the CP-init work adds the first consumer. Not cut yet — rides
+  the next DODX build; no version bump, no md5 (not shipped).
+
 ### Documentation
 
 - **Version stamps.** README header and Version Information said 2.7.22 and the

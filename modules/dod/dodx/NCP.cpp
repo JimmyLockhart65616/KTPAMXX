@@ -208,25 +208,27 @@ static cell AMX_NATIVE_CALL dodx_objective_set_data(AMX *amx, cell *params)
 			GET_CP_PD(pent).model_body_axis = ivalue;
 			return 1;
 
-		// Strings
+		// Strings — ALLOC_STRING copies into the engine string pool. MAKE_STRING would
+		// alias AMXX's transient shared string buffer, which the next native string
+		// fetch overwrites, corrupting the CP/area name.
 		case CP_name:
-			mObjects.obj[index].pEdict->v.netname = MAKE_STRING(szValue);
+			mObjects.obj[index].pEdict->v.netname = ALLOC_STRING(szValue);
 			return 1;
 		case CP_cap_message:
 			strncpy(GET_CP_PD(mObjects.obj[index].pEdict).cap_message, szValue, 255);
 			GET_CP_PD(mObjects.obj[index].pEdict).cap_message[255] = '\0';
 			return 1;
 		case CP_reset_capsound:
-			mObjects.obj[index].pEdict->v.noise = MAKE_STRING(szValue);
+			mObjects.obj[index].pEdict->v.noise = ALLOC_STRING(szValue);
 			return 1;
 		case CP_allies_capsound:
-			mObjects.obj[index].pEdict->v.noise1 = MAKE_STRING(szValue);
+			mObjects.obj[index].pEdict->v.noise1 = ALLOC_STRING(szValue);
 			return 1;
 		case CP_axis_capsound:
-			mObjects.obj[index].pEdict->v.noise2 = MAKE_STRING(szValue);
+			mObjects.obj[index].pEdict->v.noise2 = ALLOC_STRING(szValue);
 			return 1;
 		case CP_targetname:
-			mObjects.obj[index].pEdict->v.targetname = MAKE_STRING(szValue);
+			mObjects.obj[index].pEdict->v.targetname = ALLOC_STRING(szValue);
 			return 1;
 		case CP_model_neutral:
 			strncpy(GET_CP_PD(pent).model_neutral, szValue, 255);
@@ -350,9 +352,10 @@ static cell AMX_NATIVE_CALL dodx_area_set_data(AMX *amx, cell *params)
 		case CA_can_cap:
 			GET_CA_PD(mObjects.obj[index].pAreaEdict).can_cap = ivalue;
 			return 1;
-		// strings
+		// strings — ALLOC_STRING (copy into engine pool); MAKE_STRING would alias
+		// AMXX's transient string buffer and corrupt the area target.
 		case CA_target:
-			mObjects.obj[index].pAreaEdict->v.target = MAKE_STRING(szValue);
+			mObjects.obj[index].pAreaEdict->v.target = ALLOC_STRING(szValue);
 			return 1;
 		case CA_sprite:
 			strncpy(GET_CA_PD(mObjects.obj[index].pAreaEdict).hud_sprite, szValue, 255);
