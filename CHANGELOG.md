@@ -5,13 +5,72 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.7.24] - unreleased
+## [Unreleased]
+
+### Documentation
+
+- **Version stamps.** README header and Version Information said 2.7.22 and the
+  Verify-Installation console sample said 2.7.20, against a shipped 2.7.24. Header
+  and Version Information now read 2.7.24; the console sample is de-versioned to
+  `<version>` so it stops needing a bump every cut (the surrounding format string
+  is accurate and unchanged).
+
+- **Three shipped releases were dated "unreleased".** 2.7.22 (2026-07-11),
+  2.7.23 (2026-07-16) and 2.7.24 (2026-07-18) now carry their activation dates.
+  Added a `## [2.7.21]` stub recording that the core was superseded before it ever
+  activated *but its DODX artifact shipped with the 2.7.22 wave* — without a
+  header there, a dodx change traced to 2.7.21 had nothing to anchor on.
+
+- **README's DODX native list predated two DODX cuts.** Added
+  `dodx_get_round_time` (Score Management), a new Score Persistence line
+  (`dodx_set/get_user_deaths`, `dodx_set/get_user_score`,
+  `dodx_get_observed_deaths`, `dodx_broadcast_scoreboard`),
+  `dodx_set_stats_paused` + `dodx_set_pl_teamname` under HLStatsX Integration,
+  and the `dod_client_weapon_fire` per-shot forward next to `dod_damage_pre`
+  — with a pointer to the coverage envelope documented in `dodx.inc`, since
+  that forward's exclusions (no bots, pause-gated, no dry-fire) are what make
+  counts come out wrong.
+
+- **ReHLDS compatibility floor.** The stated `3.22.0.904+` predates the engine
+  support 2.7.24 actually needs: extension-mode teardown requires .928+, and the
+  `client_infochanged` ordering fix is only reachable on .929+. Noted at the floor
+  rather than raising it, since the module still loads below.
+
+- **Build Output table implied five deployed artifacts.** Noted that
+  `build_linux.sh` stages only `ktpamx_i386.so` and `dodx_ktp_i386.so`; the other
+  three modules build but KTP does not deploy them.
+
+- **`CLAUDE.md`:** dropped a staging note that still described 2.7.19 as
+  uncommitted and gated on the ReHLDS .927 canary, and added Chicago to the
+  deploy-target table (it was missing entirely — a deploy driven off that table
+  would have skipped a whole host).
+
+## [2.7.24] - 2026-07-18
 
 Stack-review cut (`reviews/stack-review-2026-07-15/KTPAMXX.md`): five CONFIRMED P2s, one P3 ride-along, and one ordering fix that `.929` makes reachable. **Core + DODX** delta over 2.7.23 (`ktpamx_i386.so` + `dodx_ktp_i386.so`) — the first cut since 2.7.22 that moves the core, so the console banner (`2.7.24.5551`) matches the shipped artifacts again.
 
 Every item is an instance of one class: **init/teardown that only exists on the Metamod path**. `C_Spawn`, `C_ServerDeactivate_Post` and the DLL-table wrappers never run in extension mode, so the state they own is never reset and the forwards they fire never arrive.
 
 **Deploy notes:** ships alone on its own nightly (never stacked with an engine cut). AX-ORDER must land **before** ReHLDS `.929`, which enables the `SV_ClientUserInfoChanged` call site this fix corrects the ordering for.
+
+### Documentation
+
+#### README gave a wrong path *and* wrong contents for `extensions.ini`
+
+Install step 3 said to create `rehlds/extensions.ini` containing
+`ktpamx/dlls/ktpamx_i386.so`. Both halves were wrong. The loader reads
+`"%s/addons/extensions.ini"` against `com_gamedir` (`sys_dll.cpp:1067`) with a
+CWD-relative fallback (`:1073`) — there is no `rehlds/` path — and each line
+resolves as `com_gamedir/<line>` (`:1123`), so the entry needs the `addons/`
+prefix. The live fleet file is `dod/addons/extensions.ini` containing
+`addons/ktpamx/dlls/ktpamx_i386.so`; verified on an ATL host.
+
+Following the old text failed twice over, and silently both times: the loader
+returns without error when no config is found (`:1077`), so the server boots as
+vanilla HLDS with no wall-penetration fix, no cvar enforcement and no match
+handler. This is the failure mode the `ktp_extension_loaded` sentinel exists to
+catch. The same wrong path had propagated to four other docs across the stack
+and was corrected in each.
 
 ### Fixed
 
@@ -51,7 +110,7 @@ The pending-CP resolution check `(gpGlobals->time - g_lastCapturedTime) < 2.0f` 
 
 Fail-safe and cosmetic today — it can only *suppress* a re-auth, never add one, and fleet admin auth is SteamID-keyed. It ships now purely for ordering: the handler is dead code until `.929` enables the engine call site, and this is the only KTPAMXX nightly before it. Found by the `.929` review, not the stack review.
 
-## [2.7.23] - unreleased
+## [2.7.23] - 2026-07-16
 
 DODX-only delta over 2.7.22 (`dodx_ktp_i386.so` + `dodx.inc`; core unchanged). Groundwork for the closed-loop broadcast half-clock in KTPHudObserver: the overlay clock currently runs on an open-loop `mp_clan_timer` anchor estimate because the engine emits no usable go-live signal (RoundState==1 confirmed never sent at `mp_clan_restartround` completion — prod NY1 4/4 matches + local repro with a real client, 2026-07-11).
 
@@ -65,7 +124,7 @@ New native `Float:dodx_get_round_time()` returns the current half's seconds-rema
 
 Resolves the DoD round-timer field offsets the gamedata has always shipped but nothing consumed — `CDoDTeamPlay::m_flRoundTime`/`m_pParaTimer`, `CDodParaRoundTimer::m_fRoundTimer`/`m_bTimer`, `CDodRoundTimer::m_fRoundTime`/`m_fTimerLength`/`m_bTimer` — at `OnPluginsLoaded` alongside the existing `m_iTeamScores` lookup (all optional, −1 sentinel, fail-soft). Two always-compiled diagnostic natives (house style of the `dodx_test_dispatch_*` set): `dodx_test_dump_round_timers()` logs every candidate field with both derived interpretations (remaining-if-end-time / elapsed-if-start-anchor) plus a timer-suspect entity scan; `dodx_test_scan_gamerules()` is a change-scanner over the documented CDoDTeamPlay extent (576 bytes) that logs each changed dword across the `mp_clan_restartround` completion edge — the tool that located the `m_flDoDMapTime` anchor. Read-only, safe on any map in any state; production plugins must not call them.
 
-## [2.7.22] - unreleased
+## [2.7.22] - 2026-07-11
 
 Supersedes the staged-but-never-activated 2.7.21 (`.new` on the fleet, superseded before its 07-11 nightly). A **core-only** delta over 2.7.21 — the one crash fix below (`ktpamx_i386.so` only). The DODX module and includes are unchanged from 2.7.21 (ship the 2.7.21 `dodx_ktp_i386.so`; no new dodx `.new`). Same platform wave as 2.7.21: core (CForward refcount + CTask re-entry guard + `KTP_ExtensionShutdown`) and DODX/includes (2026-07-06 includes assessment A1/A2/A5/A6 + 07-05 review follow-ups) in one cut.
 
@@ -109,6 +168,16 @@ Both death-report paths (Damage hook and `Client_DeathMsg`) shared only the 33ms
 - `dodx.inc`: declared the registered-but-undeclared aliases `dod_get_user_team`, `dod_get_wpnname`, `dod_get_wpnlogname`, `dod_is_melee`.
 - `reapi.inc` / `reapi_gamedll.inc` / `reapi_gamedll_const.inc` / `reapi_rechecker.inc`: mirrored KTPReAPI `3d88291` contract docs (RegisterHookChain failures now log + return INVALID_HOOKCHAIN, no abort) — copies byte-identical again per the dual-copy rule.
 - `reapi_version.inc`: `REAPI_VERSION` 529362 → 529365 (sync with KTPReAPI 5.29.0.365).
+
+## [2.7.21] - superseded by 2.7.22, never activated
+
+Staged fleet-wide as `.new` but superseded before its nightly swap, so no fleet
+instance ever ran this core. Its content is described inside the 2.7.22 entry
+above (2.7.22 is a core-only delta over it). The **DODX** artifact did ship: the
+2.7.22 wave deployed the 2.7.21 `dodx_ktp_i386.so` unchanged, so a dodx change
+traced to this cut landed on the fleet even though the core did not.
+
+---
 
 ## [2.7.20] - 2026-07-05
 

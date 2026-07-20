@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Version 2.7.22** | Modified AMX Mod X with ReHLDS extension mode, real-time client cvar detection, and async game-thread-safe logging
+**Version 2.7.24** | Modified AMX Mod X with ReHLDS extension mode, real-time client cvar detection, and async game-thread-safe logging
 
 A major fork of [AMX Mod X](https://github.com/alliedmodders/amxmodx) featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat servers requiring strict anti-cheat enforcement.
 
@@ -62,9 +62,11 @@ Extension mode exposes additional APIs for third-party modules:
 
 The DODX stats module includes extensive KTP-specific natives:
 
-**Score Management:** `dodx_set_team_score`, `dodx_get_team_score`, `dodx_broadcast_team_score`, `dodx_set_scoreboard_team_name`, `dodx_has_gamerules`
+**Score Management:** `dodx_set_team_score`, `dodx_get_team_score`, `dodx_broadcast_team_score`, `dodx_set_scoreboard_team_name`, `dodx_has_gamerules`, `dodx_get_round_time`
 
-**HLStatsX Integration:** `dodx_flush_all_stats`, `dodx_reset_all_stats`, `dodx_set_match_id`, `dodx_get_match_id`
+**Score Persistence:** `dodx_set_user_deaths`, `dodx_get_user_deaths`, `dodx_set_user_score`, `dodx_get_user_score`, `dodx_get_observed_deaths`, `dodx_broadcast_scoreboard`
+
+**HLStatsX Integration:** `dodx_flush_all_stats`, `dodx_reset_all_stats`, `dodx_set_match_id`, `dodx_get_match_id`, `dodx_set_stats_paused`, `dodx_set_pl_teamname`
 
 **Grenade Manipulation:** `dodx_set_grenade_ammo`, `dodx_get_grenade_ammo`, `dodx_send_ammox`, `dodx_give_grenade`, `dodx_strip_grenade`
 
@@ -72,7 +74,9 @@ The DODX stats module includes extensive KTP-specific natives:
 
 **Pre-Damage Forward:** `dod_damage_pre(attacker, victim, damage, wpnindex, hitplace, TA)` — return modified damage or 0 to block.
 
-See `plugins/include/dodx.inc` for full API documentation.
+**Per-Shot Forward:** `dod_client_weapon_fire(id, weapon, Float:gametime)` — fires per weapon actuation, including pure misses. Read the coverage envelope in `dodx.inc` before counting on it: never fires for bots, suppressed while stats are paused, no dry-fire events, and grenades/rockets arrive by a separate path.
+
+See `plugins/include/dodx.inc` for full API documentation — the KTP natives carry their fail-soft return contracts and caller obligations there, not just signatures.
 
 ### Shared Includes
 
@@ -100,10 +104,13 @@ See `plugins/include/dodx.inc` for full API documentation.
    ├── plugins/
    └── scripting/
    ```
-3. Add to `rehlds/extensions.ini`:
+3. Add to `<gamedir>/addons/extensions.ini` (for DoD: `dod/addons/extensions.ini`):
    ```
-   ktpamx/dlls/ktpamx_i386.so
+   addons/ktpamx/dlls/ktpamx_i386.so
    ```
+   Both the file location and the path inside it are relative to the game
+   directory. Get either wrong and the engine loads nothing, prints no error,
+   and runs as vanilla HLDS — check the `ktp_extension_loaded` cvar to confirm.
 4. Restart server
 
 ### Metamod Mode (Traditional)
@@ -120,7 +127,7 @@ See `plugins/include/dodx.inc` for full API documentation.
 
 Check server console on startup:
 ```
-KTP AMX version 2.7.20 (ReHLDS Extension Mode)
+KTP AMX version <version> (ReHLDS Extension Mode)
 ```
 
 ---
@@ -157,6 +164,8 @@ cd obj-linux && python3 $(which ambuild)
 | `fun_ktp_i386.so` | Fun module |
 | `engine_ktp_i386.so` | Engine module |
 | `fakemeta_ktp_i386.so` | FakeMeta module |
+
+`build_linux.sh` stages only `ktpamx_i386.so` and `dodx_ktp_i386.so` into the server tree — the rest build but KTP does not deploy them.
 
 ---
 
@@ -202,10 +211,10 @@ AMXX log lines (`log_amx`, error logs) are written by a dedicated writer thread 
 
 ## Version Information
 
-- **Current Version**: 2.7.22 (2026-07)
+- **Current Version**: 2.7.24 (2026-07)
 - **Based on**: AMX Mod X 1.10.0 (upstream)
 - **Platform**: GCC 7.3+ / Visual Studio 2019+
-- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+
+- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+. Extension-mode teardown (`KTP_ExtensionShutdown`) needs ReHLDS .928+, and the 2.7.24 `client_infochanged` ordering fix only becomes reachable on .929+ — below those the newest fixes are inert.
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
 

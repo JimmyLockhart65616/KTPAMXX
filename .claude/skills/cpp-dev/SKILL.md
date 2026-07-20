@@ -114,3 +114,18 @@ Bump the version for every shipped change and write the CHANGELOG.md entry with
 what/why + the md5 of the shipped binary once built. Consoles stamp
 `MAJOR.MINOR.PATCH.BUILD`; the build number comes from commit count, which is why
 banners can't be trusted for deploy verification.
+
+## Docs check (not just the version line)
+Bumping the README's version string is not the docs step. If the change touched
+a build path, an install path, a config file location, or a native/forward
+signature, **verify the README still works from a clean clone's perspective —
+not from this tree.** Gitignored maintainer wrappers are invisible to a clone.
+
+When a path or config location changes, grep the whole stack for the old string
+before calling it done. The 2026-07-19 audit found this README documenting
+`rehlds/extensions.ini` with contents `ktpamx/dlls/ktpamx_i386.so` — both wrong;
+the loader reads `<gamedir>/addons/extensions.ini` and resolves entries as
+`com_gamedir/<line>`, so following it produced a silent degrade to vanilla HLDS.
+Also confirm new DODX natives/forwards are documented where a plugin author
+would find them. Full checklist: root `CLAUDE.md` → "Module / Engine Release
+Checklist".

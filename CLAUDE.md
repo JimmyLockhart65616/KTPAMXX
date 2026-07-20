@@ -108,7 +108,7 @@ Synthetic dispatchers for AC/integration tests — fire a forward directly (no f
 | `dodx_test_dispatch_client_death(killer, victim, wpn, hit, TK)` | Exercises `client_death` (killer-first, production order) |
 | `dodx_test_dispatch_stats_flush(id)` | Exercises `dod_stats_flush` for one slot (production loops connected players) |
 
-> **Staging note:** 2.7.19 BUILT 2026-07-03 (core async CLog writer + the 2.7.18 dodx natives) and staged to the KTP DoD Server tree — smoke-tested, uncommitted, fleet deploy gated on ReHLDS .927 clearing its canary. See CHANGELOG 2.7.19.
+> See CHANGELOG for what shipped in each cut and on what date.
 
 ## Dependencies
 - KTPhlsdk (HLSDK headers)
@@ -129,6 +129,10 @@ main `N:\Nein_\KTP Git Projects\CLAUDE.md` § Server Credentials for the current
 | Dallas | <DAL_GAME_IP> | dodserver | (rotated — see main CLAUDE.md) |
 | Denver | <DEN_GAME_IP> | dodserver | (rotated — see main CLAUDE.md) |
 | New York | <NYC_GAME_IP> | dodserver | (rotated — see main CLAUDE.md) |
+| Chicago | <CHI_GAME_IP> | dodserver | (rotated — see main CLAUDE.md) |
+
+All five hosts are deploy targets. Atlanta/Dallas/Denver/New York run 5 instances
+each (27015-27019); Chicago runs 4 (27015-27018). 24 instances total.
 
 **Remote Paths:**
 - `~/dod-{port}/serverfiles/dod/addons/ktpamx/dlls/ktpamx_i386.so`
