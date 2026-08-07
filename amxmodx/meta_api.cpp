@@ -3121,6 +3121,11 @@ static void KTPAMX_ReloadPlugins()
 	// re-latch, and the drop-counter report only work if it runs here too.
 	g_log.MapChange();
 
+	// Same story, same hook: C_Spawn reloads cmdaccess.ini every map so an edit
+	// takes effect on the next map change, which is what the file's own header
+	// tells admins to do. Unforced, so an unchanged file is a cheap no-op.
+	FlagMan.LoadFile();
+
 	// Clear tasks so they don't fire with stale data
 	g_tasksMngr.clear();
 
@@ -3311,6 +3316,11 @@ static void KTPAMX_InitAsRehldsExtension()
 	loadModules(get_localinfo("amxx_modules", "addons/ktpamx/configs/modules.ini"), PT_ANYTIME);
 
 	FlagMan.SetFile("cmdaccess.ini");
+	// LoadFile too, not just SetFile: its only other caller is C_Spawn, which
+	// never runs in extension mode, so cmdaccess.ini was named but never parsed
+	// and every rule in it was silently discarded. Same first-map/every-map
+	// split as g_log.MapChange() above -- KTPAMX_ReloadPlugins() does the rest.
+	FlagMan.LoadFile();
 
 	ConfigManager.OnAmxxStartup();
 
