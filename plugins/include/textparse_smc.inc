@@ -220,6 +220,7 @@ native SMC_SetParseEnd(SMCParser:handle, const func[]);
  * @param es            An optional EndSection callback.
  *
  * @noreturn
+ * @error      Invalid SMC parse handle, or a named callback function is not present in the plugin.
  */
 native SMC_SetReaders(SMCParser:smc, const kvFunc[], const nsFunc[] = "", const esFunc[] = "");
 
@@ -243,6 +244,7 @@ native SMC_SetReaders(SMCParser:smc, const kvFunc[], const nsFunc[] = "", const 
  * @param func          A RawLine callback.
  *
  * @noreturn
+ * @error      Invalid SMC parse handle, or a named callback function is not present in the plugin.
  */
 native SMC_SetRawLine(SMCParser:handle, const func[]);
 

@@ -72,6 +72,7 @@ native SortStrings(array[][], num_strings, SortMethod:order = Sort_Ascending);
  *   0 if elem1 and elem2 are equal
  *   1 if elem1 should go after elem2
  * Note that the parameters after elem2 are all optional and you do not need to specify them.
+ * @error      The named public comparison function does not exist in the calling plugin.
  */
 native SortCustom1D(array[], array_size, const comparefunc[], data[]="", data_size=0);
 
@@ -93,6 +94,7 @@ native SortCustom1D(array[], array_size, const comparefunc[], data[]="", data_si
  *   0 if elem1[] and elem2 are equal[]
  *   1 if elem1[] should go after elem2[]
  * Note that the parameters after elem2[] are all optional and you do not need to specify them.
+ * @error      The named public comparison function does not exist in the calling plugin.
  */
 native SortCustom2D(array[][], array_size, const comparefunc[], data[]="", data_size=0);
 
@@ -103,5 +105,6 @@ native SortCustom2D(array[][], array_size, const comparefunc[], data[]="", data_
  * @param order			Sort order to use, same as other sorts.
  * @param type			Data type stored in the ADT Array
  * @noreturn
+ * @error      Invalid array handle.
  */
 native SortADTArray(Array:array, SortMethod:order, SortType:type);

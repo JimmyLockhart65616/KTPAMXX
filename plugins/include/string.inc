@@ -67,6 +67,7 @@ native containi(const source[], const string[]);
  * @param with			String to replace the search string with.
  *
  * @return				The new string length after replacement, or 0 if no replacements were made.
+ * @error      No search string was supplied, or the destination buffer is too small for the result.
  */
 native replace(text[], len, const what[], const with[]);
 
@@ -89,6 +90,7 @@ native replace(text[], len, const what[], const with[]);
  * @param caseSensitive	If true (default), search is case sensitive.
  *
  * @return				Number of replacements that were performed.
+ * @error      The search string is empty.
  */
 native replace_string(text[], maxlength, const search[], const replace[], bool:caseSensitive = true);
 
@@ -117,6 +119,7 @@ native replace_string(text[], maxlength, const search[], const replace[], bool:c
  * @return				Index into the buffer (relative to the start) from where
  *						the last replacement ended, or -1 if no replacements were
  *						made.
+ * @error      The search string is empty.
  */
 native replace_stringex(text[], maxlength, const search[], const replace[], searchLen = -1, replaceLen = -1, bool:caseSensitive = true);
 
@@ -210,6 +213,7 @@ native [MAX_FMT_LENGTH]fmt(const format[], any:...);
  * @param vararg		Argument number which contains the '...' symbol.
  *						Note: Arguments start at 1.
  * @return 				Number of bytes written.
+ * @error      An invalid vararg parameter was passed.
  */
 native vformat(buffer[], len, const fmt[], vararg);
 
@@ -228,6 +232,7 @@ native vformat(buffer[], len, const fmt[], vararg);
  * @param vararg		Argument number which contains the '...' symbol.
  *						Note: Arguments start at 1.
  * @return 				Number of bytes written.
+ * @error      Not currently inside a dynamic native, wrong dynamic-native style, or an invalid vararg/format argument.
  */
 native vdformat(buffer[], len, fmt_arg, vararg, ...);
 
@@ -239,6 +244,7 @@ native vdformat(buffer[], len, fmt_arg, vararg, ...);
  * @param pos			Argument number which contains the '...' symbol.
  *
  * @return				Number of bytes written.
+ * @error      The starting position is negative.
  */
 native format_args(output[], len, pos = 0);
 

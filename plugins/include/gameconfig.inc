@@ -30,6 +30,7 @@ enum GameConfig
  * @param file          File to load
  *
  * @return              A handle to the game config file
+ * @error      The game config file cannot be opened.
  */
 native GameConfig:LoadGameConfigFile(const file[]);
 

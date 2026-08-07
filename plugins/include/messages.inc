@@ -495,6 +495,7 @@ native get_msg_args();
  * @param argn           Argument number
  *
  * @return               Argument type (see ARG_* constants in message_const.inc)
+ * @error      Invalid message argument number.
  */
 native get_msg_argtype(argn);
 

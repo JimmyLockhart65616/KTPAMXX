@@ -282,6 +282,7 @@ native TrieSnapshotGetKey(Snapshot:handle, index, buffer[], maxlength);
  * @param handle    Map snapshot handle
  *
  * @return          1 on success, 0 if an invalid handle was passed in
+ * @error      Invalid, already-closed, or outdated map-iterator handle.
  */
 native TrieSnapshotDestroy(&Snapshot:handle);
 

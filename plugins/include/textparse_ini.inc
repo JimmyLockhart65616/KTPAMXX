@@ -186,6 +186,7 @@ native INI_SetParseEnd(INIParser:handle, const func[]);
  * @param ns            An optional NewSection callback. 
  *
  * @noreturn
+ * @error      Invalid INI parse handle, or a named callback function is not present in the plugin.
  */
 native INI_SetReaders(INIParser:smc, const kvFunc[], const nsFunc[] = "" );
 
@@ -210,5 +211,6 @@ native INI_SetReaders(INIParser:smc, const kvFunc[], const nsFunc[] = "" );
  * @param func          A RawLine callback.
  *
  * @noreturn
+ * @error      Invalid INI parse handle, or a named callback function is not present in the plugin.
  */
 native INI_SetRawLine(INIParser:handle, const func[]);

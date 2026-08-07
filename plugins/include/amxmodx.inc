@@ -404,6 +404,7 @@ native get_localinfo(const info[], output[], len);
  *                  be displayed instead
  *
  * @noreturn
+ * @error      Invalid player index.
  */
 native show_motd(player, const message[], const header[] = "");
 
@@ -1279,6 +1280,7 @@ native get_user_weapons(index, weapons[32], &num);
  * @param len       Maximum buffer size
  *
  * @return          Number of cells written to buffer
+ * @error      Invalid weapon id.
  */
 native get_weaponname(id, weapon[], len);
 
@@ -2135,6 +2137,7 @@ native get_user_menu(index, &id, &keys);
  * @note Commands can be added to the queue using server_cmd()
  *
  * @noreturn
+ * @error      Invalid player index.
  */
 native server_exec();
 
@@ -2315,6 +2318,7 @@ native is_module_loaded(const name[]);
  * @param status        Variable to store module status to
  *
  * @return              Module id on success, -1 on invalid module
+ * @error      Invalid module reference, or a module built against an incompatible interface version.
  */
 native get_module(id, name[], nameLen, author[], authorLen, version[], versionLen, &status);
 
@@ -3457,6 +3461,7 @@ native AutoExecConfig(bool:autoCreate = true, const name[] = "", const folder[] 
  *                          public function(data)
  *
  * @noreturn
+ * @error      The named public function does not exist in the calling plugin.
  */
 native RequestFrame(const callback[], any:data = 0);
 
