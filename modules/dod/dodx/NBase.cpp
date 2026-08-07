@@ -1785,8 +1785,10 @@ static cell AMX_NATIVE_CALL dodx_test_dispatch_stats_flush(AMX *amx, cell *param
 // field is an absolute end time), B = gpGlobals->time − raw (elapsed if it
 // is a start anchor). Read-only; safe on any map in any state. Offsets come
 // from shipped gamedata (see moduleconfig.cpp OnPluginsLoaded); -1 =
-// unresolved, that field is skipped. Returns the number of timer-suspect
-// entities found. Production plugins MUST NOT call this (diagnostic only).
+// unresolved, that field is skipped. Returns the number of entities whose
+// offsets were actually read — candidates that matched the classname substring
+// but are not a known CDodRoundTimer are logged and skipped, not counted.
+// Production plugins MUST NOT call this (diagnostic only).
 // Saturating snprintf-append: snprintf returns the WOULD-HAVE-written length,
 // so naive `len += snprintf(...)` can push len past the buffer and turn the
 // next `sizeof - len` into unsigned wraparound. Clamps len to cap.
@@ -1803,6 +1805,12 @@ static int dump_append(char *buf, int len, int cap, const char *fmt, ...)
 	len += wrote;
 	return (len > cap) ? cap : len;
 }
+
+// Classnames whose private data is actually a CDodRoundTimer. Exact match
+// only — see the entity scan below for why a substring is not enough.
+static const char *const kRoundTimerClasses[] = {
+	"dod_round_timer",
+};
 
 static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 {
@@ -1858,6 +1866,23 @@ static cell AMX_NATIVE_CALL dodx_test_dump_round_timers(AMX *amx, cell *params)
 			continue;
 		if (!strstr(cls, "timer") && !strstr(cls, "round") && !strstr(cls, "clock"))
 			continue;
+
+		// The substring match is a DISCOVERY filter, not a type check: the
+		// CDodRoundTimer offsets reach ~356 bytes into pvPrivateData, so
+		// dereferencing them on whatever happened to contain "round" reads off
+		// the end of any smaller class. Report every candidate; only read the
+		// ones whose classname matches exactly.
+		bool known = false;
+		for (size_t k = 0; k < sizeof(kRoundTimerClasses) / sizeof(kRoundTimerClasses[0]); k++)
+		{
+			if (!strcmp(cls, kRoundTimerClasses[k])) { known = true; break; }
+		}
+		if (!known)
+		{
+			MF_Log("[DODX] rtdump-ent idx=%d cls=%s SKIPPED (not a known "
+				"CDodRoundTimer classname; offsets not dereferenced)", i, cls);
+			continue;
+		}
 
 		char *pd = (char*)pEnt->pvPrivateData;
 		float fRT  = (g_iRTimerRoundTimeOffset >= 0) ? *(float*)(pd + g_iRTimerRoundTimeOffset) : -1.0f;
