@@ -1047,6 +1047,17 @@ void SV_DropClient_PostHook(CPlayer *pPlayer, qboolean crash, const char *buffer
 {
 	if (pPlayer)
 	{
+		// Metamod decrements here via C_ClientDisconnect, which never runs in
+		// extension mode — so get_playersnum() (the no-argument form, which
+		// returns the cached counter) over-counted after every mid-map
+		// disconnect until the next map change zeroed it. Same `ingame` guard
+		// as C_ClientDisconnect, and it must precede Disconnect(): that call
+		// clears the flag this test reads.
+		if (pPlayer->ingame)
+		{
+			--g_players_num;
+		}
+
 		pPlayer->Disconnect();
 		executeForwards(FF_ClientRemove, pPlayer->index, TRUE, buffer);
 	}
