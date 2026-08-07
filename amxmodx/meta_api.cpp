@@ -149,6 +149,13 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain);
 // KTP: Track map changes in extension mode - prevents processing during transitions
 static bool g_bMapChangeInProgress = false;
 
+// Set once teardown starts. KTP_ExtensionShutdown latches g_bMapChangeInProgress
+// on purpose to suppress plugin code while the engine tears itself down, so the
+// stuck-flag watchdog below must be able to tell that deliberate latch apart
+// from a changelevel that never completed. KTP_ExtensionShutdown's own
+// s_extShutdownDone is function-local and cannot be seen from SV_Frame_RH.
+static bool g_bExtShuttingDown = false;
+
 // KTP: Track if precache hooks have processed force_unmodified lists this map
 static bool g_bExtPrecacheProcessed = false;
 
@@ -1213,6 +1220,63 @@ static void PF_changelevel_I_RH(IRehldsHook_PF_changelevel_I *chain, const char 
 
 // KTP: SV_Frame hook for per-frame processing in extension mode
 // This replaces C_StartFrame_Post functionality when running without Metamod
+// AX-01 residual: PF_changelevel_I_internal burns its once-per-spawncount queue
+// guard whether or not the map was valid, so an invalid pfnChangeLevel followed
+// by a valid one in the same spawncount latches g_bMapChangeInProgress while the
+// queue is dropped. SV_ActivateServer never runs, nothing clears the flag, and
+// every AMXX path that early-outs on it stays dead for the rest of the map —
+// tasks, module frame callbacks (Discord), events, logevents, "." commands.
+// Recovery was previously an rcon changelevel or the nightly restart.
+//
+// So: if the flag is still set after a spell of frames long enough that no real
+// changelevel could still be in flight, assume nothing is coming and release it.
+// Time rather than a frame count because frame rate varies by an order of
+// magnitude across the fleet, and a real transition barely ticks SV_Frame at all.
+#define KTP_MAPCHANGE_STUCK_SECONDS 30.0f
+
+// When the latch began, map-relative. MUST be cleared on every healthy frame
+// (see SV_Frame_RH): if it only reset when the watchdog fired, a stale value
+// would survive a legitimate map change, and a short map followed by a long one
+// would make the next real changelevel look 30s overdue on its very first
+// frame — releasing the suppression mid-transition, which is the crash this
+// flag exists to prevent.
+static float g_mapChangeLatchedAt = 0.0f;
+
+static void KTPAMX_MapChangeWatchdog()
+{
+	float &s_latchedAt = g_mapChangeLatchedAt;
+
+	// Teardown latches the same flag deliberately and owns it until the process
+	// exits. Clearing it here would re-enable the plugin code shutdown just
+	// finished suppressing.
+	if (g_bExtShuttingDown)
+	{
+		s_latchedAt = 0.0f;
+		return;
+	}
+
+	const float now = gpGlobals->time;
+
+	// gpGlobals->time is map-relative and restarts with the map. A real change
+	// would have cleared the flag via SV_ActivateServer, so going backwards here
+	// means the reference is stale rather than that time passed — re-latch.
+	if (s_latchedAt == 0.0f || now < s_latchedAt)
+	{
+		s_latchedAt = now;
+		return;
+	}
+
+	if (now - s_latchedAt < KTP_MAPCHANGE_STUCK_SECONDS)
+		return;
+
+	AMXXLOG_Log("[AMXX] WATCHDOG: map-change flag stuck for %.0fs with the server "
+		"still running — a changelevel was latched but never activated (AX-01). "
+		"Releasing it; AMXX processing resumes.", now - s_latchedAt);
+
+	g_bMapChangeInProgress = false;
+	s_latchedAt = 0.0f;
+}
+
 void SV_Frame_RH(IRehldsHook_SV_Frame *chain)
 {
 	chain->callNext();
@@ -1220,7 +1284,13 @@ void SV_Frame_RH(IRehldsHook_SV_Frame *chain)
 	// KTP: Skip all AMXX processing during map change to prevent crashes
 	// Game state is invalid during transition (entities freed, globals changing, etc.)
 	if (g_bMapChangeInProgress)
+	{
+		KTPAMX_MapChangeWatchdog();
 		return;
+	}
+
+	// Reached only when the flag is clear, so the latch reference is dead.
+	g_mapChangeLatchedAt = 0.0f;
 
 	// Execute frame callbacks (equivalent to C_StartFrame_Post)
 	g_frameActionMngr.ExecuteFrameCallbacks();
@@ -2639,6 +2709,10 @@ C_DLLEXPORT void KTP_ExtensionShutdown(void)
 	// Make AlertMessage_RH and SV_Frame_RH early-out for the rest of teardown —
 	// an at_logged alert here (amxx_logging 3, module MF_Log) would otherwise
 	// run plugin_log Pawn code after the engine destroyed cvars and commands.
+	// Order matters: the shutdown marker must be visible BEFORE the latch, or a
+	// frame landing between the two sees a latch with no owner and the watchdog
+	// would clear the suppression teardown depends on.
+	g_bExtShuttingDown = true;
 	g_bMapChangeInProgress = true;
 
 	AMXXLOG_Log("[AMXX] Extension shutdown: detaching modules");
