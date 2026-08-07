@@ -9,6 +9,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Extension mode never loaded `cmdaccess.ini` (AX-09/AX-22).** The extension init
+  called `FlagMan.SetFile()` and stopped; `LoadFile()`'s only other caller is
+  `C_Spawn`, reached solely through the Metamod function table, so the file was
+  named and never parsed and every rule in it was silently discarded. `LoadFile()`
+  now runs at two sites mirroring the `g_log.MapChange()` pattern beside it — the
+  init path for the first map, `KTPAMX_ReloadPlugins()` for every map change after
+  — which reproduces Metamod's per-map reload, so an edit takes effect on the next
+  map change as the file's own header promises. Blast radius was measured before
+  arming: of the 62 rules on the live fleet, 59 name plugins that are not loaded
+  and the 3 that touch loaded plugins already match the flags those plugins
+  register, so switching the loader on is a behavioural no-op today.
+
+- **`g_players_num` never decremented on disconnect in extension mode.** Metamod
+  decrements in `C_ClientDisconnect`, which the extension path never reaches, while
+  the increment (`SV_Spawn_f_RH`) is a ReHLDS hook that does run — so
+  `get_playersnum()` (the no-argument form, which returns the cached counter rather
+  than iterating) over-counted after every mid-map disconnect until the next map
+  change zeroed it. `SV_DropClient_PostHook` now decrements under the same `ingame`
+  guard as the Metamod path, placed before `Disconnect()` clears that flag.
+
+- **A dropped changelevel could wedge AMXX for the rest of the map (AX-01
+  residual).** `PF_changelevel_I_internal` burns its once-per-spawncount queue guard
+  whether or not the map was valid, so an invalid `pfnChangeLevel` followed by a
+  valid one in the same spawncount latches `g_bMapChangeInProgress` while the queue
+  is dropped. `SV_ActivateServer` never runs, nothing clears the flag, and every
+  AMXX path that early-outs on it stays dead: tasks, module frame callbacks,
+  events, logevents, `.` commands. `SV_Frame_RH` now releases the flag if it is
+  still set after 30s of frames — a real transition barely ticks `SV_Frame` — and
+  logs it, since reaching that state means the window fired. Teardown latches the
+  same flag deliberately and is excluded via a file-scope marker set before the
+  latch.
+
+- **Nested execution cleared two re-entry guards early.** `m_InExec` and
+  `m_bInStartFrame` were booleans, so a nested call cleared the guard on the inner
+  return while the outer was still on the stack. For `m_InExec` that is a
+  use-after-free: `unregisterSPForward` frees a forward when `!m_InExec`, so a
+  forward re-entering itself could be freed mid-execution. Both are now depth
+  counters; all existing tests are against zero, so consumers are unchanged.
+
+- **`registerMenuCmd` leaked an SP-forward slot per duplicate registration.** Its two
+  dedup paths returned without storing the forward the caller had just created for
+  it — ownership transfers on every call — so a re-registration leaked one slot,
+  once per map until the nightly restart. Both paths now release it.
+
+- **DODX `dodx_test_dump_round_timers` read past the end of unrelated entities.** The
+  entity scan matched classnames by substring (`timer`/`round`/`clock`) and then
+  dereferenced the `CDodRoundTimer` offsets — 344/348/352 on Linux, so ~356 bytes
+  into `pvPrivateData` — on whatever it matched. The substring stays as a discovery
+  filter (the native exists because the classname was unknown), but the offsets are
+  now only read on an exact classname match; anything else is logged as `SKIPPED`
+  with its classname, which is what the scan wanted anyway.
+
 - **DODX control-point / area string setters aliased a transient buffer.** The six
   CP/area string setters in `NCP.cpp` (`CP_name`, `CP_reset_capsound`,
   `CP_allies_capsound`, `CP_axis_capsound`, `CP_targetname`, `CA_target`) stored
