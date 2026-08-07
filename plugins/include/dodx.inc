@@ -425,6 +425,12 @@ native dodx_broadcast_team_score(team, score);
  * window. On pubs (no clan restart) it matches get_timeleft(). Tracks every
  * engine rebase with no signal dependency: go-live, .restarthalf, OT restarts.
  *
+ * The countdown projection is why the value can legitimately EXCEED
+ * mp_timelimit*60: during the restart window it reports the post-go-live half
+ * length measured from a completion time still in the future. That is correct,
+ * not drift — a consumer that clamps to mp_timelimit*60 will misreport the
+ * clock for the whole countdown.
+ *
  * @return  Seconds remaining as a float; -1.0 when unavailable (no gamerules
  *          pointer, offsets unresolved, mp_timelimit 0 = no time limit, or an
  *          implausible read — e.g. struct drift on a future dod.so update).
