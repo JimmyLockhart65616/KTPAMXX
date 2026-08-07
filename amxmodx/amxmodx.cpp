@@ -971,6 +971,14 @@ static cell AMX_NATIVE_CALL get_user_authid(AMX *amx, cell *params) /* 3 param *
 	int index = params[1];
 	const char* authid = 0;
 
+	// AX-02: while the OLD session's disconnect forwards are replayed for a
+	// seized slot, the engine's copy already belongs to the incoming player.
+	// Only for that index, and only for the duration of those forwards, answer
+	// from the departing session's cached id instead -- otherwise a handler
+	// files the leaver's stats under the newcomer's SteamID.
+	if (index > 0 && index == g_authReplayIndex && g_authReplayAuthid)
+		return set_amxstring(amx, params[2], g_authReplayAuthid, params[3]);
+
 	// KTP: Check edict validity before calling engine function
 	if (index > 0 && index <= gpGlobals->maxClients)
 	{

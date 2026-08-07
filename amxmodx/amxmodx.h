@@ -527,6 +527,11 @@ extern CPluginMngr g_plugins;
 extern CTaskMngr g_tasksMngr;
 extern CFrameActionMngr g_frameActionMngr;
 extern CPlayer g_players[33];
+
+// AX-02 slot-seizure replay marker (defined in meta_api.cpp). g_authReplayIndex
+// is -1 unless the OLD session's disconnect forwards are running for that slot.
+extern int g_authReplayIndex;
+extern const char *g_authReplayAuthid;
 extern CPlayer* mPlayer;
 extern CmdMngr g_commands;
 extern ke::Vector<ke::AutoPtr<ForceObject>> g_forcemodels;

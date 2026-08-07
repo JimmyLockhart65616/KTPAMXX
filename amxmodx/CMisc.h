@@ -32,6 +32,11 @@ public:
 	ke::AString name;
 	ke::AString ip;
 	ke::AString team;
+	// Value copy of the Steam id, taken at Authorize(). The engine's copy is
+	// overwritten by the NEXT occupant before AMXX sees a slot seizure, so this
+	// is the only surviving record of who is actually disconnecting. See the
+	// replay guard in meta_api.cpp.
+	ke::AString authid;
 
 	bool initialized;
 	bool ingame;
@@ -87,7 +92,12 @@ public:
 	// IsAlive() - moved to CMisc.cpp for debug logging
 	bool IsAlive();
 
-	inline void Authorize() { authorized = true; }
+	// Takes the id so it cannot be cached late, or missed at a new call site.
+	inline void Authorize(const char *steamid)
+	{
+		authorized = true;
+		authid = steamid ? steamid : "";
+	}
 
 	int NextHUDChannel();
 

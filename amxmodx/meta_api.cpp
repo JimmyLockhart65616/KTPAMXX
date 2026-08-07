@@ -156,6 +156,29 @@ static bool g_bMapChangeInProgress = false;
 // s_extShutdownDone is function-local and cannot be seen from SV_Frame_RH.
 static bool g_bExtShuttingDown = false;
 
+// AX-02: during a NAT slot seizure the engine has ALREADY swapped the incoming
+// player's userinfo and Steam id into the slot (sv_main.cpp:2669-2676, upstream
+// of the ClientConnected hook), so get_user_authid() reports the NEWCOMER to a
+// handler running the OLD session's disconnect forwards -- filing a leaver's
+// stats under someone else's SteamID.
+//
+// Scoped to one index for the duration of those forwards, deliberately NOT a
+// general preference for the cache: preferring it everywhere would return a
+// stale id whenever the engine's is fresher (late Steam auth, re-auth), trading
+// a rare edge case for a permanent regression on every consumer.
+int g_authReplayIndex = -1;
+const char *g_authReplayAuthid = NULL;
+
+// RAII: a Pawn handler that errors out of executeForwards must not be able to
+// leave the marker latched on a slot.
+struct KTPAuthReplayGuard
+{
+	KTPAuthReplayGuard(int index, const char *authid)
+	{ g_authReplayIndex = index; g_authReplayAuthid = authid; }
+	~KTPAuthReplayGuard()
+	{ g_authReplayIndex = -1; g_authReplayAuthid = NULL; }
+};
+
 // KTP: Track if precache hooks have processed force_unmodified lists this map
 static bool g_bExtPrecacheProcessed = false;
 
@@ -973,8 +996,8 @@ BOOL C_ClientConnect_Post(edict_t *pEntity, const char *pszName, const char *psz
 			if (playerToAuth)
 				g_auth.append(ke::Move(playerToAuth));
 		} else {
-			pPlayer->Authorize();
 			const char* authid = GETPLAYERAUTHID(pEntity);
+			pPlayer->Authorize(authid);
 			if (g_auth_funcs.size())
 			{
 				List<AUTHORIZEFUNC>::iterator iter, end=g_auth_funcs.end();
@@ -1174,8 +1197,8 @@ void SV_Spawn_f_RH(IRehldsHook_SV_Spawn_f *chain)
 		// In extension mode, Steam_NotifyClientConnect may not have fired yet
 		if (!pPlayer->authorized)
 		{
-			pPlayer->Authorize();
 			const char *authid = GETPLAYERAUTHID(pEntity);
+			pPlayer->Authorize(authid);
 			if (g_auth_funcs.size())
 			{
 				List<AUTHORIZEFUNC>::iterator iter, end = g_auth_funcs.end();
@@ -1603,6 +1626,11 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 	{
 		if (pPlayer->initialized)
 		{
+			// The engine already replaced this slot's identity with the incoming
+			// player's, so point get_user_authid at the departing session's
+			// cached id for exactly these two forwards.
+			KTPAuthReplayGuard authReplay(index, pPlayer->authid.chars());
+
 			// deprecated
 			executeForwards(FF_ClientDisconnect, static_cast<cell>(index));
 
@@ -1698,8 +1726,8 @@ qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *cha
 	// Only authorize once
 	if (!pPlayer->authorized)
 	{
-		pPlayer->Authorize();
 		const char *authid = GETPLAYERAUTHID(pEntity);
+		pPlayer->Authorize(authid);
 		if (g_auth_funcs.size())
 		{
 			List<AUTHORIZEFUNC>::iterator iter, end = g_auth_funcs.end();
@@ -1842,8 +1870,9 @@ void C_ClientUserInfoChanged_Post(edict_t *pEntity, char *infobuffer)
 
 		executeForwards(FF_ClientConnect, static_cast<cell>(pPlayer->index));
 
-		pPlayer->Authorize();
 		const char* authid = GETPLAYERAUTHID(pEntity);
+
+		pPlayer->Authorize(authid);
 		if (g_auth_funcs.size())
 		{
 			List<AUTHORIZEFUNC>::iterator iter, end=g_auth_funcs.end();
@@ -2081,7 +2110,7 @@ void C_StartFrame_Post(void)
 
 			if (strcmp(auth, "STEAM_ID_PENDING"))
 			{
-				(*player)->Authorize();
+				(*player)->Authorize(auth);
 				if (g_auth_funcs.size())
 				{
 					List<AUTHORIZEFUNC>::iterator iter, end=g_auth_funcs.end();
