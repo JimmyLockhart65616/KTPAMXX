@@ -384,7 +384,7 @@ void CSPForward::Set(int func, AMX *amx, int numParams, const ForwardParam *para
 	amx_GetPublic(amx, func, name);
 	m_Name = name;
 	m_ToDelete = false;
-	m_InExec = false;
+	m_InExec = 0;
 	m_RefCount = 1;
 }
 
@@ -397,7 +397,7 @@ void CSPForward::Set(const char *funcName, AMX *amx, int numParams, const Forwar
 	isFree = false;
 	m_Name = funcName;
 	m_ToDelete = false;
-	m_InExec = false;
+	m_InExec = 0;
 	m_RefCount = 1;
 }
 
@@ -418,7 +418,7 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 	if (!pPlugin || !pPlugin->isExecutable(m_Func))
 		return 0;
 
-	m_InExec = true;
+	++m_InExec;
 
 	Debugger *pDebugger = (Debugger *)m_Amx->userdata[UD_DEBUGGER];
 	if (pDebugger)
@@ -568,7 +568,7 @@ cell CSPForward::execute(cell *params, ForwardPreparedArray *preparedArrays)
 		}
 	}
 
-	m_InExec = false;
+	--m_InExec;
 
 	return retVal;
 }

@@ -68,7 +68,10 @@ private:
 	float *m_pTmr_TimeLimit;
 	float *m_pTmr_TimeLeft;
 
-	bool m_bInStartFrame;		// true while iterating tasks in startFrame()
+	// Depth, not a flag: a task callback that re-enters startFrame() cleared the
+	// bool on the inner return, so the deferred-clear guard below stopped
+	// protecting the outer iteration mid-walk.
+	int m_bInStartFrame;		// >0 while iterating tasks in startFrame()
 	bool m_bDeferredClear;		// set when clear() called during startFrame()
 	size_t m_ActiveCount;		// number of non-free tasks (avoids iterating when 0)
 	size_t m_FirstFreeHint;		// hint index for free-slot scan in registerTask()

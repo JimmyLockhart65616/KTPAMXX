@@ -190,7 +190,7 @@ CTaskMngr::CTaskMngr()
 	m_pTmr_CurrentTime = NULL;
 	m_pTmr_TimeLimit = NULL;
 	m_pTmr_TimeLeft = NULL;
-	m_bInStartFrame = false;
+	m_bInStartFrame = 0;
 	m_bDeferredClear = false;
 	m_ActiveCount = 0;
 	m_FirstFreeHint = 0;
@@ -295,7 +295,7 @@ void CTaskMngr::startFrame()
 	if (m_ActiveCount == 0)
 		return;
 
-	m_bInStartFrame = true;
+	++m_bInStartFrame;
 	auto lastSize = m_Tasks.length();
 	for(auto i = 0u; i < lastSize; i++)
 	{
@@ -323,7 +323,7 @@ void CTaskMngr::startFrame()
 				m_FirstFreeHint = i;
 		}
 	}
-	m_bInStartFrame = false;
+	--m_bInStartFrame;
 
 	if (m_bDeferredClear)
 	{

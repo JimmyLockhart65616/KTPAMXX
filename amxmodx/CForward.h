@@ -135,7 +135,10 @@ class CSPForward
 	int m_Func;
 	bool m_HasFunc;
 	ke::AString m_Name;
-	bool m_InExec;
+	// Depth, not a flag: a nested execute() of the SAME forward used to clear
+	// the bool on the inner return while the outer call was still on the stack,
+	// so unregisterSPForward could free a live forward.
+	int m_InExec;
 	bool m_ToDelete;
 
 	// Live holders of this handle. The registration dedup hands the same id to

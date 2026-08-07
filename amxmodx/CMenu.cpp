@@ -70,6 +70,11 @@ void MenuMngr::registerMenuCmd(CPluginMngr::CPlugin *a, int mi, int k, int f, bo
 			{
 				if (g_forwards.isSameSPForward(ptr->function, f))
 				{
+					// Duplicate: we are not storing f, so release it. The caller
+					// created the forward and hands ownership over on every call,
+					// so bailing without this leaked one SP-forward slot per
+					// duplicate registration -- once per map, until the restart.
+					unregisterSPForward(f);
 					return;
 				}
 			}
@@ -83,6 +88,7 @@ void MenuMngr::registerMenuCmd(CPluginMngr::CPlugin *a, int mi, int k, int f, bo
 			if (!ptr->is_new_menu && ptr->plugin == a && ptr->menuid == mi &&
 				g_forwards.isSameSPForward(ptr->function, f))
 			{
+				unregisterSPForward(f);   // same leak, old-style path
 				return;
 			}
 			temp = &(*temp)->next;
