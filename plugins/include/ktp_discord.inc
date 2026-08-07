@@ -164,6 +164,7 @@ new bool:g_ktpDiscordEnabled = false;
 
 // Curl state
 new curl_slist:g_ktpDiscordCurlHeaders = SList_Empty;
+new bool:g_ktpDiscordPrewarmed = false;   // once-per-process TLS prewarm latch
 new g_ktpDiscordAuthHeader[192];
 
 // Reusable buffers (to avoid stack overflow)
@@ -727,11 +728,26 @@ stock ktp_discord_init_headers()
  * Pre-warm the TLS connection to the Discord relay.
  * Fires a lightweight health check request so the DNS + TCP + TLS handshake
  * happens during plugin load (not during admin actions like .changemap).
- * Call once after ktp_discord_init_headers().
+ *
+ * ONCE PER PROCESS, not per map. ktp_discord_load_config() is re-fired by
+ * plugin_cfg on every map change in extension mode (see ktp_discord_init_headers
+ * above), so this used to launch a fresh health GET per plugin per map. On
+ * stall-prone hosts the map-load stall outruns the 3s timeout and each one logs
+ * curl code 28 -- CHI:27015 logged 82 timeouts on a day with zero player
+ * connects. The handshake it exists to avoid only needs doing once; the
+ * connection is pooled after that.
+ *
+ * Do NOT "fix" the timeouts by raising the curl timeout -- that buries the
+ * signal instead of removing the redundant work.
  */
 stock ktp_discord_prewarm()
 {
     if (!g_ktpDiscordEnabled || !g_ktpDiscordRelayUrl[0]) return;
+
+    // Extension mode keeps globals across map changes, so this latch lives for
+    // the whole process -- exactly the scope we want.
+    if (g_ktpDiscordPrewarmed) return;
+    g_ktpDiscordPrewarmed = true;
 
     // Build health check URL by replacing /reply with /health
     new healthUrl[256];
