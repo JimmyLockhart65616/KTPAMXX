@@ -53,6 +53,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it — ownership transfers on every call — so a re-registration leaked one slot,
   once per map until the nightly restart. Both paths now release it.
 
+- **DODX conflated "no `point_index` key" with "`point_index` is -1".** The BSP parser used `-1`
+  as its key-absent sentinel while `-1` is also a value maps write, so the two were
+  indistinguishable and both were silently dropped. `dod_saints2_b3e` and `dod_saints2_b2` carry
+  five control points each with an explicit `-1`, so the parser yielded zero usable entries, the
+  BSP reorder short-circuited, and CP ordering fell back to entity-scan order — which does not
+  match the game DLL's. Presence is now tracked separately from value. A *total* reorder failure
+  also stopped being reported as the neutral "BSP parse returned 0 CPs": when the entity scan found
+  control points and none survived, it now warns that CP order is unreliable on that map. Ordering
+  policy is deliberately unchanged pending KTPAMXX #5.
+
 - **DODX `dodx_test_dump_round_timers` read past the end of unrelated entities.** The
   entity scan matched classnames by substring (`timer`/`round`/`clock`) and then
   dereferenced the `CDodRoundTimer` offsets — 344/348/352 on Linux, so ~356 bytes
@@ -73,6 +83,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the next DODX build; no version bump, no md5 (not shipped).
 
 ### Documentation
+
+- **`@error` on 21 natives that abort without documenting it.** A native raising `AMX_ERR_NATIVE`
+  terminates the calling plugin, which is very different from one that logs and returns 0. Each
+  line is written from that native's actual `LogError(...AMX_ERR_NATIVE...)` text rather than a
+  guess at what it validates — an `@error` naming the wrong condition is worse than none. Covers
+  `amxmodx.inc` (5), `string.inc` (6), `sorting.inc` (3), `textparse_ini/smc.inc` (4),
+  `celltrie.inc`, `gameconfig.inc`, `messages.inc`. `clamp`, `hash_string` and `fungetc` are
+  deliberately left alone — no condition could be extracted, and approximating one is the failure
+  mode above.
+
+- **`dodx_get_round_time` can legitimately exceed `mp_timelimit*60`.** During an
+  `mp_clan_restartround` countdown the value is projected from a completion time still in the
+  future, so it reports more than the nominal half length. That is correct rather than drift, and a
+  consumer that clamps misreports the clock for the whole countdown window.
 
 - **Version stamps.** README header and Version Information said 2.7.22 and the
   Verify-Installation console sample said 2.7.20, against a shipped 2.7.24. Header
