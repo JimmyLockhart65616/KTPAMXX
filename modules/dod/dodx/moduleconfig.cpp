@@ -1790,6 +1790,7 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 	// Parse entity lump for dod_control_point entities
 	int cpCount = 0;
 	int totalDCP = 0;
+	int negIndexCPs = 0;   // explicit point_index < 0 -- a map choice, not an absent key
 	char *pos = entData;
 
 	while (*pos && cpCount < maxCPs)
@@ -1799,7 +1800,11 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 		pos++;
 
 		char classname[64] = "";
+		// -1 doubles as "key absent" AND as a value maps actually write, so the
+		// two were indistinguishable and both got dropped by the >= 0 test
+		// below. Track presence separately.
 		int point_index = -1;
+		bool hasPointIndex = false;
 		float origin_x = 0, origin_y = 0, origin_z = 0;
 
 		while (*pos && *pos != '}')
@@ -1836,7 +1841,10 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 			if (strcmp(key, "classname") == 0)
 				strncpy(classname, value, 63);
 			else if (strcmp(key, "point_index") == 0)
+			{
 				point_index = atoi(value);
+				hasPointIndex = true;
+			}
 			else if (strcmp(key, "origin") == 0)
 				sscanf(value, "%f %f %f", &origin_x, &origin_y, &origin_z);
 		}
@@ -1846,6 +1854,8 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 		if (strcmp(classname, "dod_control_point") == 0)
 		{
 			totalDCP++;
+			if (hasPointIndex && point_index < 0)
+				negIndexCPs++;
 			if (point_index >= 0)
 			{
 				cpInfo[cpCount].point_index = point_index;
@@ -1858,8 +1868,8 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 	}
 
 	free(entData);
-	MF_Log("[DODX] BSP: Parsed %s — %d dod_control_point, %d with point_index",
-		mapName, totalDCP, cpCount);
+	MF_Log("[DODX] BSP: Parsed %s — %d dod_control_point, %d with point_index, %d with a NEGATIVE point_index",
+		mapName, totalDCP, cpCount, negIndexCPs);
 	return cpCount;
 }
 
@@ -1995,6 +2005,18 @@ static void DODX_InitCPFromEntities()
 			{
 				MF_Log("[DODX] BSP CP count (%d) != entity scan count (%d), skipping reorder",
 					bspCount, mObjects.count);
+			}
+			else if (mObjects.count > 0)
+			{
+				// Not "no CPs" -- every CP was rejected, so the reorder has
+				// nothing and ordering falls back to edict-scan order, which
+				// does NOT match the game DLL's (see the header comment on this
+				// function). dod_saints2_b3e/_b2 hit this: 5 CPs, all with an
+				// explicit point_index of -1. Say so instead of logging it as a
+				// neutral statistic.
+				MF_Log("[DODX] WARNING: %d control points but NONE carried a usable point_index — "
+					"CP ORDER IS UNRELIABLE on this map (falling back to entity scan order)",
+					mObjects.count);
 			}
 			else
 			{
