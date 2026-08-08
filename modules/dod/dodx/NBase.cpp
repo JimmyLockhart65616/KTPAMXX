@@ -232,6 +232,19 @@ static cell AMX_NATIVE_CALL dodx_set_user_team(AMX *amx, cell *params)
 
 	// Broadcast team change if refresh requested
 	if (params[3]) {
+		// MESSAGE_BEGIN with type 0 is Sys_Error -- the engine kills the process.
+		// gmsgPTeam is 0 until the RegUserMsg interception captures DoD's "PTeam"
+		// registration, so a hook-ordering regression turns this native into a
+		// server kill. Same recoverable guard the 2.7.22 sweep gave the sibling
+		// send sites; this one was missed. The team change above has already been
+		// applied, so returning 1 is correct -- only the client-side refresh is
+		// skipped.
+		if (gmsgPTeam <= 0)
+		{
+			MF_Log("dodx_set_user_team: PTeam message not registered, skipping refresh broadcast");
+			return 1;
+		}
+
 		MESSAGE_BEGIN(MSG_ALL, gmsgPTeam);
 		WRITE_BYTE(pPlayer->index);
 		WRITE_BYTE(iTeam);
@@ -1165,6 +1178,16 @@ static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params
 	if (!teamName || len == 0)
 	{
 		MF_Log("dodx_set_scoreboard_team_name: empty team name");
+		return 0;
+	}
+
+	// Same Sys_Error hazard as the sibling send sites (see dodx_set_user_team):
+	// MESSAGE_BEGIN with type 0 terminates the process, and gmsgTeamInfo is 0
+	// until the RegUserMsg interception captures it. Checked once here rather
+	// than per player -- the value cannot change mid-loop.
+	if (gmsgTeamInfo <= 0)
+	{
+		MF_Log("dodx_set_scoreboard_team_name: TeamInfo message not registered");
 		return 0;
 	}
 
