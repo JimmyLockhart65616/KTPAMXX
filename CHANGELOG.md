@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.25] - 2026-08-07
+
 > **Upstream-file edits in this cut**, flagged per the fork-delta rule. Each is a minimal diff to
 > upstream AMX Mod X code, made because the defect lives there: `CForward.cpp/.h` and `CTask.cpp/.h`
 > (bool re-entry guards → depth counters), `CMenu.cpp` (dedup returns leaked the caller's forward),
@@ -26,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and two surfaced only as compile errors. `get_user_authid` prefers the cache **only** for the
   seized index and **only** while those forwards run, behind an RAII guard. Not a general
   preference — that would return a stale id whenever the engine's is fresher.
+  The guard covers `client_remove` as well as the two disconnect forwards — it is part of the same
+  replay, and because it fires after `Disconnect()` has cleared the field, the guard holds a value
+  copy rather than a pointer into it. An empty cached id falls through to the engine rather than
+  publishing `""`, since `ke::AString::chars()` returns `""` and never NULL.
   ⚠️ **No test coverage** (needs two clients behind one NAT + a ≥10s timeout). Watch
   disconnect-save SteamIDs after the cut that ships it.
 
@@ -37,15 +43,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   discards the admin flags the first authorize just resolved, and `SV_Spawn_f_RH` re-authorizes and
   fires `client_authorized` again. Metamod fires each exactly once, so this is an extension-mode
   parity gap. Now gated on `initialized`, which `Disconnect()` clears at map change so a genuine new
-  session still connects. ⚠️ Untested against a live map change with players.
+  session still connects. `client_connectex` is deliberately **outside** the gate — it has no
+  counterpart in the Steam hook, and Metamod fires it every map change, so gating it alongside
+  `client_connect` would have silently stopped delivering it. `name`/`ip` are refreshed on the skip
+  path too: the Steam hook caches the name before `SV_ExtractFromUserinfo` runs, and those fields
+  feed `admin.sma`'s `FLAG_IP` matching. ⚠️ Untested against a live map change with players.
 
-- **Two DODX message sends could kill the server (AX-20, plus one the review missed).**
+- **Unguarded DODX message sends could kill the server (AX-20, and four more).**
   `MESSAGE_BEGIN` with type 0 is `Sys_Error` — the engine terminates the process — and every
   `gmsg*` id is 0 until `RegUserMsg` interception captures it. The 2.7.22 sweep guarded three send
-  sites; `dodx_set_user_team` was missed (AX-20), and sweeping the module rather than fixing only
-  the cited line found a second: `dodx_set_scoreboard_team_name`'s `TeamInfo` broadcast. All five
-  are now guarded. `set_user_team` returns 1 (the team change already applied; only the client
-  refresh is skipped); `set_scoreboard_team_name` returns 0 (nothing has happened yet).
+  sites; `dodx_set_user_team` was missed (AX-20). A first sweep wrongly reported a second miss in
+  `dodx_set_scoreboard_team_name` — that site was **already guarded**; the duplicate has been
+  removed. Re-sweeping for both send forms found the ones actually missing: `dod_set_weaponlist`
+  (`NBase.cpp`), where `GET_USER_MSG_ID` resolves through Metamod's `gpMetaUtilFuncs` — never
+  assigned in extension mode, so a **NULL deref**, not a type-0 `Sys_Error`; plus
+  `CObjective::InitObj`, `CObjective::SetObj` and the heal-back `gmsgHealth` send, all on
+  objective/health paths and far more reachable than the natives. All nine sends in the module are
+  now guarded, verified by enclosing function rather than a fixed line window.
+  `set_user_team` returns 1 (the team change already applied; only the client refresh is skipped).
 
 - **Extension mode never loaded `cmdaccess.ini` (AX-09/AX-22).** The extension init
   called `FlagMan.SetFile()` and stopped; `LoadFile()`'s only other caller is

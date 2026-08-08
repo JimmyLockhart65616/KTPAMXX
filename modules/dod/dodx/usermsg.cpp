@@ -349,9 +349,14 @@ void Client_Health_End(void* mValue)
 				// KTP: Send Health message to update client HUD
 				// The game already sent the Health message with the reduced value,
 				// so we need to send another one with the correct value after heal-back
+				// gmsgHealth is 0 until captured; type-0 is Sys_Error. Skipping
+				// only loses the heal-back HUD correction, never the health change.
+				if (gmsgHealth > 0)
+				{
 				MESSAGE_BEGIN(MSG_ONE, gmsgHealth, NULL, mPlayer->pEdict);
 				WRITE_BYTE((int)newHealth);
 				MESSAGE_END();
+				}
 			}
 		}
 	}

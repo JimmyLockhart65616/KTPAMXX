@@ -764,7 +764,19 @@ static cell AMX_NATIVE_CALL dod_weaponlist(AMX *amx, cell *params) // player
 		return 0;
 	}
 
-	MESSAGE_BEGIN(MSG_ONE, GET_USER_MSG_ID(PLID, "WeaponList", NULL), NULL, pPlayer->pEdict);
+	// GET_USER_MSG_ID resolves through Metamod's gpMetaUtilFuncs, which is only
+	// assigned in Meta_Query -- and Meta_Query never runs in extension mode, so
+	// this is a NULL deref, not merely the type-0 Sys_Error the sibling sends
+	// risk. Latent (no fleet plugin calls this native) but it is registered and
+	// callable by any plugin.
+	int msgWeaponList = GET_USER_MSG_ID(PLID, "WeaponList", NULL);
+	if (msgWeaponList <= 0)
+	{
+		MF_Log("dod_set_weaponlist: WeaponList message unavailable (extension mode has no Metamod util funcs)");
+		return 0;
+	}
+
+	MESSAGE_BEGIN(MSG_ONE, msgWeaponList, NULL, pPlayer->pEdict);
 	WRITE_BYTE(weaponlist[wpnID].grp);
 		WRITE_BYTE(totalrds);
 		WRITE_BYTE(-1);
@@ -1178,16 +1190,6 @@ static cell AMX_NATIVE_CALL dodx_set_scoreboard_team_name(AMX *amx, cell *params
 	if (!teamName || len == 0)
 	{
 		MF_Log("dodx_set_scoreboard_team_name: empty team name");
-		return 0;
-	}
-
-	// Same Sys_Error hazard as the sibling send sites (see dodx_set_user_team):
-	// MESSAGE_BEGIN with type 0 terminates the process, and gmsgTeamInfo is 0
-	// until the RegUserMsg interception captures it. Checked once here rather
-	// than per player -- the value cannot change mid-loop.
-	if (gmsgTeamInfo <= 0)
-	{
-		MF_Log("dodx_set_scoreboard_team_name: TeamInfo message not registered");
 		return 0;
 	}
 

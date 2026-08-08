@@ -1166,23 +1166,23 @@ void SV_Spawn_f_RH(IRehldsHook_SV_Spawn_f *chain)
 	// initialize now. Connect() sets initialized=true, so check that flag.
 	if (!pPlayer->initialized)
 	{
-			const char *pszName = cl->GetName();
-			char pszAddress[64] = "0.0.0.0";
+		const char *pszName = cl->GetName();
+		char pszAddress[64] = "0.0.0.0";
 
-			INetChan *netChan = cl->GetNetChan();
-			if (netChan)
+		INetChan *netChan = cl->GetNetChan();
+		if (netChan)
+		{
+			const netadr_t *addr = netChan->GetRemoteAdr();
+			if (addr)
 			{
-				const netadr_t *addr = netChan->GetRemoteAdr();
-				if (addr)
-				{
-					ke::SafeSprintf(pszAddress, sizeof(pszAddress), "%d.%d.%d.%d:%d",
-						addr->ip[0], addr->ip[1], addr->ip[2], addr->ip[3],
-						ntohs(addr->port));
-				}
+				ke::SafeSprintf(pszAddress, sizeof(pszAddress), "%d.%d.%d.%d:%d",
+					addr->ip[0], addr->ip[1], addr->ip[2], addr->ip[3],
+					ntohs(addr->port));
 			}
+		}
 
-			pPlayer->Connect(pszName ? pszName : "", pszAddress);
-			executeForwards(FF_ClientConnect, static_cast<cell>(pPlayer->index));
+		pPlayer->Connect(pszName ? pszName : "", pszAddress);
+		executeForwards(FF_ClientConnect, static_cast<cell>(pPlayer->index));
 	}
 
 	// Only call PutInServer if player is initialized and not already ingame
@@ -1624,12 +1624,16 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 	// `initialized` would fire disconnect forwards for every player on every map change.
 	if (pPlayer->ingame)
 	{
+		// W2: client_remove below is part of the SAME replay, but it fires after
+		// Disconnect() has cleared pPlayer->authid -- so the guard needs a value
+		// copy that outlives the CPlayer field, not a chars() pointer into it.
+		ke::AString departingAuthid(pPlayer->authid);
+
 		if (pPlayer->initialized)
 		{
 			// The engine already replaced this slot's identity with the incoming
-			// player's, so point get_user_authid at the departing session's
-			// cached id for exactly these two forwards.
-			KTPAuthReplayGuard authReplay(index, pPlayer->authid.chars());
+			// player's, so point get_user_authid at the departing session's id.
+			KTPAuthReplayGuard authReplay(index, departingAuthid.chars());
 
 			// deprecated
 			executeForwards(FF_ClientDisconnect, static_cast<cell>(index));
@@ -1648,6 +1652,9 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 
 		if (!wasDisconnecting && g_isDropClientHookAvailable)
 		{
+			// Same replay, same substitution -- a client_remove handler reading
+			// get_user_authid() would otherwise see the incoming player.
+			KTPAuthReplayGuard authReplay(index, departingAuthid.chars());
 			executeForwards(FF_ClientRemove, static_cast<cell>(index), FALSE, const_cast<char*>(""));
 		}
 	}
@@ -1665,17 +1672,32 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 	// notify never ran (nothing set initialized) is unaffected.
 	if (!pPlayer->initialized)
 	{
-	// Initialize player first so forwards have valid player data
-	pPlayer->Connect(pszName ? pszName : "", pszAddress);
+		// Initialize player first so forwards have valid player data
+		pPlayer->Connect(pszName ? pszName : "", pszAddress);
 
-	// Call client_connectex (can request rejection, but we can't truly block at this stage)
+		// Call client_connect forward
+		executeForwards(FF_ClientConnect, static_cast<cell>(index));
+	}
+	else
+	{
+		// W1: Steam_NotifyClientConnect_RH called Connect() with cl->GetName()
+		// BEFORE the engine ran SV_ExtractFromUserinfo, so on a reused slot the
+		// cached name can still be the previous occupant's. This hook fires after
+		// the engine has settled; the old unconditional Connect() used to correct
+		// it, so refresh explicitly now that we skip that. name/ip feed admin.sma's
+		// FLAG_IP matching -- a stale value lands in the admin-auth path.
+		pPlayer->name = pszName ? pszName : "";
+		pPlayer->ip   = pszAddress;
+	}
+
+	// C3: client_connectex has NO counterpart in Steam_NotifyClientConnect_RH or
+	// SV_Spawn_f_RH -- both fire only client_connect. Under Metamod,
+	// C_ClientConnect_Post fires BOTH every map change, so gating this alongside
+	// client_connect silently stopped delivering it on every reconnect. Stays
+	// outside the gate; rejection cannot be honoured this late either way.
 	char szRejectReason[128] = "";
 	executeForwards(FF_ClientConnectEx, static_cast<cell>(index),
 		pszName ? pszName : "", pszAddress, prepareCharArray(szRejectReason, 128, true));
-
-	// Call client_connect forward
-	executeForwards(FF_ClientConnect, static_cast<cell>(index));
-	}
 
 	// Note: Don't queue client_putinserver here - player isn't spawned yet.
 	// SV_Spawn_f_RH will queue it after calling PutInServer().

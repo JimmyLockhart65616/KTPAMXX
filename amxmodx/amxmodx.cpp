@@ -976,7 +976,10 @@ static cell AMX_NATIVE_CALL get_user_authid(AMX *amx, cell *params) /* 3 param *
 	// Only for that index, and only for the duration of those forwards, answer
 	// from the departing session's cached id instead -- otherwise a handler
 	// files the leaver's stats under the newcomer's SteamID.
-	if (index > 0 && index == g_authReplayIndex && g_authReplayAuthid)
+	// W3: ke::AString::chars() returns "" (never NULL) for an empty string, so
+	// testing the pointer alone would publish an empty authid for the whole
+	// replay instead of falling through to the engine value.
+	if (index > 0 && index == g_authReplayIndex && g_authReplayAuthid && *g_authReplayAuthid)
 		return set_amxstring(amx, params[2], g_authReplayAuthid, params[3]);
 
 	// KTP: Check edict validity before calling engine function

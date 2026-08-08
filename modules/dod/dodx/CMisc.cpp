@@ -769,6 +769,12 @@ void CObjective::InitObj(int dest, edict_t* ed)
 	if (count <= 0)
 		return;
 
+	// Type-0 MESSAGE_BEGIN is Sys_Error; gmsgInitObj is 0 until RegUserMsg
+	// interception captures it. On the objective path, so far more reachable
+	// than the native send sites that already carry this guard.
+	if (gmsgInitObj <= 0)
+		return;
+
 	MESSAGE_BEGIN(dest, gmsgInitObj, 0, ed);
 	WRITE_BYTE(count);
 	for (int i = 0; i < count; i++)
@@ -789,6 +795,9 @@ void CObjective::InitObj(int dest, edict_t* ed)
 
 void CObjective::SetObj(int index)
 {
+	if (gmsgSetObj <= 0)
+		return;   // same Sys_Error hazard as InitObj above
+
 	MESSAGE_BEGIN(MSG_ALL, gmsgSetObj);
 	WRITE_BYTE(obj[index].index);
 	WRITE_BYTE(obj[index].owner);
