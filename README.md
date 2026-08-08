@@ -56,7 +56,11 @@ Extension mode exposes additional APIs for third-party modules:
 | `MF_GetEngineFuncs()` | Engine function table access |
 | `MF_GetGlobalVars()` | Global variables access |
 | `MF_IsExtensionMode()` | Check if running without Metamod |
-| `MF_GetRehldsApi()` | ReHLDS API interface pointer |
+| `MF_GetRehldsApi()` | ReHLDS API interface pointer — *reserved; no consumer yet* |
+
+Also exported and reserved: `MF_GetRehldsFuncs()`, `MF_GetRehldsServerData()`,
+`MF_Reg`/`UnregModuleFrameFunc()`. In-tree modules use the narrower
+`MF_GetRehldsHookchains()` / `MF_GetRehldsMessageManager()` instead.
 
 ### DODX Module (KTP Additions)
 
@@ -214,7 +218,17 @@ AMXX log lines (`log_amx`, error logs) are written by a dedicated writer thread 
 - **Current Version**: 2.7.25 (2026-08)
 - **Based on**: AMX Mod X 1.10.0 (upstream)
 - **Platform**: GCC 7.3+ / Visual Studio 2019+
-- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+. Extension-mode teardown (`KTP_ExtensionShutdown`) needs ReHLDS .928+, and the 2.7.24 `client_infochanged` ordering fix only becomes reachable on .929+ — below those the newest fixes are inert.
+- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+. Extension-mode teardown (`KTP_ExtensionShutdown`) needs ReHLDS .928+, and the 2.7.24 `client_infochanged` ordering fix only becomes reachable on .929+ — below those those fixes are inert. 2.7.25 adds no new engine-version floor.
+
+**2.7.25 behavior notes for plugin authors** — three extension-mode parity gaps closed, all of which
+change what working code sees:
+
+- `get_vaultdata` now survives a map change. Previously the vault was cleared and never reloaded, so
+  a value written on map 1 read back as `""` on map 2 while `vault.ini` still held it.
+- `dod_get_map_info` (DODX) now returns real values instead of always 0, and `get_weaponid` performs
+  the British/para weapon remaps. Affects any plugin branching on allies-country or paras, and the
+  weapon id reported by `dod_grenade_explosion` on those maps.
+- `cmdaccess.ini` is actually parsed (2.7.25, AX-09/22) — rules in it were silently discarded before.
 
 See [CHANGELOG.md](CHANGELOG.md) for full version history.
 

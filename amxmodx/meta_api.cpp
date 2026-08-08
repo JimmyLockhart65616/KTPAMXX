@@ -1527,6 +1527,12 @@ static void KTPAMX_InitAsRehldsExtension();
 // This ensures force_unmodified works because we're still in the spawn/precache phase.
 static int PF_precache_model_I_RH(IRehldsHook_PF_precache_model_I *chain, const char *s)
 {
+	// Worst case of the whole set: under Metamod this fires long after Meta_Attach
+	// with g_bRehldsExtensionInit still false, so it would run a SECOND full AMXX
+	// init — reloading plugins and re-registering every forward and hook.
+	if (g_bRunningWithMetamod)
+		return chain->callNext(s);
+
 	// Only process once per map
 	if (!g_bExtPrecacheProcessed)
 	{
@@ -1780,7 +1786,6 @@ qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *cha
 
 	return result;
 }
-
 
 // KTP: SV_ClientUserInfoChanged hook — fires client_infochanged forward and
 // refreshes CPlayer::name from the engine's infobuffer. The Metamod equivalent
@@ -2140,7 +2145,6 @@ void C_StartFrame_Post(void)
 			i++;
 		}
 	}
-
 
 #ifdef MEMORY_TEST
 	if (g_memreport_enabled && g_next_memreport_time <= gpGlobals->time)
@@ -2787,6 +2791,10 @@ static int PF_RegUserMsg_RH(IRehldsHook_PF_RegUserMsg_I *chain, const char *pszN
 {
 	// Call original function first to get the ID
 	int id = chain->callNext(pszName, iSize);
+
+	// Metamod resolves these through C_Spawn's REG_USER_MSG instead.
+	if (g_bRunningWithMetamod)
+		return id;
 
 	// Capture the ID for messages we care about
 	for (int i = 0; g_user_msg[i].name; ++i)

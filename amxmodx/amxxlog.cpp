@@ -117,8 +117,8 @@ static void KTP_ALogWriterLoop()
 				// text is newline-terminated, so this is what makes the writer
 				// durable; if it fails, go unbuffered rather than sit on a
 				// full 8KB of crash evidence.
-				if (setvbuf(fp, nullptr, _IOLBF, 0) != 0)
-					setvbuf(fp, nullptr, _IONBF, 0);
+				if (setvbuf(fp, nullptr, _IOLBF, 0) != 0 && setvbuf(fp, nullptr, _IONBF, 0) != 0)
+					ALERT(at_logged, "[AMXX] async log: setvbuf failed for %s — lines may be lost on a crash\n", op.path);
 				ke::SafeSprintf(curPath, sizeof(curPath), "%s", op.path);
 			}
 			else
@@ -413,9 +413,9 @@ void CLog::MapChange()
 	}
 }
 
-// Buffers here are stack-local, not static: the enqueue path is hardened for
-// concurrent module-thread producers, so a shared format buffer would let two
-// callers tear each other's line and hand KTP_ALogEnqueue an unterminated read.
+// Buffers here are stack-local so two callers can't tear each other's line.
+// That is ALL it buys — CLog is still not reentrant: m_LogType, m_LogFile,
+// m_LoggedErrMap and the CreateNewFile() path remain unsynchronised.
 void CLog::Log(const char *fmt, ...)
 {
 	char file[PLATFORM_MAX_PATH];

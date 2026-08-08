@@ -247,7 +247,11 @@ CmdMngr::CmdPrefix** CmdMngr::findPrefix(const char* nn)
 	
 	while (*aa)
 	{
-		if (!strncmp((*aa)->name.chars(), nn, (*aa)->name.length()))
+		// Case-INsensitive, matching matchCommandLine's stricmp: a bucketed
+		// command is no longer in clcmdlist, so a case-sensitive miss here sends
+		// dispatch to a fallback list that no longer contains it and "SAY .ready"
+		// silently matches nothing.
+		if (!strnicmp((*aa)->name.chars(), nn, (*aa)->name.length()))
 			break;
 		aa = &(*aa)->next;
 	}

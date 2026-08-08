@@ -1420,6 +1420,9 @@ static void DODX_ReadBSPMapInfo()
 			while (*pos && (*pos == ' ' || *pos == '\t' || *pos == '\r' || *pos == '\n')) pos++;
 			if (*pos == '}') break;
 
+			// A truncated lump can leave us on the terminator here; pos++ would
+			// step past the allocation and the outer loop would walk the heap.
+			if (!*pos) break;
 			if (*pos != '"') { pos++; continue; }
 			pos++;
 			char key[64] = "";
@@ -1468,10 +1471,14 @@ static void DODX_ReadBSPMapInfo()
 
 	free(entData);
 
-	if (found && (g_map.detect_allies_country || g_map.detect_allies_paras || g_map.detect_axis_paras))
+	// Unconditional: these values were silently wrong for years, so "present and
+	// all zero" must be distinguishable from "never parsed".
+	if (found)
 		MF_Log("[DODX] BSP: %s info_doddetect — allies_country=%d allies_paras=%d axis_paras=%d",
 			STRING(gpGlobals->mapname), g_map.detect_allies_country,
 			g_map.detect_allies_paras, g_map.detect_axis_paras);
+	else
+		MF_Log("[DODX] BSP: %s has no info_doddetect — detect_* all 0", STRING(gpGlobals->mapname));
 }
 
 // KTP: Setup extension mode hooks
@@ -1568,6 +1575,10 @@ static bool DODX_SetupExtensionHooks()
 				GET_PLAYER_POINTER_I(i)->Init(i, g_pFirstEdict + i);
 		}
 	}
+
+	// Same first-map gap: DODX_OnSV_ActivateServer already ran, so without this
+	// the boot map after every restart runs with detect_* = 0 until a changelevel.
+	DODX_ReadBSPMapInfo();
 
 	return true;
 }
@@ -1683,7 +1694,7 @@ static char *DODX_LoadBSPEntityLump()
 
 	// GoldSrc BSP v30: 4-byte version, then 15 lump entries (offset + length, 8 bytes each)
 	// Entity lump is lump 0 (first entry, at bytes 4-11)
-	int version;
+	int version = 0;
 	if (fread(&version, 4, 1, fp) != 1 || version != 30)
 	{
 		MF_Log("[DODX] BSP: Invalid version %d (expected 30)", version);
@@ -1759,6 +1770,9 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 			if (*pos == '}') break;
 
 			// Read key
+			// A truncated lump can leave us on the terminator here; pos++ would
+			// step past the allocation and the outer loop would walk the heap.
+			if (!*pos) break;
 			if (*pos != '"') { pos++; continue; }
 			pos++;
 			char key[64] = "";

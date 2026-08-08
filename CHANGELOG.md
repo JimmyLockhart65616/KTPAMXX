@@ -13,7 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > upstream AMX Mod X code, made because the defect lives there: `CForward.cpp/.h` and `CTask.cpp/.h`
 > (bool re-entry guards → depth counters), `CMenu.cpp` (dedup returns leaked the caller's forward),
 > `CMisc.h` (`CPlayer::Authorize` takes the Steam id so it can be cached), `amxmodx.cpp`
-> (`get_user_authid` consults the seizure-replay marker). Everything else is KTP-owned.
+> (`get_user_authid` consults the seizure-replay marker + the `ktp_drop_client` param-count idiom),
+> `CCmd.cpp` (`findPrefix` compares case-insensitively, matching `matchCommandLine`), `CForward.cpp`
+> a second time (the deferred delete frees directly instead of re-entering the release path), and
+> `amxxlog.cpp` (stack-local format buffers, writer-loop simplification, `queued` out-param).
+> Everything else is KTP-owned.
 
 
 ### Fixed
@@ -142,9 +146,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separation inert on the fleet. Every say, jointeam, menuselect and class pick from every player
   walked ~200 entries with `stricmp`. Added to extension init, before plugins register anything and
   longest-prefix-first (`findPrefix` matches on the *stored* prefix's length, so a bare `say`
-  swallows `say_team`). Dispatch results are unchanged — the fallback list contained everything.
-  The reload path needs no counterpart: unlike Metamod, extension mode never calls
-  `g_commands.clear()` on map change.
+  swallows `say_team`). The reload path needs no counterpart: unlike Metamod, extension mode never
+  calls `g_commands.clear()` on map change.
+  ⚠️ **This needed a one-word upstream fix to be dispatch-neutral**, flagged per the fork-delta rule.
+  `registerCmdPrefix` moves a bucketed command *out* of `clcmdlist` (`CCmd.cpp:196`), and
+  `findPrefix` compared with `strncmp` while `matchCommandLine` compares with `stricmp` — so once
+  buckets existed, a mixed-case `"SAY .ready"` would miss the bucket, fall back to a `clcmdlist`
+  that no longer held the say handlers, and match **nothing**. Extension mode had been accidentally
+  immune because it had no buckets. `findPrefix` now uses `strnicmp`, matching the comparison every
+  other lookup on this path already used.
 
 - **The vault read empty after the first map change (AX-23).** `KTPAMX_ReloadPlugins` cleared
   `g_vault` but never reloaded it; Metamod pairs its `C_ServerDeactivate_Post` clear with a
@@ -178,15 +188,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   logged fine. The enqueue now reports "queued" separately from "handled", and only a real write
   latches. Cosmetic, but it removes exactly the context you want in `error_*.log`.
 
-- **Three ReHLDS hooks lacked the Metamod-mode passthrough (AX-25).** `SV_ClientCommand_RH`,
-  `AlertMessage_RH` and `PF_changelevel_I_RH` register from `GiveFnptrsToDll`, which Metamod calls
-  *before* `Meta_Attach` — so `g_bRunningWithMetamod` is still false and the hooks install. Under a
-  Metamod+ReHLDS load every client command, registered `.`-command, logevent and `plugin_log` would
-  have fired twice, and `g_bMapChangeInProgress` would have latched with nothing left to clear it
-  (`SV_ActivateServer_RH` passes through before reaching the clear), wedging every AMXX path that
-  early-outs on it. Dormant by configuration — production is extension-only — but two sibling hooks
-  already carried this guard and three did not, which is the kind of inconsistency a parity sweep
-  reads as intentional.
+- **Five ReHLDS hooks lacked the Metamod-mode passthrough (AX-25).** They register from
+  `GiveFnptrsToDll`, which Metamod calls *before* `Meta_Attach` — so `g_bRunningWithMetamod` is still
+  false and they install anyway. `SV_ClientCommand_RH` and `AlertMessage_RH` would double-dispatch
+  every client command, registered `.`-command, logevent and `plugin_log`. `PF_changelevel_I_RH`
+  would latch `g_bMapChangeInProgress` with nothing left to clear it (`SV_ActivateServer_RH` passes
+  through before reaching the clear), wedging every AMXX path that early-outs on it.
+  **`PF_precache_model_I_RH` was the worst of the set** — it fires long after `Meta_Attach` with
+  `g_bRehldsExtensionInit` still false, so it would run a *second full AMXX init*: reload plugins,
+  re-register every forward and every extension hook. `PF_RegUserMsg_RH` rounds it out (benign —
+  duplicates what `C_Spawn`'s `REG_USER_MSG` does). All five now carry the guard the two
+  already-correct siblings had. Dormant by configuration; production is extension-only.
 
 - **British/para weapon ids were never remapped in extension mode (AX-16).** `info_doddetect`
   carries `detect_allies_country` / `detect_allies_paras` / `detect_axis_paras`, and Metamod reads
@@ -200,9 +212,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lump read is factored into `DODX_LoadBSPEntityLump` so both consumers share it. Values are
   assigned on every map (`g_map.Init()` runs once per process in extension mode, so a British
   map would otherwise leave its flag set on the next US map).
-  **Inert on the current pool** — none of the 12 maps played in the last 180 days sets any of the
-  three keys, and all 12 were confirmed present locally so that is a real zero, not a missing-file
-  false negative. This is a landmine cleared, not a live fix.
+  ⚠️ **This changes live behavior — do not read it as dormant.** None of the 12 maps played in the
+  last 180 days sets any of the three keys (all 12 confirmed present locally, so that is a real zero
+  rather than a missing-file false negative), and none are in the 6-map mapcycle. But **14 installed
+  maps do set one**, and six of them — `dod_flash`, `dod_jagd` and `dod_caen` (allies_country),
+  `dod_switch`, `dod_zalec`, `dod_sturm` (allies_paras) — are present on **every fleet instance**
+  and reachable by `changelevel`. On those maps this cut starts remapping weapon ids into HLStatsX
+  and reporting grenade id 36 instead of 13, which `KTPPracticeMode` passes straight to
+  `dodx_give_grenade`. `NBase.cpp` handles 36 correctly, so this is right DoD behavior — but it is a
+  path that has never executed on the fleet. **Smoke a grenade throw and practice-mode refill on
+  `dod_jagd` (sets both flags) before staging.**
 
 ### Removed
 
