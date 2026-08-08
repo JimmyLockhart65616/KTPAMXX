@@ -157,6 +157,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch read `params[2]` regardless. Now `params[0] / sizeof(cell) >= 2`. Masked today: the shipped
   declaration's `const reason[] = ""` makes the compiler always emit two cells.
 
+- **British/para weapon ids were never remapped in extension mode (AX-16).** `info_doddetect`
+  carries `detect_allies_country` / `detect_allies_paras` / `detect_axis_paras`, and Metamod reads
+  them through `DispatchKeyValue_Post` — which never fires here. The intended replacement
+  (`DODX_DetectMapInfo`) was a stub that was never called and could not have worked anyway: GoldSrc
+  does not let you read arbitrary keyvalues back off a spawned entity. So all three stayed 0
+  forever, `get_weaponid` never remapped 1→37 (brit_knife), 16→36 (mills_bomb) or 20→33 (folding
+  carbine), the TraceLine paths reported grenade id 13 instead of 36, and `dod_get_map_info`
+  always answered 0 — silent weapon misattribution into HLStatsX for the whole map.
+  Now read straight out of the BSP entity lump, which the CP parser was already doing; the open +
+  lump read is factored into `DODX_LoadBSPEntityLump` so both consumers share it. Values are
+  assigned on every map (`g_map.Init()` runs once per process in extension mode, so a British
+  map would otherwise leave its flag set on the next US map).
+  **Inert on the current pool** — none of the 12 maps played in the last 180 days sets any of the
+  three keys, and all 12 were confirmed present locally so that is a real zero, not a missing-file
+  false negative. This is a landmine cleared, not a live fix.
+
+### Removed
+
+- **Dead code, verified unreachable before deletion (AX-11, AX-17, AX-18, AX-19, AX-29).**
+  - `C_StartFrame_Post`'s `g_putinserver_mask` block: the mask's only setter lives in
+    `SV_Spawn_f_RH`, registered only by extension init, so under Metamod it is never populated and
+    under extension mode the `!g_bRehldsExtensionInit` guard is always false. Doubly unreachable.
+  - `DODX_OnMessageHandler` (~125 lines): a complete parallel message-dispatch implementation with
+    no call site. It encoded guards that diverged from the live `DODX_OnMsgBegin` path, so the real
+    cost was a future fix landing in the dead copy.
+  - `traceVault.iClassName`: written with `ALLOC_STRING` on every map load, read nowhere. Its
+    comments still advertised a "~50µs savings" integer compare that was reverted — following them
+    reintroduces the bug that broke `dod_grenade_explosion` and practice-mode grenade refill, so
+    both `strcmp` sites now carry that as a tripwire.
+  - `CPlayer::CheckShotFired` (~115 lines) plus `oldbuttons`/`lastShotTime`/`nextShotTime`: the only
+    call site was commented out, and its embedded weapon fire-rate table was a second encoding of
+    `weaponData[]` free to rot. The `dod_client_weapon_fire` forward is unaffected — it fires from
+    `saveShot` on the live CurWeapon path, which is exactly why running both double-counted shots.
+  - The commented-out `Steam_GSBUpdateUserData_RH` / `ExecuteServerStringCmd_RH` blocks (4 sites).
+    The disabling is deliberate and stays; the corpses violated the repo's own no-dead-history rule
+    and invited re-litigating hooks already ruled out. One line at the registration site records why.
+
 ### Changed
 
 - **Log formatting buffers are stack-local, not shared statics (AX-31).** `Log()` and `LogError()`

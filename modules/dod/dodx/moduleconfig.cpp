@@ -51,7 +51,6 @@ static void DODX_OnTraceLine(IVoidHookChain<const float *, const float *, int, e
 static void DODX_OnSetClientKeyValue(IVoidHookChain<int, char *, const char *, const char *> *chain,
                                       int clientIndex, char *infobuffer, const char *key, const char *value);
 static int DODX_OnRegUserMsg(IHookChain<int, const char *, int> *chain, const char *pszName, int iSize);
-static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *msg);
 static void DODX_OnInitObjMessage(IVoidHookChain<IMessage *> *chain, IMessage *msg);
 static void DODX_OnClientConnected(IVoidHookChain<IGameClient *> *chain, IGameClient *client);
 static void DODX_OnSV_Spawn_f(IVoidHookChain<> *chain);
@@ -62,7 +61,8 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 // KTP: Forward declarations for extension mode setup/cleanup functions
 static bool DODX_SetupExtensionHooks();
 static void DODX_CleanupExtensionHooks();
-void DODX_DetectMapInfo();
+static char *DODX_LoadBSPEntityLump();
+static void DODX_ReadBSPMapInfo();
 void DODX_RegisterMessageHooks();
 static void DODX_InitCPFromEntities();
 
@@ -258,10 +258,6 @@ void ServerActivate_Post( edict_t *pEdictList, int edictCount, int clientMax ){
 
 	for( int i = 1; i <= gpGlobals->maxClients; ++i )
 		GET_PLAYER_POINTER_I(i)->Init( i , pEdictList + i );
-
-	// KTP: Cache ALLOC_STRING results for traceData classnames
-	for (int i = 0; i < MAX_TRACE; i++)
-		traceData[i].iClassName = ALLOC_STRING(traceData[i].szName);
 
 	RETURN_META(MRES_IGNORED);
 }
@@ -506,6 +502,9 @@ void TraceLine_Post(const float *v1, const float *v2, int fNoMonsters, edict_t *
 
 		for(int i = 0;i < MAX_TRACE; i++)
 		{
+			// strcmp is deliberate: ALLOC_STRING does not intern in GoldSrc, so a
+			// cached string_t compare never matches. That revert is what restored
+			// dod_grenade_explosion and practice-mode grenade refill.
 			if(strcmp(traceData[i].szName, STRING(e->v.classname)) == 0)
 			{
 				int grenId = (traceData[i].iId == 13 && g_map.detect_allies_country) ? 36 : traceData[i].iId;
@@ -982,6 +981,7 @@ static void DODX_OnTraceLine(IVoidHookChain<const float *, const float *, int, e
 
 		for (int i = 0; i < MAX_TRACE; i++)
 		{
+			// strcmp is deliberate — see the matching note on the Metamod TraceLine path.
 			if (strcmp(traceData[i].szName, STRING(e->v.classname)) == 0)
 			{
 				int grenId = (traceData[i].iId == 13 && g_map.detect_allies_country) ? 36 : traceData[i].iId;
@@ -1301,6 +1301,8 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 	for (int i = DODMAX_WEAPONS - DODMAX_CUSTOMWPNS; i < DODMAX_WEAPONS; i++)
 		weaponData[i].needcheck = false;
 
+	DODX_ReadBSPMapInfo();
+
 	// KTP: Set up g_pFirstEdict and g_bServerActive BEFORE chain->callNext().
 	// Entities are already spawned (SV_SpawnServer ran before SV_ActivateServer).
 	if (gpGlobals && gpGlobals->maxEntities > 0)
@@ -1349,11 +1351,6 @@ static void DODX_OnSV_ActivateServer(IVoidHookChain<int> *chain, int runPhysics)
 	// the authoritative CP ordering that matches SetObj indices.
 	chain->callNext(runPhysics);
 
-	// KTP: Cache ALLOC_STRING results for traceData classnames
-	// Enables integer comparison instead of strcmp in TraceLine hook (~50µs savings per grenade hit)
-	for (int i = 0; i < MAX_TRACE; i++)
-		traceData[i].iClassName = ALLOC_STRING(traceData[i].szName);
-
 	// Entity scan as fallback if InitObj wasn't intercepted
 	DODX_InitCPFromEntities();
 }
@@ -1390,152 +1387,91 @@ static void DODX_OnInitObjMessage(IVoidHookChain<IMessage *> *chain, IMessage *m
 	chain->callNext(msg);
 }
 
-// KTP: Message handler for IMessageManager - replaces all the Write*_Post and MessageBegin/End_Post hooks
-static void DODX_OnMessageHandler(IVoidHookChain<IMessage *> *chain, IMessage *msg)
+// info_doddetect drives the British/para weapon-id remaps in Utils.cpp and the
+// grenade id in the TraceLine paths. Metamod reads it through DispatchKeyValue_Post,
+// which never fires in extension mode — and keyvalues can't be read back off the
+// spawned entity — so read them straight out of the BSP instead. Values are always
+// assigned (g_map.Init() runs once per process here, not per map, so a previous
+// map's British flag would otherwise carry over onto a US map).
+static void DODX_ReadBSPMapInfo()
 {
-	// Safety check
-	if (!msg)
-	{
-		chain->callNext(msg);
+	g_map.detect_allies_country = 0;
+	g_map.detect_allies_paras = 0;
+	g_map.detect_axis_paras = 0;
+
+	char *entData = DODX_LoadBSPEntityLump();
+	if (!entData)
 		return;
-	}
 
-	int msg_type = msg->getId();
+	char *pos = entData;
+	bool found = false;
 
-	// KTP: Skip all message processing if server is not active (during map change)
-	if (!g_bServerActive)
+	while (*pos && !found)
 	{
-		chain->callNext(msg);
-		return;
-	}
+		while (*pos && *pos != '{') pos++;
+		if (!*pos) break;
+		pos++;
 
-	// Get message info
-	edict_t *ed = msg->getEdict();
+		char classname[64] = "";
+		int allies_country = 0, allies_paras = 0, axis_paras = 0;
 
-	// Validate message type is in range
-	if (msg_type < 0 || msg_type >= MAX_REG_MSGS)
-	{
-		chain->callNext(msg);
-		return;
-	}
-
-	// Set up player info (like MessageBegin_Post)
-	// KTP: Extra safety - validate edict and gpGlobals before using ENTINDEX_SAFE
-	if (ed && !ed->free && g_pFirstEdict && gpGlobals)
-	{
-		int idx = ENTINDEX_SAFE(ed);
-
-		// Validate player index range
-		if (idx < 1 || idx > gpGlobals->maxClients)
+		while (*pos && *pos != '}')
 		{
-			mPlayerIndex = 0;
-			mPlayer = NULL;
-		}
-		else
-		{
-			mPlayerIndex = idx;
-			mPlayer = GET_PLAYER_POINTER_I(mPlayerIndex);
-		}
-	}
-	else
-	{
-		mPlayerIndex = 0;
-		mPlayer = NULL;
-	}
+			while (*pos && (*pos == ' ' || *pos == '\t' || *pos == '\r' || *pos == '\n')) pos++;
+			if (*pos == '}') break;
 
-	mDest = static_cast<int>(msg->getDest());
-	mState = 0;
-
-	// Get the callbacks for this message type
-	function = modMsgs[msg_type];
-	endfunction = modMsgsEnd[msg_type];
-
-	// Skip processing if no callbacks registered for this message
-	if (!function && !endfunction)
-	{
-		chain->callNext(msg);
-		return;
-	}
-
-	// KTP: Skip processing for players that aren't initialized yet.
-	// In extension mode, players are initialized via SV_PlayerRunPreThink hook.
-	// In Metamod mode, they're initialized via ClientPutInServer_Post.
-	// Exception: InitObj is global CP data sent to connecting players (MSG_ONE)
-	// and doesn't need a player context — let it through even if !ingame.
-	if (mPlayer && !mPlayer->ingame && msg_type != gmsgInitObj)
-	{
-		// Player not fully initialized yet, skip message processing
-		chain->callNext(msg);
-		return;
-	}
-
-	// Process message parameters (like the Write*_Post hooks)
-	if (function)
-	{
-		int paramCount = msg->getParamCount();
-
-		for (int i = 0; i < paramCount; i++)
-		{
-			IMessage::ParamType type = msg->getParamType(i);
-			switch(type)
-			{
-				case IMessage::ParamType::Byte:
-				case IMessage::ParamType::Char:
-				case IMessage::ParamType::Short:
-				case IMessage::ParamType::Long:
-				case IMessage::ParamType::Entity:
-				{
-					int iValue = msg->getParamInt(i);
-					(*function)((void *)&iValue);
-					break;
-				}
-				case IMessage::ParamType::Angle:
-				case IMessage::ParamType::Coord:
-				{
-					float flValue = msg->getParamFloat(i);
-					(*function)((void *)&flValue);
-					break;
-				}
-				case IMessage::ParamType::String:
-				{
-					const char *sz = msg->getParamString(i);
-					(*function)((void *)sz);
-					break;
-				}
+			if (*pos != '"') { pos++; continue; }
+			pos++;
+			char key[64] = "";
+			int ki = 0;
+			while (*pos && *pos != '"') {
+				if (ki < 63) key[ki++] = *pos;
+				pos++;
 			}
+			key[ki] = '\0';
+			if (*pos == '"') pos++;
+
+			while (*pos && (*pos == ' ' || *pos == '\t')) pos++;
+
+			if (*pos != '"') continue;
+			pos++;
+			char value[256] = "";
+			int vi = 0;
+			while (*pos && *pos != '"') {
+				if (vi < 255) value[vi++] = *pos;
+				pos++;
+			}
+			value[vi] = '\0';
+			if (*pos == '"') pos++;
+
+			if (strcmp(key, "classname") == 0)
+				strncpy(classname, value, 63);
+			else if (strcmp(key, "detect_allies_country") == 0)
+				allies_country = atoi(value);
+			else if (strcmp(key, "detect_allies_paras") == 0)
+				allies_paras = atoi(value);
+			else if (strcmp(key, "detect_axis_paras") == 0)
+				axis_paras = atoi(value);
+		}
+
+		if (*pos == '}') pos++;
+
+		if (strcmp(classname, "info_doddetect") == 0)
+		{
+			g_map.detect_allies_country = allies_country;
+			g_map.detect_allies_paras = allies_paras;
+			g_map.detect_axis_paras = axis_paras;
+			g_map.initialized = true;
+			found = true;
 		}
 	}
 
-	// Call end function (like MessageEnd_Post)
-	if (endfunction)
-	{
-		(*endfunction)(NULL);
-	}
+	free(entData);
 
-	// Continue the chain
-	chain->callNext(msg);
-}
-
-// KTP: Detect info_doddetect entity after map load (workaround for DispatchKeyValue_Post)
-void DODX_DetectMapInfo()
-{
-	// Search for info_doddetect entity and read its keyvalues
-	edict_t *pEnt = nullptr;
-	while ((pEnt = FindEntityByClassname(pEnt, "info_doddetect")) != nullptr)
-	{
-		g_map.pEdict = pEnt;
-		g_map.initialized = true;
-
-		// Read the keyvalues from the entity - these should be set by the engine
-		// Unfortunately, we can't easily read arbitrary keyvalues after spawn,
-		// but for DOD the map info is typically static per map.
-		// The entity keyvalues are stored in the BSP and loaded at spawn time.
-
-		// For now, we'll use a fallback approach: check the map name
-		// and use known defaults, or allow server admins to configure via cvars
-
-		break;
-	}
+	if (found && (g_map.detect_allies_country || g_map.detect_allies_paras || g_map.detect_axis_paras))
+		MF_Log("[DODX] BSP: %s info_doddetect — allies_country=%d allies_paras=%d axis_paras=%d",
+			STRING(gpGlobals->mapname), g_map.detect_allies_country,
+			g_map.detect_allies_paras, g_map.detect_axis_paras);
 }
 
 // KTP: Setup extension mode hooks
@@ -1721,7 +1657,8 @@ struct bsp_cp_info {
 	float origin_z;
 };
 
-static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
+// Caller owns the returned buffer (free()). NULL on any failure; the reason is logged.
+static char *DODX_LoadBSPEntityLump()
 {
 	const char *mapName = STRING(gpGlobals->mapname);
 
@@ -1786,6 +1723,15 @@ static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
 	}
 	entData[entLength] = '\0';
 	fclose(fp);
+	return entData;
+}
+
+static int DODX_ReadBSPPointIndices(bsp_cp_info *cpInfo, int maxCPs)
+{
+	const char *mapName = STRING(gpGlobals->mapname);
+	char *entData = DODX_LoadBSPEntityLump();
+	if (!entData)
+		return 0;
 
 	// Parse entity lump for dod_control_point entities
 	int cpCount = 0;

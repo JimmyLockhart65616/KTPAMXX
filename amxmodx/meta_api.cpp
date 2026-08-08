@@ -73,6 +73,8 @@ CForwardMngr g_forwards;
 ke::Vector<ke::AutoPtr<CPlayer *>> g_auth;
 // KTP: Pending client_putinserver forwards — bitmask of player indices waiting to spawn
 // Bit N corresponds to player index N+1. Zero cost when no players joining.
+// Extension-mode only: set by SV_Spawn_f_RH, drained by SV_Frame_RH. Metamod
+// fires putinserver directly from C_ClientPutInServer_Post and never sets this.
 static uint32_t g_putinserver_mask = 0;
 ke::Vector<ke::AutoPtr<ForceObject>> g_forcemodels;
 ke::Vector<ke::AutoPtr<ForceObject>> g_forcesounds;
@@ -195,16 +197,12 @@ static void PF_changelevel_I_RH(IRehldsHook_PF_changelevel_I *chain, const char 
 // KTP: Extension mode hooks for all required forwards
 void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl);
 qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *chain, IGameClient *cl, const void *pvSteam2Key, unsigned int ucbSteam2Key);
-// KTP: Disabled — pass-through hook with no functionality
-// bool Steam_GSBUpdateUserData_RH(IRehldsHook_Steam_GSBUpdateUserData *chain, uint64 steamid, const char *name, uint32 score);
 // KTP: SV_ClientUserInfoChanged hook for client_infochanged + CPlayer::name refresh in extension mode.
 // The Metamod-mode path (C_ClientUserInfoChanged_Post via gFunctionTable_Post) never fires here,
 // so without this hook get_user_name() stays at the connect-time name through every respawn
 // after a setinfo "name" "..." mid-life.
 void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IGameClient *cl);
 bool SV_CheckConsistencyResponse_RH(IRehldsHook_SV_CheckConsistencyResponse *chain, IGameClient *cl, resource_t *resource, uint32 hash);
-// KTP: Disabled — pass-through hook with no functionality
-// void ExecuteServerStringCmd_RH(IRehldsHook_ExecuteServerStringCmd *chain, const char *cmdStr, cmd_source_t src, IGameClient *cl);
 
 // KTP: IMessageManager hook for register_event in extension mode
 void MessageHook_Handler(IVoidHookChain<IMessage *> *chain, IMessage *msg);
@@ -1780,19 +1778,6 @@ qboolean Steam_NotifyClientConnect_RH(IRehldsHook_Steam_NotifyClientConnect *cha
 	return result;
 }
 
-// KTP: Disabled — pass-through hook with no functionality
-// // KTP: Steam_GSBUpdateUserData hook for client_infochanged forward in extension mode
-// // This is called when Steam updates user data (name changes, etc.)
-// // Note: client_infochanged is already handled by C_ClientUserInfoChanged_Post hook
-// // This hook is kept for future use if we need Steam-specific handling
-// bool Steam_GSBUpdateUserData_RH(IRehldsHook_Steam_GSBUpdateUserData *chain, uint64 steamid, const char *name, uint32 score)
-// {
-// 	bool result = chain->callNext(steamid, name, score);
-// 	// Note: The client_infochanged forward is already triggered by
-// 	// C_ClientUserInfoChanged_Post, so we don't need to do anything here.
-// 	// This hook is registered for potential future Steam-specific functionality.
-// 	return result;
-// }
 
 // KTP: SV_ClientUserInfoChanged hook — fires client_infochanged forward and
 // refreshes CPlayer::name from the engine's infobuffer. The Metamod equivalent
@@ -1855,19 +1840,6 @@ void SV_ClientUserInfoChanged_RH(IRehldsHook_SV_ClientUserInfoChanged *chain, IG
 	executeForwards(FF_ClientInfoChanged, static_cast<cell>(index));
 	pPlayer->name = name;
 }
-
-// KTP: Disabled — pass-through hook with no functionality
-// // KTP: ExecuteServerStringCmd hook for client_command forward in extension mode
-// // Note: The client_command forward and registered commands are already handled
-// // by C_ClientCommand through the DLL hooks infrastructure.
-// // This hook is kept for future use if we need command-string level interception.
-// void ExecuteServerStringCmd_RH(IRehldsHook_ExecuteServerStringCmd *chain, const char *cmdStr, cmd_source_t src, IGameClient *cl)
-// {
-// 	// The client_command forward is handled by the C_ClientCommand DLL hook
-// 	// which is already called by the engine for client commands.
-// 	// We just pass through here.
-// 	chain->callNext(cmdStr, src, cl);
-// }
 
 void C_ClientPutInServer_Post(edict_t *pEntity)
 {
@@ -2166,40 +2138,6 @@ void C_StartFrame_Post(void)
 		}
 	}
 
-	// KTP: Process pending client_putinserver forwards (Metamod mode only).
-	// In extension mode, g_putinserver_mask is processed by SV_Frame_RH.
-	if (!g_bRehldsExtensionInit && g_putinserver_mask)
-	{
-		for (int i = 0; i < gpGlobals->maxClients && i < 32; i++)
-		{
-			if (!(g_putinserver_mask & (1u << i)))
-				continue;
-
-			int playerIndex = i + 1;
-			CPlayer *pPlayer = GET_PLAYER_POINTER_I(playerIndex);
-			edict_t *pEdict = pPlayer ? pPlayer->pEdict : nullptr;
-
-			if (!pPlayer || !pEdict || !pPlayer->initialized)
-			{
-				g_putinserver_mask &= ~(1u << i);
-				continue;
-			}
-
-			if ((pEdict->v.flags & FL_CLIENT) &&
-				pEdict->v.classname && STRING(pEdict->v.classname)[0] != '\0')
-			{
-				g_putinserver_mask &= ~(1u << i);
-				if (!pPlayer->ingame)
-				{
-					pPlayer->PutInServer();
-					++g_players_num;
-					executeForwards(FF_ClientPutInServer, static_cast<cell>(playerIndex));
-				}
-				continue;
-			}
-			// Not spawned yet, keep bit set
-		}
-	}
 
 #ifdef MEMORY_TEST
 	if (g_memreport_enabled && g_next_memreport_time <= gpGlobals->time)
@@ -3497,11 +3435,9 @@ static void KTPAMX_InitAsRehldsExtension()
 	// and to keep CPlayer::name in sync with the engine on userinfo changes.
 	RehldsHookchains->SV_ClientUserInfoChanged()->registerHook(SV_ClientUserInfoChanged_RH);
 
-	// KTP: Disabled — pass-through hook with no functionality
-	// RehldsHookchains->Steam_GSBUpdateUserData()->registerHook(Steam_GSBUpdateUserData_RH);
-
-	// KTP: Disabled — pass-through hook with no functionality
-	// RehldsHookchains->ExecuteServerStringCmd()->registerHook(ExecuteServerStringCmd_RH);
+	// Steam_GSBUpdateUserData and ExecuteServerStringCmd are deliberately NOT hooked:
+	// both were pure pass-throughs, and SV_ClientUserInfoChanged (2.7.16) now covers
+	// the niche the GSB one was reserved for. See CHANGELOG 2.6.x.
 
 	// KTP: Register SV_Frame hook for per-frame processing (client_putinserver forwards, etc)
 	RehldsHookchains->SV_Frame()->registerHook(SV_Frame_RH);

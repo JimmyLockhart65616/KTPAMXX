@@ -40,7 +40,6 @@ struct traceVault
 	int iId;
 	int iAction;
 	float fDel;
-	int iClassName;  // KTP: Cached ALLOC_STRING result for integer comparison instead of strcmp
 };
 
 #define ACT_NADE_NONE		(0)
@@ -99,11 +98,6 @@ class CPlayer
 		bool do_scoped;
 		bool is_scoped;
 
-		// KTP: Shot tracking for extension mode (button-based detection)
-		int oldbuttons;           // Previous frame's button state
-		float lastShotTime;       // Time of last detected shot (for fire rate limiting)
-		float nextShotTime;       // Earliest time next shot can be detected
-
 		struct ObjectStruct
 		{
 			edict_t* pEdict;
@@ -145,7 +139,6 @@ class CPlayer
 		bool setModel();
 		void setBody(int);
 		void PreThink();
-		void CheckShotFired();  // KTP: Shot detection for extension mode
 		void Scoping(int);
 		void ScopingCheck();
 		void WeaponsCheck(int);
