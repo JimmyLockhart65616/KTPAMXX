@@ -220,8 +220,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and reachable by `changelevel`. On those maps this cut starts remapping weapon ids into HLStatsX
   and reporting grenade id 36 instead of 13, which `KTPPracticeMode` passes straight to
   `dodx_give_grenade`. `NBase.cpp` handles 36 correctly, so this is right DoD behavior — but it is a
-  path that has never executed on the fleet. **Smoke a grenade throw and practice-mode refill on
-  `dod_jagd` (sets both flags) before staging.**
+  path that has never executed on the fleet.
+  ✅ **Smoke-tested 2026-08-08 on a local HLDS running the md5-pinned binaries**, three maps in one
+  process, clean exit 0: `dod_jagd` → `country=1 paras=0 axis_paras=1`, `dod_flash` → `1/0/0`,
+  `dod_anzio` → `0/0/0`. The third map is the one that matters — it proves the **per-map reset**
+  holds, which is the whole risk given `g_map.Init()` runs once per process. CP parsing came through
+  the shared-loader refactor unchanged (3/5/5 control points, all with `point_index`). No cores.
+  Remaining untested: the give-grenade leg needs a live client. Its risk is low — the only new value
+  reaching `dodx_give_grenade` is 36, which has an explicit case (the trace table's own comment
+  reads `{ "grenade", 13, … }, // or 36`), and `dodx_give_grenade` is separately known to fail
+  fleet-wide already (~75k `ret=-1`), so this cannot regress a path that currently works.
+
+- **BSP entity-lump tokenizer could walk off the allocation.** With the cursor sitting on the lump's
+  terminator, `if (*pos != '"') { pos++; continue; }` stepped past `entData[entLength]` and the
+  enclosing `while (*pos && *pos != '}')` then read unmapped heap — a 2 MB lump is served by `mmap`,
+  so the next page can be absent and the read is a SIGSEGV at map load. Reachable only from a
+  truncated or corrupt BSP that ends inside a `{` block. Guarded at the new `DODX_ReadBSPMapInfo`
+  site **and** at the pre-existing twin in `DODX_ReadBSPPointIndices`, which had carried it all
+  along. Audited all 97 installed maps with a quote-aware scan (entity values legitimately contain
+  `{`/`}`, so a naive brace count reports ~half the pool as malformed — the first pass did exactly
+  that): **none can reach it**, so this is hardening against a bad file, not a live crash.
 
 ### Removed
 
