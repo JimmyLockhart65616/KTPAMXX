@@ -195,8 +195,14 @@ static bool KTP_ALogEnsureThread()
 // Returns false only if the writer thread is unavailable (caller goes sync).
 // A full queue counts a drop and returns true — blocking here would defeat
 // the whole point.
-static bool KTP_ALogEnqueue(const char *path, const char *text)
+// Returns "handled" — a full ring drops the line and still returns true, because
+// falling back to synchronous I/O during a disk stall is the thing this writer
+// exists to avoid. `queued` separates that from an actual write, for the one
+// caller that latches state on it.
+static bool KTP_ALogEnqueue(const char *path, const char *text, bool *queued = nullptr)
 {
+	if (queued)
+		*queued = false;
 	if (!KTP_ALogEnsureThread())
 		return false;
 	{
@@ -212,6 +218,8 @@ static bool KTP_ALogEnqueue(const char *path, const char *text)
 		ke::SafeSprintf(op->text, sizeof(op->text), "%s", text);
 		s_ktpALogQHead = next;
 	}
+	if (queued)
+		*queued = true;
 	KTP_ALogCv().notify_one();
 	return true;
 }
@@ -519,9 +527,14 @@ void CLog::LogError(const char *fmt, ...)
 	size_t used = strlen(text);
 	ke::SafeSprintf(text + used, sizeof(text) - used, "L %s: %s\n", date, msg);
 
-	if (m_Async && KTP_ALogEnqueue(file, text))
+	bool queued = false;
+	if (m_Async && KTP_ALogEnqueue(file, text, &queued))
 	{
-		m_LoggedErrMap = true;
+		// Latch only on an actual write. Latching on a dropped batch loses the
+		// "Start of error session" + map/file header for the rest of the map
+		// while every later error line still logs fine.
+		if (queued)
+			m_LoggedErrMap = true;
 	} else {
 		FILE *pF = fopen(file, "a+");
 

@@ -2061,7 +2061,11 @@ void Module_CacheFunctions()
 	REGISTER_FUNC("GetEngineFuncs", MNF_GetEngineFuncs)
 	REGISTER_FUNC("GetGlobalVars", MNF_GetGlobalVars)
 
-	// KTP: ReHLDS API access for modules in extension mode
+	// KTP: ReHLDS API access for modules in extension mode.
+	// GetRehldsApi/GetRehldsFuncs/GetRehldsServerData are reserved — no in-tree
+	// consumer yet (dodx takes the narrower Hookchains/MessageManager getters).
+	// Kept deliberately: they're the entry points a future module needs, and
+	// withdrawing exported SDK surface breaks anything built against it.
 	REGISTER_FUNC("IsExtensionMode", MNF_IsExtensionMode)
 	REGISTER_FUNC("GetRehldsApi", MNF_GetRehldsApi)
 	REGISTER_FUNC("GetRehldsHookchains", MNF_GetRehldsHookchains)
@@ -2086,7 +2090,8 @@ void Module_CacheFunctions()
 	REGISTER_FUNC("RegisterFunctionEx", MNF_RegisterFunctionEx);
 	REGISTER_FUNC("GetConfigManager", MNF_GetConfigManager);
 
-	// KTP: Module frame callbacks for modules that need per-frame processing (like cURL)
+	// KTP: Module frame callbacks for modules that need per-frame processing.
+	// Also reserved: KTPAmxxCurl requests both via REQFUNC_OPT but calls neither.
 	REGISTER_FUNC("RegModuleFrameFunc", MNF_RegModuleFrameFunc);
 	REGISTER_FUNC("UnregModuleFrameFunc", MNF_UnregModuleFrameFunc);
 

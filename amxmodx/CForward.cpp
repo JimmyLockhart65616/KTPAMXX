@@ -737,10 +737,17 @@ cell CForwardMngr::executeForwards(int id, cell *params)
 	{
 		CSPForward *fwd = m_SPForwards[id >> 1];
 		retVal = fwd->execute(params, m_TmpArrays);
-		if (fwd->m_ToDelete)
+		// Finish the release that deferred itself because we were executing:
+		// refcount already hit 0 there, so free the slot directly. Routing back
+		// through unregisterSPForward re-enters the refcount-0 tripwire and
+		// cries wolf on every self-removing task callback.
+		// m_InExec is still >0 when an OUTER execute() of this same forward is
+		// on the stack — leave m_ToDelete set and let that frame do the free.
+		if (fwd->m_ToDelete && !fwd->m_InExec)
 		{
 			fwd->m_ToDelete = false;
-			unregisterSPForward(id);
+			fwd->isFree = true;
+			m_FreeSPForwards.push(id);
 		}
 	} else {
 		retVal = m_Forwards[id >> 1]->execute(params, m_TmpArrays);

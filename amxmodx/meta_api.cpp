@@ -1232,7 +1232,10 @@ static void PF_changelevel_I_RH(IRehldsHook_PF_changelevel_I *chain, const char 
 	// it (tasks, module frame callbacks, events, logevents, client commands) for the rest
 	// of the map. A real map change still latches here, and SV_InactivateClients_RH latches
 	// again once the change is genuinely under way.
-	if (s1 && IS_MAP_VALID(s1))
+	// Only readers are ReHLDS hooks, and under Metamod SV_ActivateServer_RH
+	// passes through before reaching the clear — so latching there would wedge
+	// the flag on for good. See SV_ClientCommand_RH.
+	if (!g_bRunningWithMetamod && s1 && IS_MAP_VALID(s1))
 		g_bMapChangeInProgress = true;
 
 	// Continue with the map change
@@ -3177,6 +3180,10 @@ static void AlertMessage_RH(IRehldsHook_AlertMessage *chain, ALERT_TYPE atype, c
 	// Call the original first (log is written here — cannot be suppressed after this point)
 	chain->callNext(atype, szMsg);
 
+	// Metamod mode runs logevents through C_AlertMessage; see SV_ClientCommand_RH.
+	if (g_bRunningWithMetamod)
+		return;
+
 	// KTP: Skip log event processing during map change to prevent crashes
 	if (g_bMapChangeInProgress)
 		return;
@@ -3688,6 +3695,16 @@ static void KTPAMX_InitAsRehldsExtension()
 // Instead of RETURN_META(MRES_SUPERCEDE), we simply return without calling chain->callNext
 static void SV_ClientCommand_RH(IRehldsHook_SV_ClientCommand *chain, edict_t *pEdict)
 {
+	// These hooks register in GiveFnptrsToDll, which Metamod calls BEFORE
+	// Meta_Attach — so under a Metamod+ReHLDS load they'd be live alongside
+	// C_ClientCommand and every command would process twice. Same passthrough
+	// SV_ActivateServer_RH/SV_InactivateClients_RH already carry.
+	if (g_bRunningWithMetamod)
+	{
+		chain->callNext(pEdict);
+		return;
+	}
+
 	// KTP: Skip client command processing during map change to prevent crashes
 	if (g_bMapChangeInProgress)
 	{

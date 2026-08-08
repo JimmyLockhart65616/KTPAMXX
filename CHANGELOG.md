@@ -157,6 +157,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   branch read `params[2]` regardless. Now `params[0] / sizeof(cell) >= 2`. Masked today: the shipped
   declaration's `const reason[] = ""` makes the compiler always emit two cells.
 
+- **The double-release tripwire cried wolf on every self-removing task (AX-14).** A `set_task`
+  callback that calls `remove_task` on its own id — KTPMatchHandler's countdown tick does exactly
+  this — released the forward while `execute()` was still on the stack, so `unregisterSPForward`
+  zeroed the refcount and deferred the free via `m_ToDelete`. `executeForwards` then called
+  `unregisterSPForward` a **second** time to finish it, and that call hit `m_RefCount == 0 &&
+  !m_InExec` and logged "released with refcount already 0 (double release?)". The forward was
+  always freed exactly once; only the warning was false — but a tripwire that fires on a routine
+  match-path idiom is worse than none, since it buries the real double-release it exists to catch.
+  The deferred half now frees the slot directly instead of re-entering the release path. It still
+  honours `m_InExec`: with an outer `execute()` of the same forward on the stack, `m_ToDelete` stays
+  set and that frame does the free — dropping that check would free a live forward, which is the
+  bug the 2.7.25 depth counter was added to prevent.
+
+- **`LogError` lost the error-session header on a dropped write (AX-32).** `KTP_ALogEnqueue` returns
+  true on a full ring — deliberately, since falling back to synchronous I/O during a disk stall is
+  what the async writer exists to avoid — but `LogError` read that as "written" and latched
+  `m_LoggedErrMap`. If the first script error of a map landed while the ring was full, the "Start of
+  error session" + map/file header was gone for the rest of the map while every later error line
+  logged fine. The enqueue now reports "queued" separately from "handled", and only a real write
+  latches. Cosmetic, but it removes exactly the context you want in `error_*.log`.
+
+- **Three ReHLDS hooks lacked the Metamod-mode passthrough (AX-25).** `SV_ClientCommand_RH`,
+  `AlertMessage_RH` and `PF_changelevel_I_RH` register from `GiveFnptrsToDll`, which Metamod calls
+  *before* `Meta_Attach` — so `g_bRunningWithMetamod` is still false and the hooks install. Under a
+  Metamod+ReHLDS load every client command, registered `.`-command, logevent and `plugin_log` would
+  have fired twice, and `g_bMapChangeInProgress` would have latched with nothing left to clear it
+  (`SV_ActivateServer_RH` passes through before reaching the clear), wedging every AMXX path that
+  early-outs on it. Dormant by configuration — production is extension-only — but two sibling hooks
+  already carried this guard and three did not, which is the kind of inconsistency a parity sweep
+  reads as intentional.
+
 - **British/para weapon ids were never remapped in extension mode (AX-16).** `info_doddetect`
   carries `detect_allies_country` / `detect_allies_paras` / `detect_axis_paras`, and Metamod reads
   them through `DispatchKeyValue_Post` — which never fires here. The intended replacement
@@ -193,6 +224,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The commented-out `Steam_GSBUpdateUserData_RH` / `ExecuteServerStringCmd_RH` blocks (4 sites).
     The disabling is deliberate and stays; the corpses violated the repo's own no-dead-history rule
     and invited re-litigating hooks already ruled out. One line at the registration site records why.
+
+  **Kept deliberately (AX-28).** `GetRehldsApi`, `GetRehldsFuncs`, `GetRehldsServerData` and
+  `Reg`/`UnregModuleFrameFunc` do have zero in-tree consumers — confirmed against a positive control
+  (`GetRehldsHookchains`, which dodx does call), after a first probe returned zero for the control
+  too and was therefore measuring nothing. They are **not** being removed: they're the entry points
+  a future module needs, `REQFUNC_OPT` already tolerates their absence, and withdrawing exported SDK
+  surface means a cross-repo churn under the dual-copy rule plus a compat break for anything built
+  against it. Marked reserved at the registration site instead. (The review's claim that KTPAmxxCurl
+  calls `MF_RegModuleFrameFunc` is wrong — it requests both and calls neither.)
 
 ### Changed
 
