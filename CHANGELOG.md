@@ -29,6 +29,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ⚠️ **No test coverage** (needs two clients behind one NAT + a ≥10s timeout). Watch
   disconnect-save SteamIDs after the cut that ships it.
 
+- **`client_connect`/`client_authorized` fired twice per player per map change (AX-08).**
+  `Steam_NotifyClientConnect_RH` runs first in `SV_ConnectClient` and already does
+  `Connect()` + `client_connect` + `Authorize()` + `client_authorized`; `ClientConnected_RH` then
+  re-ran `Connect()` unconditionally. The duplicate forwards are the visible symptom — the damaging
+  part is that `Connect()` sets `authorized=false` and memsets `flags[]`, so the second call
+  discards the admin flags the first authorize just resolved, and `SV_Spawn_f_RH` re-authorizes and
+  fires `client_authorized` again. Metamod fires each exactly once, so this is an extension-mode
+  parity gap. Now gated on `initialized`, which `Disconnect()` clears at map change so a genuine new
+  session still connects. ⚠️ Untested against a live map change with players.
+
 - **Two DODX message sends could kill the server (AX-20, plus one the review missed).**
   `MESSAGE_BEGIN` with type 0 is `Sys_Error` — the engine terminates the process — and every
   `gmsg*` id is 0 until `RegUserMsg` interception captures it. The 2.7.22 sweep guarded three send
