@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [2.7.25] - 2026-08-07
+## [2.7.25] - 2026-08-08
 
 > **Upstream-file edits in this cut**, flagged per the fork-delta rule. Each is a minimal diff to
 > upstream AMX Mod X code, made because the defect lives there: `CForward.cpp/.h` and `CTask.cpp/.h`
@@ -134,6 +134,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   setters, so the fix is inert until a caller exists. Landed on `master` now so it
   is in place before the CP-init work adds the first consumer. Not cut yet — rides
   the next DODX build; no version bump, no md5 (not shipped).
+
+- **Every client command dispatched through a full linear scan (AX-21/AX-24).** The seven
+  `registerPrefix` calls that bucket commands by prefix live only in `C_Spawn`, so in extension
+  mode no buckets existed, `registerCmdPrefix` always failed, every registration landed in the
+  flat `clcmdlist`, and `clcmdprefixbegin()` always returned null — making the 2.7.2 say/say_team
+  separation inert on the fleet. Every say, jointeam, menuselect and class pick from every player
+  walked ~200 entries with `stricmp`. Added to extension init, before plugins register anything and
+  longest-prefix-first (`findPrefix` matches on the *stored* prefix's length, so a bare `say`
+  swallows `say_team`). Dispatch results are unchanged — the fallback list contained everything.
+  The reload path needs no counterpart: unlike Metamod, extension mode never calls
+  `g_commands.clear()` on map change.
+
+- **The vault read empty after the first map change (AX-23).** `KTPAMX_ReloadPlugins` cleared
+  `g_vault` but never reloaded it; Metamod pairs its `C_ServerDeactivate_Post` clear with a
+  `C_Spawn` `loadVault` every map. So `set_vaultdata` on map 1 persisted to `vault.ini` and
+  `get_vaultdata` on map 2 returned `""` with the value still on disk. Latent — no KTP plugin uses
+  the vault natives — but it silently broke the documented API for anything that did.
+
+- **`ktp_drop_client` could read an argument that was never pushed (AX-34).** `params[0]` is the
+  argument **byte** count, so `params[0] >= 2` is true with a single argument and the optional-reason
+  branch read `params[2]` regardless. Now `params[0] / sizeof(cell) >= 2`. Masked today: the shipped
+  declaration's `const reason[] = ""` makes the compiler always emit two cells.
+
+### Changed
+
+- **Log formatting buffers are stack-local, not shared statics (AX-31).** `Log()` and `LogError()`
+  formatted into `static` buffers while the enqueue path is explicitly hardened for concurrent
+  module-thread producers — the two halves of the async design disagreed about whether
+  multi-threaded logging is supported. Two concurrent callers would tear each other's line and hand
+  `KTP_ALogEnqueue` a transiently unterminated buffer. No such producer exists today (game thread
+  only), so this is latent; ~8KB of stack per call is free on either thread.
+
+- **Writer loop drops the `needFlush` state machine (AX-33).** The log `FILE*` is line-buffered and
+  every enqueued text is newline-terminated, so the drain-time `fflush` always ran on an empty
+  buffer — ~15 lines that never moved a byte. The one case where it *would* have mattered is
+  `setvbuf` failing, whose return was unchecked; that is now checked, with an `_IONBF` fallback,
+  which makes the durability guarantee explicit instead of implicit. Shutdown already flushed via
+  `fclose`.
+
+- **Corrected the `g_activated` narration and dropped two redundant re-sets (AX-30/AX-38).**
+  Extension init set `g_activated = true` unconditionally, then the deferred-precache branch
+  claimed "Don't set g_activated yet" and two later sites set it true again. Now set once, where it
+  actually happens, with the real reason (it gates teardown/hook paths such as
+  `SV_InactivateClients_RH`, not plugin readiness). Separately, `CMisc.h` claimed `IsBot()`/
+  `IsAlive()` were out-of-lined "for debug logging" — no such logging exists, and a maintainer
+  acting on that comment would re-inline the upstream one-liners and silently drop the
+  `pEdict->free` guard, the `authorized` gate before `GETPLAYERAUTHID`, and the NULL-edict check.
+  Comments only.
 
 ### Documentation
 

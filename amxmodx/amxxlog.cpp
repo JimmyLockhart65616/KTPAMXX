@@ -87,24 +87,11 @@ static void KTP_ALogWriterLoop()
 {
 	FILE *fp = nullptr;                // writer-owned; game thread never sees it
 	char curPath[PLATFORM_MAX_PATH] = "";
-	bool needFlush = false;
 	std::unique_lock<std::mutex> lk(KTP_ALogMx());
 	for (;;)
 	{
 		while (s_ktpALogQHead == s_ktpALogQTail && !s_ktpALogStop)
-		{
-			if (needFlush && fp)
-			{
-				// Flush only once the queue drains, and off-lock — a stalled
-				// flush must never block the game thread's enqueue.
-				lk.unlock();
-				fflush(fp);
-				lk.lock();
-				needFlush = false;
-				continue;
-			}
 			KTP_ALogCv().wait(lk);
-		}
 		if (s_ktpALogQHead == s_ktpALogQTail && s_ktpALogStop)
 			break;
 
@@ -126,13 +113,16 @@ static void KTP_ALogWriterLoop()
 			{
 				// Line-buffered: one write() per line reaches the kernel, so a
 				// crash loses at most the in-flight line — same guarantee as
-				// the old synchronous open/write/close cycle.
-				setvbuf(fp, nullptr, _IOLBF, 0);
+				// the old synchronous open/write/close cycle. Every enqueued
+				// text is newline-terminated, so this is what makes the writer
+				// durable; if it fails, go unbuffered rather than sit on a
+				// full 8KB of crash evidence.
+				if (setvbuf(fp, nullptr, _IOLBF, 0) != 0)
+					setvbuf(fp, nullptr, _IONBF, 0);
 				ke::SafeSprintf(curPath, sizeof(curPath), "%s", op.path);
 			}
 			else
 				curPath[0] = '\0';     // retry the open on the next line
-			needFlush = false;
 		}
 		if (fp)
 		{
@@ -145,8 +135,6 @@ static void KTP_ALogWriterLoop()
 				curPath[0] = '\0';
 				s_ktpALogDrops.fetch_add(1, std::memory_order_relaxed);
 			}
-			else
-				needFlush = true;
 		}
 		else
 			s_ktpALogDrops.fetch_add(1, std::memory_order_relaxed);
@@ -417,9 +405,12 @@ void CLog::MapChange()
 	}
 }
 
+// Buffers here are stack-local, not static: the enqueue path is hardened for
+// concurrent module-thread producers, so a shared format buffer would let two
+// callers tear each other's line and hand KTP_ALogEnqueue an unterminated read.
 void CLog::Log(const char *fmt, ...)
 {
-	static char file[PLATFORM_MAX_PATH];
+	char file[PLATFORM_MAX_PATH];
 
 	if (m_LogType == 1 || m_LogType == 2)
 	{
@@ -432,7 +423,7 @@ void CLog::Log(const char *fmt, ...)
 		strftime(date, 31, "%m/%d/%Y - %H:%M:%S", curTime);
 
 		// msg
-		static char msg[3072];
+		char msg[3072];
 
 		va_list arglst;
 		va_start(arglst, fmt);
@@ -448,7 +439,7 @@ void CLog::Log(const char *fmt, ...)
 			build_pathname_r(file, sizeof(file), "%s/L%04d%02d%02d.log", g_log_dir.chars(), (curTime->tm_year + 1900), curTime->tm_mon + 1, curTime->tm_mday);
 		}
 
-		static char line[3072 + 64];
+		char line[3072 + 64];
 		static_assert(sizeof(line) <= sizeof(ktp_alogop_s::text), "async log queue slot smaller than Log() line buffer");
 		ke::SafeSprintf(line, sizeof(line), "L %s: %s\n", date, msg);
 
@@ -477,7 +468,7 @@ void CLog::Log(const char *fmt, ...)
 		print_srvconsole("L %s: %s\n", date, msg);
 	} else if (m_LogType == 3) {
 		// build message
-		static char msg_[3072];
+		char msg_[3072];
 		va_list arglst;
 		va_start(arglst, fmt);
 		vsnprintf(msg_, 3071, fmt, arglst);
@@ -488,8 +479,8 @@ void CLog::Log(const char *fmt, ...)
 
 void CLog::LogError(const char *fmt, ...)
 {
-	static char file[PLATFORM_MAX_PATH];
-	static char name[256];
+	char file[PLATFORM_MAX_PATH];
+	char name[256];
 
 	if (m_FoundError)
 	{
@@ -505,7 +496,7 @@ void CLog::LogError(const char *fmt, ...)
 	strftime(date, 31, "%m/%d/%Y - %H:%M:%S", curTime);
 
 	// msg
-	static char msg[3072];
+	char msg[3072];
 
 	va_list arglst;
 	va_start(arglst, fmt);
@@ -517,7 +508,7 @@ void CLog::LogError(const char *fmt, ...)
 
 	// One op per call keeps the session header and its first error adjacent
 	// even if other lines are queued between calls.
-	static char text[sizeof(ktp_alogop_s::text)];
+	char text[sizeof(ktp_alogop_s::text)];
 	static_assert(sizeof(text) >= sizeof(msg) + 3 * 64 + 2 * sizeof(name) + 64, "async log queue slot too small for a LogError batch");
 	text[0] = '\0';
 	if (!m_LoggedErrMap)

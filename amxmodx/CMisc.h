@@ -86,10 +86,10 @@ public:
 	
 	bool Connect(const char* connectname, const char* ipaddress);
 
-	// IsBot() - moved to CMisc.cpp for debug logging
+	// Out-of-lined because these carry extension-mode crash guards, not for debug:
+	// IsBot() checks pEdict->free and gates GETPLAYERAUTHID on authorized;
+	// IsAlive() rejects a NULL pEdict. Re-inlining the upstream one-liners drops them.
 	bool IsBot();
-
-	// IsAlive() - moved to CMisc.cpp for debug logging
 	bool IsAlive();
 
 	// Takes the id so it cannot be cached late, or missed at a new call site.

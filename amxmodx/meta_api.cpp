@@ -3115,7 +3115,8 @@ static void SV_ActivateServer_RH(IRehldsHook_SV_ActivateServer *chain, int runPh
 		if (!g_bmod_dod)
 			g_game_timeleft = 0;
 
-		g_activated = true;
+		// g_activated was set by KTPAMX_InitAsRehldsExtension; this path only
+		// finishes the deferred plugin_init/plugin_cfg.
 
 		print_srvconsole("[KTP AMX] Completed initialization (plugin_init/plugin_cfg executed).\n");
 		AMXXLOG_Log("KTP AMX initialization completed - SV_ActivateServer phase");
@@ -3332,7 +3333,11 @@ static void KTPAMX_ReloadPlugins()
 	// Items with dedup (events, log events, commands, menus, forwards) are safe
 	// to skip — they return existing handles on re-registration.
 	g_xvars.clear();
+	// Reload, don't just clear: Metamod pairs the C_ServerDeactivate_Post clear
+	// with a C_Spawn loadVault every map. Clearing alone made get_vaultdata read
+	// empty after the first map change while vault.ini still held the value.
 	g_vault.clear();
+	g_vault.loadVault();
 	// KTP: DO NOT call ClearPluginLibraries() here!
 	// It munmap's dynamic native thunks (register_native), but plugin_natives()
 	// is NOT re-called during KTPAMX_ReloadPlugins (only plugin_init/plugin_cfg).
@@ -3558,6 +3563,19 @@ static void KTPAMX_InitAsRehldsExtension()
 	sprintf(buffer, "%d", loaded);
 	CVAR_SET_STRING(init_amxmodx_modules.name, buffer);
 
+	// Same C_Spawn-only story as the vault and cmdaccess below: without these the
+	// prefix lists stay empty, registerCmdPrefix always fails, and every client
+	// command dispatch degrades to a linear scan of the flat clcmdlist. Must run
+	// before plugins register anything, and longest-prefix-first — findPrefix
+	// matches on the stored prefix's length, so a bare "say" swallows "say_team".
+	g_commands.registerPrefix("say_team");
+	g_commands.registerPrefix("say");
+	g_commands.registerPrefix("amxx");
+	g_commands.registerPrefix("amx");
+	g_commands.registerPrefix("admin_");
+	g_commands.registerPrefix("sm_");
+	g_commands.registerPrefix("cm_");
+
 	// Load Vault
 	char file[PLATFORM_MAX_PATH];
 	g_vault.setSource(build_pathname_r(file, sizeof(file), "%s", get_localinfo("amxx_vault", "addons/ktpamx/configs/vault.ini")));
@@ -3677,6 +3695,9 @@ static void KTPAMX_InitAsRehldsExtension()
 	// Initialize type conversion
 	TypeConversion.init();
 
+	// The one place this is set in extension mode. It gates the teardown/hook paths
+	// (e.g. SV_InactivateClients_RH), not plugin readiness — so it is deliberately
+	// true before plugin_init, including on the deferred-precache path below.
 	g_activated = true;
 	g_initialized = true;
 
@@ -3695,7 +3716,6 @@ static void KTPAMX_InitAsRehldsExtension()
 	if (g_bInitDuringPrecache)
 	{
 		print_srvconsole("[KTP AMX] Loaded %d plugin(s) during precache (plugin_init deferred).\n", g_plugins.getPluginsNum());
-		// Don't set g_activated yet - SV_ActivateServer will finish init
 		AMXXLOG_Log("KTP AMX initialized as ReHLDS extension (no Metamod) - precache phase");
 		return;
 	}
@@ -3723,8 +3743,6 @@ static void KTPAMX_InitAsRehldsExtension()
 	// Correct time in Counter-Strike and other mods (except DOD)
 	if (!g_bmod_dod)
 		g_game_timeleft = 0;
-
-	g_activated = true;
 
 	AMXXLOG_Log("KTP AMX initialized as ReHLDS extension (no Metamod)");
 }

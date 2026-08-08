@@ -4769,7 +4769,7 @@ static cell AMX_NATIVE_CALL ktp_drop_client(AMX *amx, cell *params)
 	// Get the reason string (optional)
 	int len;
 	const char* reason = "";
-	if (params[0] >= 2)
+	if (params[0] / sizeof(cell) >= 2)
 	{
 		reason = get_amxstring(amx, params[2], 0, len);
 	}
