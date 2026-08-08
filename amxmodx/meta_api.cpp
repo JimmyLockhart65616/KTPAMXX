@@ -1166,23 +1166,23 @@ void SV_Spawn_f_RH(IRehldsHook_SV_Spawn_f *chain)
 	// initialize now. Connect() sets initialized=true, so check that flag.
 	if (!pPlayer->initialized)
 	{
-		const char *pszName = cl->GetName();
-		char pszAddress[64] = "0.0.0.0";
+			const char *pszName = cl->GetName();
+			char pszAddress[64] = "0.0.0.0";
 
-		INetChan *netChan = cl->GetNetChan();
-		if (netChan)
-		{
-			const netadr_t *addr = netChan->GetRemoteAdr();
-			if (addr)
+			INetChan *netChan = cl->GetNetChan();
+			if (netChan)
 			{
-				ke::SafeSprintf(pszAddress, sizeof(pszAddress), "%d.%d.%d.%d:%d",
-					addr->ip[0], addr->ip[1], addr->ip[2], addr->ip[3],
-					ntohs(addr->port));
+				const netadr_t *addr = netChan->GetRemoteAdr();
+				if (addr)
+				{
+					ke::SafeSprintf(pszAddress, sizeof(pszAddress), "%d.%d.%d.%d:%d",
+						addr->ip[0], addr->ip[1], addr->ip[2], addr->ip[3],
+						ntohs(addr->port));
+				}
 			}
-		}
 
-		pPlayer->Connect(pszName ? pszName : "", pszAddress);
-		executeForwards(FF_ClientConnect, static_cast<cell>(pPlayer->index));
+			pPlayer->Connect(pszName ? pszName : "", pszAddress);
+			executeForwards(FF_ClientConnect, static_cast<cell>(pPlayer->index));
 	}
 
 	// Only call PutInServer if player is initialized and not already ingame
@@ -1652,6 +1652,19 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 		}
 	}
 
+	// AX-08: Steam_NotifyClientConnect_RH runs FIRST in SV_ConnectClient and has
+	// already done Connect() + client_connect + Authorize() + client_authorized
+	// for this session. Re-running Connect() here does not just duplicate the
+	// forwards -- Connect() sets authorized=false and memsets flags[], so it
+	// discards the admin flags that authorize just resolved, and SV_Spawn_f_RH
+	// then re-authorizes and fires client_authorized a second time. Metamod
+	// fires each exactly once (C_ClientConnect owns it); this is the parity gap.
+	//
+	// `initialized` is the right test: Disconnect() clears it at map change, so
+	// a genuine new session still connects here, and a client whose Steam
+	// notify never ran (nothing set initialized) is unaffected.
+	if (!pPlayer->initialized)
+	{
 	// Initialize player first so forwards have valid player data
 	pPlayer->Connect(pszName ? pszName : "", pszAddress);
 
@@ -1662,6 +1675,7 @@ void ClientConnected_RH(IRehldsHook_ClientConnected *chain, IGameClient *cl)
 
 	// Call client_connect forward
 	executeForwards(FF_ClientConnect, static_cast<cell>(index));
+	}
 
 	// Note: Don't queue client_putinserver here - player isn't spawned yet.
 	// SV_Spawn_f_RH will queue it after calling PutInServer().
