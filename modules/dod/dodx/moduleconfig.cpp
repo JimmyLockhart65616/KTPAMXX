@@ -2007,26 +2007,34 @@ static void DODX_InitCPFromEntities()
 					bspCPs[bspCount++] = bspAll[bi];
 			}
 
-			if (bspCount == mObjects.count)
-			{
 #ifdef DODX_DEBUG_CP_INIT
-				// Diagnostic: dump entity origins + BSP entries before match attempt.
-				// Enable via -DDODX_DEBUG_CP_INIT=1 at build time when investigating
-				// CP-ordering issues. Default off in prod to avoid ~12 lines/map noise.
-				for (int oi = 0; oi < mObjects.count; oi++)
-				{
-					edict_t *pe = mObjects.obj[oi].pEdict;
-					const char *tn = pe ? STRING(pe->v.targetname) : "?";
-					MF_Log("[DODX] BSP sort: entity[%d] origin=(%.0f,%.0f) targetname='%s'",
-						oi, mObjects.obj[oi].origin_x, mObjects.obj[oi].origin_y, tn);
-				}
-				for (int bi = 0; bi < bspCount; bi++)
-				{
-					MF_Log("[DODX] BSP sort: bsp[%d] point_index=%d origin=(%.0f,%.0f)",
-						bi, bspCPs[bi].point_index, bspCPs[bi].origin_x, bspCPs[bi].origin_y);
-				}
+			// Logged BEFORE the count gate so it still fires where the reorder short-circuits —
+			// those are the maps worth investigating. flag_id is the DLL-assigned pdata index,
+			// which separates a master/slave collapse from a coincidental point_index collision.
+			// Build with -DDODX_DEBUG_CP_INIT=1; off in prod because it is ~25 lines per map load.
+			MF_Log("[DODX] CP scan: entities=%d bsp_total=%d bsp_with_index=%d filtered=%d gate=%s",
+				mObjects.count, bspTotal, bspWithIndex, bspCount,
+				bspCount == mObjects.count ? "pass" : "SHORT-CIRCUIT");
+			for (int oi = 0; oi < mObjects.count; oi++)
+			{
+				edict_t *pe = mObjects.obj[oi].pEdict;
+				const char *tn = pe ? STRING(pe->v.targetname) : "?";
+				MF_Log("[DODX] CP scan: entity[%d] flag_id=%d origin=(%.0f,%.0f) targetname='%s'",
+					oi, mObjects.obj[oi].index, mObjects.obj[oi].origin_x,
+					mObjects.obj[oi].origin_y, tn);
+			}
+			// bspAll, not the filtered view: an entry dropped for a missing point_index is
+			// exactly what a collapse looks like, so it has to be visible.
+			for (int bi = 0; bi < bspTotal; bi++)
+			{
+				MF_Log("[DODX] CP scan: bsp[%d] point_index=%d origin=(%.0f,%.0f) default_owner=%d",
+					bi, bspAll[bi].point_index, bspAll[bi].origin_x,
+					bspAll[bi].origin_y, bspAll[bi].default_owner);
+			}
 #endif
 
+			if (bspCount == mObjects.count)
+			{
 				// Sort BSP entries by point_index (ascending) — insertion sort for small N
 				for (int i = 1; i < bspCount; i++)
 				{
