@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **DODX CP-init diagnostic (`DODX_DEBUG_CP_INIT`) now logs `flag_id` and fires even when the
+  reorder short-circuits.** Previously it sat *inside* the `bspCount == mObjects.count` gate, so on
+  exactly the maps worth investigating — duplicate `point_index`, pseudo-CP count mismatch — it
+  printed nothing. It now runs before the gate, records the gate's own decision, logs the
+  DLL-assigned `flag_id` per scanned entity, and dumps the **full** BSP set rather than the
+  point_index-filtered view (an entry dropped for a missing index is what a master/slave collapse
+  looks like, so hiding it defeats the purpose).
+
+  **No version bump: the shipped binary is unchanged.** The block is compile-time-gated and absent
+  from a default build — verified by preprocessing both ways (`CP scan:` reachable 3× with
+  `-DDODX_DEBUG_CP_INIT=1`, **0×** without). Enable with `-DDODX_DEBUG_CP_INIT=1`; costs ~25 log
+  lines per map load, which is why it stays off in production.
+
+  Warning set identical to master at `-m32 -O2 -Wall -Wextra` in all three builds (master baseline,
+  ported-plain, ported-with-define): 46 warnings, byte-identical. Supersedes the parked
+  `wip/dodx-cp-init-issue5` branch, which could no longer be merged — PR #9 renamed
+  `DODX_ReadBSPPointIndices` to `DODX_ReadBSPControlPoints`, and a textually clean merge produced a
+  loop iterating an array nothing populated.
+
 ## [2.7.26] - 2026-08-08
 
 DODX-only delta over 2.7.25. Contributed as [#9](https://github.com/afraznein/KTPAMXX/pull/9) by
