@@ -27,6 +27,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DODX_ReadBSPPointIndices` to `DODX_ReadBSPControlPoints`, and a textually clean merge produced a
   loop iterating an array nothing populated.
 
+## [2.7.27] - 2026-08-10
+
+DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), unlike 2.7.26 — additive
+only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
+against this include set.
+
+**Shipping artifact — `dodx_ktp_i386.so` md5 `PENDING_BUILD`** (built 2026-08-10 from `PENDING_SHA`,
+`build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
+⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
+md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
+
+### Added
+- **Per-usercmd aim and ground-contact sampling, with natives to read it** (`dodx_get_aim_stats`,
+  `dodx_get_aim_window`, `dodx_reset_aim_stats`). Fed from the `SV_PlayerRunPreThink` hook DODX
+  already registers, so no new hook and no engine change.
+
+  **It is a sensor, not a detector.** It reports the geometry of sustained-fire aim motion — window
+  duration, pitch slope, residual about a fitted line, sample count — and of ground contact. It holds
+  no threshold and reaches no conclusion. That split is deliberate: this repository is public, so a
+  threshold compiled in here is a published threshold, and a published threshold is one a reader can
+  sit just outside. Keep the judgement in the consumer.
+
+  **Streaming, not buffered.** The offline reference this derives from buffers every frame of a fire
+  window and fits at the end. That is fine offline and wrong in the game frame: this runs on a live
+  fleet at up to `sv_maxcmdrate 500` per player. A least-squares line needs only five running sums, so
+  the fit is exact with O(1) work and fixed memory — no buffer, no allocation, no I/O. The
+  entloop/CLog `fopen` incident is the precedent for what per-frame work must never do.
+
+  Three details the maths forces, each a silent wrong answer if missed:
+  - A window ends at its last *attacking* sample, so bridged non-attack samples are held (at most
+    `GAP_BRIDGE`) and folded in only once a later attack confirms the bridge. Otherwise a trailing
+    bridge lengthens every window.
+  - The residual is clamped at zero. Catastrophic cancellation can drive it slightly negative on a
+    near-perfect fit — precisely the case worth reporting — so a NaN there would drop the most
+    interesting windows.
+  - Retained windows are kept by smallest residual in a fixed slot set, so memory is constant however
+    long a player stays connected.
+
+  Counters reset in `Disconnect()` as well as `Init()`, because `Init()` is skipped for a slot that
+  already has a `pEdict` — the same trap the `g_observedDeaths` reset below it documents. Without it a
+  mid-map substitute is measured on the leaver's aim.
+
+  Sampling runs *before* the `isModuleActive()` gate: those pauses are round-freeze and
+  `dodstats_pause`, and truncating a burst at one would score it as a short window rather than no
+  window.
+
 ## [2.7.26] - 2026-08-08
 
 DODX-only delta over 2.7.25. Contributed as [#9](https://github.com/afraznein/KTPAMXX/pull/9) by
