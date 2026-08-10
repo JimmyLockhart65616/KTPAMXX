@@ -135,7 +135,7 @@ struct KTPAimStats
 	// Ground contact, measured in MILLISECONDS -- a usercmd count would be a function of
 	// the client's own cl_cmdrate (20ms at rate 100, 4ms at 500), so a legal cvar change
 	// would move the signal. Time is the same for everyone.
-	int    groundTouches;
+	int    groundTouches;         // COMPLETED contacts: counted at exit, paired with the below
 	int    shortestGroundMs;      // -1 until a full contact has been observed
 	// In-flight tracking. `groundKnown` distinguishes "was airborne" from "have not
 	// looked yet": conflating them made every counter reset and every respawn fabricate

@@ -1081,6 +1081,25 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 
 	const bool attacking = (pEntity->v.button & IN_ATTACK) != 0;
 
+	// Continuity is decided HERE, on both paths, because a burst can be broken by
+	// samples that never arrive as easily as by ones that arrive without +attack.
+	// A delivery gap is not trigger discipline: a .tech pause stops SV_RunCmd
+	// outright (up to 300s of budget per team), and packet loss or a server-side
+	// usercmd drop does the same for shorter spans. Bridging across one would emit a
+	// single window whose duration is the outage -- and since retention keeps the
+	// LONGEST windows, those would crowd out every genuine burst the player produced.
+	//
+	// The lower bound matters as much as the upper: svtimebase is re-anchored per
+	// packet, so the delta can step backward, and an unguarded `delta <= BRIDGE_MS`
+	// is satisfied by every negative value however large.
+	const double sinceLast = st.cur.open ? (t - st.cur.tLast) : 0.0;
+	const bool   continuous = st.cur.open
+	                          && sinceLast >= 0.0
+	                          && sinceLast * 1000.0 <= KTPAim::BRIDGE_MS;
+
+	if (st.cur.open && !continuous)
+		st.CloseWindow();      // scores what was genuinely observed, drops the pendings
+
 	if (attacking)
 	{
 		// A bridged sample only belongs to the window once an attacking sample follows
@@ -1095,12 +1114,9 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 	}
 	else if (st.cur.open)
 	{
-		// Bridge on ELAPSED TIME, not a sample count: a count is a function of the
-		// client's cl_cmdrate, so the same trigger release would split one player's
-		// burst and not another's -- and a script could pick a release cadence that
-		// chops its own windows below whatever the consumer gates on.
-		if ((t - st.cur.tLast) * 1000.0 <= KTPAim::BRIDGE_MS
-		    && st.cur.pendCount < KTPAim::GAP_SLOTS)
+		// Hold the sample: only a later attacking sample proves it was mid-burst
+		// rather than trailing the end of one.
+		if (st.cur.pendCount < KTPAim::GAP_SLOTS)
 		{
 			st.cur.pendT[st.cur.pendCount] = t;
 			st.cur.pendP[st.cur.pendCount] = pitch;
@@ -1126,16 +1142,20 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 	}
 	else if (onGround && !st.onGroundPrev)
 	{
-		st.groundTouches++;
 		st.groundEnterTime = t;
 		st.contactTimed = true;
 	}
 	else if (!onGround && st.onGroundPrev)
 	{
+		// Counted at contact END, not start, so the touch and its duration always land
+		// in the SAME flush interval. Counting at start put them in different ones
+		// whenever a contact straddled a flush, and any per-touch figure a consumer
+		// derived was then quietly mixing two populations.
 		if (st.contactTimed)
 		{
 			int ms = (int)((t - st.groundEnterTime) * 1000.0 + 0.5);
 			if (ms < 0) ms = 0;
+			st.groundTouches++;
 			if (st.shortestGroundMs < 0 || ms < st.shortestGroundMs)
 				st.shortestGroundMs = ms;
 		}
