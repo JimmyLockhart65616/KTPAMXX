@@ -93,6 +93,14 @@ Custom AMX Mod X fork that operates in extension mode (loaded directly by KTP-Re
 |---------|---------|
 | `dod_damage_pre(att, vic, dmg, wpn, hit, TA)` | Pre-damage hook, return modified damage |
 
+### Aim / movement sampling (measure-only)
+Sampled once per usercmd from `SV_PlayerRunPreThink`. **Sensor, not detector** — reports geometry, applies no threshold, reaches no conclusion. A threshold added here would be a published one; keep the judgement in the private consumer. Counters reset on connect **and** disconnect so a mid-map substitute never inherits the previous occupant's numbers.
+| Native | Purpose |
+|--------|---------|
+| `dodx_get_aim_stats(id, stats[5])` | Windows recorded/retained, ground touches, short ground contacts, longest run of them. Excludes the window still in progress |
+| `dodx_get_aim_window(id, slot, window[4])` | One retained fire window: duration (ms), pitch slope (milli-deg/s), residual (micro-deg), samples. Retained by smallest residual, so slot order is not chronological |
+| `dodx_reset_aim_stats(id)` | Clear the counters. Separate from the read so a failed flush cannot silently discard what justified it |
+
 ### Test Dispatch Natives (extension-mode forward drivers)
 Synthetic dispatchers for AC/integration tests — fire a forward directly (no fakemeta).
 | Native | Purpose |

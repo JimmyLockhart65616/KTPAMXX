@@ -16,6 +16,7 @@
 #define CMISC_H
 
 #include "CRank.h"
+#include "KTPAimAccum.h"
 
 #define DODMAX_CUSTOMWPNS	5	// custom weapons
 #define DODMAX_WEAPONS		(42 + DODMAX_CUSTOMWPNS)
@@ -56,12 +57,16 @@ struct traceVault
 // class CPlayer
 // *****************************************************
 
-class CPlayer 
+class CPlayer
 {
 	private:
 		char ip[32];
 
 	public:
+		// KTP: shadow-mode aim/movement counters, fed once per usercmd from
+		// SV_PlayerRunPreThink. Measure-only -- nothing here reaches a verdict.
+		KTPAimStats ktpAim;
+
 		edict_t* pEdict;
 		int index;
 		int aiming;

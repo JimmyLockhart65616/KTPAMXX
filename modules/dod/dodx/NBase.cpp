@@ -1987,6 +1987,78 @@ static cell AMX_NATIVE_CALL dodx_test_scan_gamerules(AMX *amx, cell *params)
 	return changed;
 }
 
+// KTP: read a player's aim/movement summary. Measurements only -- no threshold is
+// applied here and none should be added; the consumer decides what the numbers mean.
+//
+// The window still in progress is deliberately NOT folded in: it has no final duration,
+// and including it would report the same burst twice once it closes.
+//
+// out[] = { windowsScored, keptCount, groundTouches, shortGroundContacts,
+//           maxConsecutiveShortContacts }
+static cell AMX_NATIVE_CALL dodx_get_aim_stats(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	const KTPAimStats &st = pPlayer->ktpAim;
+	cell *out = MF_GetAmxAddr(amx, params[2]);
+
+	out[0] = st.windowsScored;
+	out[1] = st.keptCount;
+	out[2] = st.groundTouches;
+	out[3] = st.shortGroundContacts;
+	out[4] = st.maxConsecutiveShortContacts();
+
+	return 1;
+}
+
+// KTP: read one retained fire window's geometry.
+// out[] = { dur_ms, slope_milli_deg_per_s, rms_micro_deg, samples }
+//
+// Scaled integers rather than floats: these cross into Pawn and then into JSON, and a
+// float round-trip through both is where a threshold comparison silently shifts. Micro-
+// degrees for the residual because the interesting values are ~0.02-0.08 deg, which
+// milli-degrees would quantise to one or two significant figures.
+static cell AMX_NATIVE_CALL dodx_get_aim_window(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	CPlayer *pPlayer = GET_PLAYER_POINTER_I(index);
+	if (!pPlayer->ingame || !pPlayer->pEdict || pPlayer->pEdict->free)
+		return 0;
+
+	const KTPAimStats &st = pPlayer->ktpAim;
+	int slot = params[2];
+	if (slot < 0 || slot >= st.keptCount)
+		return 0;
+
+	const KTPWindowStat &w = st.kept[slot];
+	cell *out = MF_GetAmxAddr(amx, params[3]);
+
+	out[0] = (cell)(w.dur * 1000.0 + 0.5);
+	out[1] = (cell)(w.slope * 1000.0 + (w.slope < 0 ? -0.5 : 0.5));
+	out[2] = (cell)(w.rms * 1000000.0 + 0.5);
+	out[3] = w.n;
+
+	return 1;
+}
+
+// KTP: clear a player's counters after a successful flush. Separate from the read so
+// a failed POST does not silently discard the window that justified it.
+static cell AMX_NATIVE_CALL dodx_reset_aim_stats(AMX *amx, cell *params)
+{
+	int index = params[1];
+	CHECK_PLAYER(index);
+
+	GET_PLAYER_POINTER_I(index)->ktpAim.Reset();
+	return 1;
+}
+
 AMX_NATIVE_INFO base_Natives[] =
 {
 	{ "dod_wpnlog_to_name", wpnlog_to_name },
@@ -2099,6 +2171,11 @@ AMX_NATIVE_INFO base_Natives[] =
 	// KTP: Round-timer diagnostics (test/diagnostic only — see impl comments)
 	{"dodx_test_dump_round_timers",          dodx_test_dump_round_timers},
 	{"dodx_test_scan_gamerules",             dodx_test_scan_gamerules},
+
+	// KTP: shadow-mode aim/movement counters (blind audit tier 2.4 / 2.6)
+	{"dodx_get_aim_stats",                   dodx_get_aim_stats},
+	{"dodx_get_aim_window",                  dodx_get_aim_window},
+	{"dodx_reset_aim_stats",                 dodx_reset_aim_stats},
 
 	///*******************
 	{ NULL, NULL }

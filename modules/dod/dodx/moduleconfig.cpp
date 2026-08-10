@@ -1045,6 +1045,75 @@ static void DODX_OnSetClientKeyValue(IVoidHookChain<int, char *, const char *, c
 	chain->callNext(clientIndex, infobuffer, key, value);
 }
 
+// KTP: one usercmd's worth of aim + movement, folded into the player's running
+// accumulators. Everything here is O(1) and allocation-free by construction; see
+// KTPAimAccum.h for why a streaming fit rather than the buffered reference port.
+static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
+{
+	KTPAimStats &st = pPlayer->ktpAim;
+	const double t = gpGlobals->time;
+
+	// v_angle is the resolved view angle for THIS usercmd, which is what the reference
+	// detector scored. Fold to (-180,180]: GoldSrc pitch can arrive as 0..360 and a
+	// wrap mid-window would read as an enormous slope on an otherwise clean burst.
+	double pitch = pEntity->v.v_angle.x;
+	if (pitch > 180.0) pitch -= 360.0;
+
+	const bool attacking = (pEntity->v.button & IN_ATTACK) != 0;
+
+	if (attacking)
+	{
+		// A bridged sample only belongs to the window once an attacking sample follows
+		// it, so the held ones are folded in here rather than when they arrived.
+		for (int i = 0; i < st.cur.pendCount; i++)
+			st.cur.Add(st.cur.pendT[i], st.cur.pendP[i]);
+		st.cur.pendCount = 0;
+
+		st.cur.open = true;
+		st.cur.Add(t, pitch);
+		st.cur.tLast = t;
+		st.cur.gap = 0;
+	}
+	else if (st.cur.open)
+	{
+		if (st.cur.gap < KTPAim::GAP_BRIDGE)
+		{
+			st.cur.pendT[st.cur.pendCount] = t;
+			st.cur.pendP[st.cur.pendCount] = pitch;
+			st.cur.pendCount++;
+			st.cur.gap++;
+		}
+		else
+		{
+			st.CloseWindow();   // discards the pending bridge samples, as intended
+		}
+	}
+
+	// Ground contact, measured in usercmds rather than seconds so it does not move
+	// with tickrate. Recorded only -- what a short contact means is not decided here.
+	const bool onGround = (pEntity->v.flags & FL_ONGROUND) != 0;
+	if (onGround)
+	{
+		if (st.usercmdsOnGround == 0) st.groundTouches++;
+		st.usercmdsOnGround++;
+	}
+	else
+	{
+		if (st.usercmdsOnGround > 0 && st.usercmdsOnGround <= 2)
+		{
+			st.shortGroundContacts++;
+			st.consecutiveShort++;
+			if (st.consecutiveShort > st.maxConsecutiveShort)
+				st.maxConsecutiveShort = st.consecutiveShort;
+		}
+		else if (st.usercmdsOnGround > 2)
+		{
+			st.consecutiveShort = 0;
+		}
+		st.usercmdsOnGround = 0;
+	}
+}
+
 // KTP: PlayerPreThink hook handler - replaces FN_PlayerPreThink_Post
 static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict_t *pEntity, float time)
 {
@@ -1117,6 +1186,12 @@ static void DODX_OnPlayerPreThink(IVoidHookChain<edict_t *, float> *chain, edict
 	{
 		return;
 	}
+
+	// KTP: sample aim/movement BEFORE the isModuleActive() gate. Those pauses are
+	// round-freeze and dodstats_pause -- scoring concerns. A fire window that spans a
+	// pause boundary would otherwise be silently truncated mid-burst and score as a
+	// short clean one, which is the direction that loses a detection.
+	KTPSampleAim(pPlayer, pEntity);
 
 	// Stats tracking — skip if module is paused (round-freeze, dodstats_pause cvar)
 	if (!isModuleActive())

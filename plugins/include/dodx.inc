@@ -921,3 +921,66 @@ native dodx_test_dump_round_timers();
 native dodx_test_scan_gamerules();
 
 // ==================================================================
+
+// ==================================================================
+// KTP: aim / movement sampling (measure-only)
+//
+// Sampled once per usercmd from SV_PlayerRunPreThink. These report the GEOMETRY
+// of sustained-fire aim motion and of ground contact; they apply no threshold and
+// reach no conclusion. Whatever consumes them decides what the numbers mean, and
+// it should not be this layer -- a threshold here would be a published one.
+//
+// Counters are cumulative per life-in-slot and reset on connect and disconnect, so
+// a mid-map substitute never inherits the previous occupant's numbers.
+// ==================================================================
+
+/**
+ * Read a player's aim/movement summary.
+ *
+ * The fire window still in progress is deliberately excluded: it has no final
+ * duration, and including it would report the same burst twice once it closes.
+ *
+ * @param id        Player index
+ * @param stats     Output, 5 cells:
+ *                    [0] windows recorded
+ *                    [1] windows retained for readout (see dodx_get_aim_window)
+ *                    [2] ground touches
+ *                    [3] ground contacts left within 2 usercmds
+ *                    [4] longest consecutive run of those short contacts
+ *
+ * @return  1 on success, 0 if the player is not in game
+ */
+native dodx_get_aim_stats(id, stats[5]);
+
+/**
+ * Read one retained fire window's geometry. Windows are retained by SMALLEST
+ * residual, so slot order is not chronological.
+ *
+ * Values are scaled integers, not floats: these cross into Pawn and then into
+ * JSON, and a float round-trip through both is where a comparison silently
+ * shifts. The residual is in MICRO-degrees because the interesting range is
+ * fractions of a degree, which milli-degrees would flatten to one or two
+ * significant figures.
+ *
+ * @param id        Player index
+ * @param slot      0 .. stats[1]-1 as returned by dodx_get_aim_stats
+ * @param window    Output, 4 cells:
+ *                    [0] duration, milliseconds
+ *                    [1] pitch slope, milli-degrees per second (signed)
+ *                    [2] residual about the fitted line, micro-degrees
+ *                    [3] usercmd samples in the window
+ *
+ * @return  1 on success, 0 if the player is not in game or slot is out of range
+ */
+native dodx_get_aim_window(id, slot, window[4]);
+
+/**
+ * Clear a player's aim/movement counters.
+ *
+ * Separate from the read so a failed flush does not silently discard the window
+ * that justified it: read, ship, and only then reset.
+ *
+ * @param id        Player index
+ * @return  1 on success
+ */
+native dodx_reset_aim_stats(id);

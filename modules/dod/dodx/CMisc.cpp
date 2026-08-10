@@ -26,6 +26,12 @@ void CPlayer::Disconnect()
 	bot = false;
 	savedScore = 0;
 
+	// Cleared HERE and not only in Init() for the same reason as the death counter
+	// below: Init() is skipped for a slot that already has a pEdict, so a mid-map
+	// substitute would otherwise inherit the leaver's fire windows and be measured
+	// on someone else's aim.
+	ktpAim.Reset();
+
 	// Zero the offset-validation death counter so a mid-map substitute
 	// joining this recycled slot doesn't inherit the leaver's tally (Init()
 	// is skipped for slots that already have a pEdict). Safe ordering: the
@@ -147,6 +153,7 @@ void CPlayer::restartStats(bool all)
 
 void CPlayer::Init( int pi, edict_t* pe )
 {
+	ktpAim.Reset();
 	aiming = 0;
 	wpnModel = 0;
 	wpnscount = 0;
