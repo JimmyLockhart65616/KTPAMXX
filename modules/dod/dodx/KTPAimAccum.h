@@ -20,7 +20,14 @@
 
 namespace KTPAim
 {
-	const int    GAP_BRIDGE = 2;      // non-attack usercmds tolerated inside one burst
+	// Burst bridge, in MILLISECONDS. It used to be a usercmd count, which quietly made
+	// "one continuous burst" a function of the client's own cl_cmdrate -- two commands
+	// is 20ms at rate 100 and 4ms at 500, so identical sprays split differently per
+	// player, and a script could chop its own windows by releasing on a chosen cadence.
+	const double BRIDGE_MS  = 20.0;
+	// Sample slots held while bridging. Bounded by the highest permitted cl_cmdrate
+	// (1000) over BRIDGE_MS, plus margin; a bridge longer than this closes the window.
+	const int    GAP_SLOTS  = 32;
 	const int    MIN_FRAMES = 3;      // algebraic floor: below this a residual is undefined
 	const double MIN_DUR    = 0.05;   // seconds; guards a zero time-span fit, nothing more
 
@@ -30,7 +37,15 @@ namespace KTPAim
 	// the retained set an extreme-value sample -- systematically lower for a player who
 	// fires more -- and would let any smooth non-combat pan outcompete real bursts for
 	// every slot.
-	const int    KEEP_WINDOWS = 8;
+	//
+	// 16 rather than 8 so a consumer can compute a PROPORTION over the retained set
+	// instead of reading an extreme -- the property that makes ClickCadenceAnalyzer the
+	// model the other detectors should follow. It does not remove the bias: this is a
+	// top-k sample at any k, and k cannot approach windowsScored at a sane payload size.
+	// windowsScored ships alongside precisely so the sampling fraction stays recoverable.
+	// ⚠️ Raising this raises the payload linearly (~34 bytes per window per player) and
+	// the consumer's buffer must be re-derived from ITS loop bound, or truncation returns.
+	const int    KEEP_WINDOWS = 16;
 }
 
 // Geometry of one sustained-fire window. Reported as-is.
@@ -52,9 +67,8 @@ struct KTPFireWindow
 	// confirms the bridge -- a window ends at its last attacking frame, so trailing
 	// bridge samples are not part of it. Holding at most GAP_BRIDGE of them preserves
 	// that without buffering the window itself.
-	int    gap;
-	double pendT[KTPAim::GAP_BRIDGE];
-	double pendP[KTPAim::GAP_BRIDGE];
+	double pendT[KTPAim::GAP_SLOTS];
+	double pendP[KTPAim::GAP_SLOTS];
 	int    pendCount;
 
 	bool   open;
@@ -63,13 +77,15 @@ struct KTPFireWindow
 	{
 		n = 0; tFirst = tLast = 0.0;
 		sT = sTT = sP = sPP = sTP = 0.0;
-		gap = 0; pendCount = 0; open = false;
+		pendCount = 0; open = false;
 	}
 
-	// Time is accumulated RELATIVE to the window's first sample. gpGlobals->time at
-	// PreThink is a float cast of svtimebase, so its absolute magnitude grows with map
-	// uptime and its ULP grows with it; keeping the origin at zero holds the sums in
-	// the range where that cast is still exact.
+	// Time is accumulated RELATIVE to the window's first sample. This improves the
+	// CONDITIONING of the sums only -- it does not recover precision. gpGlobals->time
+	// arrives already quantised: the engine casts svtimebase to float upstream
+	// (rehlds sv_user.cpp), so the mantissa bits lost at high map uptime are gone before
+	// this function sees them, and no arithmetic here restores them. A consumer that
+	// cares about small residuals at long map uptime still has to account for it.
 	void Add(double t, double p)
 	{
 		if (n == 0) { tFirst = t; }
@@ -116,33 +132,48 @@ struct KTPAimStats
 	KTPWindowStat kept[KTPAim::KEEP_WINDOWS];  // the KEEP_WINDOWS longest ones
 	int           keptCount;
 
-	// Ground contact, measured in MILLISECONDS. It used to be counted in usercmds,
-	// which silently made it a function of the client's own cl_cmdrate -- two commands
-	// is 20ms at rate 100 and 4ms at rate 500, so a fully cvar-compliant player could
-	// move the signal by changing a legal setting. Time is the same for everyone.
+	// Ground contact, measured in MILLISECONDS -- a usercmd count would be a function of
+	// the client's own cl_cmdrate (20ms at rate 100, 4ms at 500), so a legal cvar change
+	// would move the signal. Time is the same for everyone.
 	int    groundTouches;
-	int    shortestGroundMs;      // -1 until a landing has been left
+	int    shortestGroundMs;      // -1 until a full contact has been observed
+	// In-flight tracking. `groundKnown` distinguishes "was airborne" from "have not
+	// looked yet": conflating them made every counter reset and every respawn fabricate
+	// a landing, and re-anchoring groundEnterTime turned a 25-second stand on a flag
+	// into a 176ms contact. `contactTimed` is false for a contact whose START we did not
+	// witness, so its duration is never reported rather than reported wrong.
 	double groundEnterTime;
 	bool   onGroundPrev;
+	bool   groundKnown;
+	bool   contactTimed;
 
 	void Reset()
 	{
 		cur.Reset();
 		ResetCounters();
+		groundEnterTime = 0.0;
+		onGroundPrev = false;
+		ForgetGroundState();
 	}
 
-	// Clears what a flush has just shipped WITHOUT discarding the window still in
-	// progress. The read natives exclude the open window precisely because it will be
-	// reported once it closes; wiping it here would make that promise false and lose
-	// every burst that straddles a flush.
+	// Clears only what a flush has just SHIPPED. In-flight tracking -- the open window
+	// and the ground contact in progress -- is left alone for the same reason: a burst
+	// or a contact that straddles a flush is reported once, when it ends, with its true
+	// extent. Clearing them here is what made a long contact read as a short one.
 	void ResetCounters()
 	{
 		windowsScored = 0;
 		keptCount = 0;
 		groundTouches = 0;
 		shortestGroundMs = -1;
-		groundEnterTime = 0.0;
-		onGroundPrev = false;
+	}
+
+	// Ground tracking is unusable across a death: the player teleports, so the contact
+	// in progress neither continues nor ended where we last saw it.
+	void ForgetGroundState()
+	{
+		groundKnown = false;
+		contactTimed = false;
 	}
 
 	void CloseWindow()
@@ -170,7 +201,9 @@ struct KTPAimStats
 		int shortest = 0;
 		for (int i = 1; i < keptCount; i++)
 			if (kept[i].dur < kept[shortest].dur) shortest = i;
-		if (w.dur > kept[shortest].dur) kept[shortest] = w;
+		// >= not >: with coarse time quantisation equal durations are common, and a
+		// strict > freezes the set on whichever arrived first.
+		if (w.dur >= kept[shortest].dur) kept[shortest] = w;
 	}
 };
 

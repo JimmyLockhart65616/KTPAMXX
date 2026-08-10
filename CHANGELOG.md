@@ -33,7 +33,7 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `9f7734b92f6f3c17ed4aae6dbb382e36`** (built 2026-08-10 from `b6fa5313`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `d99a4c6383baa1ce1d497c879198de99`** (built 2026-08-10 from `PENDING_SHA`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
@@ -103,6 +103,35 @@ md5 and you would stage a binary nobody reviewed. Verify by this md5, never by t
   making that promise false and losing every burst straddling a flush.
 - Window time is accumulated relative to the window's first sample, keeping the sums in the range
   where the float cast of `svtimebase` is still exact as map uptime grows.
+
+### Second review pass (`ktp-code-review`, 2026-08-10 — the first round of fixes introduced two new Criticals)
+- **The ground-contact reset was fabricating landings and shortening real contacts.** `onGroundPrev`
+  was a bool doing duty as a tri-state: `false` meant both *"was airborne"* and *"have not looked
+  yet"*, so every counter reset and every respawn produced a phantom landing, and re-anchoring the
+  contact clock turned a 25-second stand on a flag into a ~176 ms contact — a fabricated value in the
+  detection direction that nothing downstream could distinguish from a real hop. Now `groundKnown`
+  separates the two states and `contactTimed` marks a contact whose *start* was actually witnessed;
+  a contact we did not see begin reports no duration rather than a wrong one. **`ResetCounters()` no
+  longer touches in-flight tracking at all** — a contact straddling a flush is reported once, when it
+  ends, with its true extent, exactly as an open fire window already was.
+- **The alive gate no longer scores death-truncated windows.** It called `CloseWindow()`, so a player
+  killed mid-spray scored a window — inflating `windowsScored`, the denominator a consumer needs, by a
+  quantity correlated with deaths rather than aim. It now discards.
+- **The spectator gate no longer rests on an unverifiable assumption.** `IsAlive()` alone depended on
+  what closed-source `dod.so` does to a spectator's `deadflag`/`health`; an explicit team check (1 and
+  2 play, 3 spectates) makes it independent of that. Retention by duration would not have saved it —
+  a spectator pan is *long*.
+- **The burst bridge is milliseconds, not usercmds** — the same defect fixed for ground contact and
+  left behind for the bridge. Two commands is 20 ms at `cl_cmdrate` 100 and 4 ms at 500, so identical
+  sprays split differently per player, and a script could chop its own windows by releasing on a
+  chosen cadence.
+- **`KEEP_WINDOWS` 8 → 16.** Relaxing `MIN_DUR` made the retained set a far more extreme order
+  statistic; 16 lets a consumer compute a *proportion* rather than read an extreme, which is the
+  property that makes `ClickCadenceAnalyzer` the model to follow. It does not remove the bias — this
+  is top-k at any k — which is why `windowsScored` ships alongside.
+- **Corrected a comment that claimed a precision problem was solved.** Accumulating time relative to
+  the window start improves conditioning only; the float cast happens upstream in the engine, so the
+  lost mantissa bits are gone before this code sees them.
 
 ## [2.7.26] - 2026-08-08
 

@@ -1052,14 +1052,22 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 {
 	KTPAimStats &st = pPlayer->ktpAim;
 
-	// Only a live player in play. Dead players and spectators keep sending usercmds,
-	// and in DoD +attack is the spectator "next player" bind -- so a spectator panning
-	// smoothly produces the straightest aim trace on the server, from someone who is
-	// not shooting at anything. IsAlive() covers both (deadflag + health).
-	if (!pPlayer->IsAlive())
+	// Only a live player on a playing team. Dead players and spectators keep sending
+	// usercmds, and in DoD +attack is the spectator "next player" bind -- so a spectator
+	// panning smoothly produces the straightest aim trace on the server, from someone not
+	// shooting at anything, and retention by duration does not help because a pan is LONG.
+	// The team check is not redundant with IsAlive(): whether dod.so leaves deadflag and
+	// health in a "dead" state for a spectator is a property of a closed-source DLL, so
+	// relying on it alone would rest the gate on an assumption we cannot verify here.
+	// Teams 1 and 2 play; 3 is spectator.
+	const int team = pEntity->v.team;
+	if (!pPlayer->IsAlive() || (team != 1 && team != 2))
 	{
-		st.CloseWindow();          // scores whatever was genuinely in flight, then stops
-		st.onGroundPrev = false;
+		// DISCARD rather than close. A window truncated by death is not a burst that
+		// ended, and scoring it inflates windowsScored -- the denominator a consumer
+		// needs -- by a quantity correlated with deaths rather than with aim.
+		st.cur.Reset();
+		st.ForgetGroundState();
 		return;
 	}
 
@@ -1084,16 +1092,19 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 		st.cur.open = true;
 		st.cur.Add(t, pitch);
 		st.cur.tLast = t;
-		st.cur.gap = 0;
 	}
 	else if (st.cur.open)
 	{
-		if (st.cur.gap < KTPAim::GAP_BRIDGE)
+		// Bridge on ELAPSED TIME, not a sample count: a count is a function of the
+		// client's cl_cmdrate, so the same trigger release would split one player's
+		// burst and not another's -- and a script could pick a release cadence that
+		// chops its own windows below whatever the consumer gates on.
+		if ((t - st.cur.tLast) * 1000.0 <= KTPAim::BRIDGE_MS
+		    && st.cur.pendCount < KTPAim::GAP_SLOTS)
 		{
 			st.cur.pendT[st.cur.pendCount] = t;
 			st.cur.pendP[st.cur.pendCount] = pitch;
 			st.cur.pendCount++;
-			st.cur.gap++;
 		}
 		else
 		{
@@ -1104,17 +1115,31 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 	// Ground contact in TIME, not usercmd counts -- a count is a function of the
 	// client's own cl_cmdrate, so a legal cvar change would move the signal.
 	const bool onGround = (pEntity->v.flags & FL_ONGROUND) != 0;
-	if (onGround && !st.onGroundPrev)
+	if (!st.groundKnown)
+	{
+		// First look since a reset or a respawn. Adopt the current state WITHOUT
+		// counting a landing and WITHOUT timing this contact: we did not see it start,
+		// so its duration is unknown and reporting one would be inventing it.
+		st.onGroundPrev = onGround;
+		st.groundKnown  = true;
+		st.contactTimed = false;
+	}
+	else if (onGround && !st.onGroundPrev)
 	{
 		st.groundTouches++;
 		st.groundEnterTime = t;
+		st.contactTimed = true;
 	}
 	else if (!onGround && st.onGroundPrev)
 	{
-		int ms = (int)((t - st.groundEnterTime) * 1000.0 + 0.5);
-		if (ms < 0) ms = 0;
-		if (st.shortestGroundMs < 0 || ms < st.shortestGroundMs)
-			st.shortestGroundMs = ms;
+		if (st.contactTimed)
+		{
+			int ms = (int)((t - st.groundEnterTime) * 1000.0 + 0.5);
+			if (ms < 0) ms = 0;
+			if (st.shortestGroundMs < 0 || ms < st.shortestGroundMs)
+				st.shortestGroundMs = ms;
+		}
+		st.contactTimed = false;
 	}
 	st.onGroundPrev = onGround;
 }
