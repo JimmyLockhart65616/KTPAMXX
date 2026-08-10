@@ -20,13 +20,35 @@
 
 namespace KTPAim
 {
-	// Burst bridge, in MILLISECONDS. It used to be a usercmd count, which quietly made
-	// "one continuous burst" a function of the client's own cl_cmdrate -- two commands
-	// is 20ms at rate 100 and 4ms at 500, so identical sprays split differently per
-	// player, and a script could chop its own windows by releasing on a chosen cadence.
-	const double BRIDGE_MS  = 20.0;
-	// Sample slots held while bridging. Bounded by the highest permitted cl_cmdrate
-	// (1000) over BRIDGE_MS, plus margin; a bridge longer than this closes the window.
+	// TWO DIFFERENT QUESTIONS, deliberately two constants. One value served both for a
+	// while and was wrong for the second: 20ms is a generous trigger release and two
+	// frames at 100fps.
+	//
+	// RELEASE_MS -- how long the trigger may be off and still be one burst. A count of
+	// usercmds would make this a function of the client's cl_cmdrate, and a script could
+	// chop its own windows by releasing on a chosen cadence.
+	const double RELEASE_MS    = 20.0;
+	// CONTINUITY_MS -- how long SAMPLING may lapse and still describe one burst. Sample
+	// spacing is the client's FRAME time (SV_RunCmd advances svtimebase by ucmd->msec),
+	// not its cmdrate, and KTPCvarChecker permits fps_max down to 60 -- a 16.7ms frame.
+	// At 20ms this tripped on ordinary frame jitter, so identical sprays fragmented for
+	// the lower-fps player and, because retention keeps the longest window, the confound
+	// landed squarely on the retention key. 150ms clears any legal frame time with room
+	// while staying three orders of magnitude below a pause.
+	const double CONTINUITY_MS = 150.0;
+	// No real burst runs this long. Its job is to bound the payload: dur_ms and n are
+	// rendered as fixed-width fields by the consumer, and an unbounded window (a player
+	// idling with +attack held, which nothing else closes while he is alive) would
+	// overflow those and silently malform the batch.
+	const double MAX_WINDOW_S  = 30.0;
+	// Sample slots held while bridging.
+	//
+	// ⚠️ NOT margin, and NOT removable: this is the ONLY thing that closes a window
+	// during a .tech pause or a round freeze. The engine does not skip commands while
+	// paused -- it zeroes them (msec = 0, buttons = 0) and runs them anyway. msec = 0
+	// freezes svtimebase, so the elapsed-time guards can never trip; buttons = 0 means
+	// every command lands in the bridge. The slot count is what ends it. It is also the
+	// only bound against a crafted msec = 0 flood, since nothing clamps msec below.
 	const int    GAP_SLOTS  = 32;
 	const int    MIN_FRAMES = 3;      // algebraic floor: below this a residual is undefined
 	const double MIN_DUR    = 0.05;   // seconds; guards a zero time-span fit, nothing more
@@ -94,6 +116,14 @@ struct KTPFireWindow
 		sT += rel; sTT += rel * rel;
 		sP += p;   sPP += p * p;
 		sTP += rel * p;
+	}
+
+	// True once the window has run past the point where it can still be one burst.
+	// Checked by the caller so the window is closed and scored rather than growing
+	// without bound.
+	bool Overlong(double now) const
+	{
+		return open && (now - tFirst) > KTPAim::MAX_WINDOW_S;
 	}
 
 	bool Finish(KTPWindowStat *out) const

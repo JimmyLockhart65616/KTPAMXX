@@ -1092,12 +1092,15 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 	// The lower bound matters as much as the upper: svtimebase is re-anchored per
 	// packet, so the delta can step backward, and an unguarded `delta <= BRIDGE_MS`
 	// is satisfied by every negative value however large.
+	// Sampling continuity, measured against the last ATTACKING sample. Deliberately a
+	// different bound from the trigger release below: this one asks whether we were
+	// still watching, and the answer must not depend on the client's frame rate.
 	const double sinceLast = st.cur.open ? (t - st.cur.tLast) : 0.0;
 	const bool   continuous = st.cur.open
 	                          && sinceLast >= 0.0
-	                          && sinceLast * 1000.0 <= KTPAim::BRIDGE_MS;
+	                          && sinceLast * 1000.0 <= KTPAim::CONTINUITY_MS;
 
-	if (st.cur.open && !continuous)
+	if (st.cur.open && (!continuous || st.cur.Overlong(t)))
 		st.CloseWindow();      // scores what was genuinely observed, drops the pendings
 
 	if (attacking)
@@ -1115,8 +1118,11 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 	else if (st.cur.open)
 	{
 		// Hold the sample: only a later attacking sample proves it was mid-burst
-		// rather than trailing the end of one.
-		if (st.cur.pendCount < KTPAim::GAP_SLOTS)
+		// rather than trailing the end of one. The trigger-release bound is applied
+		// here, on the gap since firing stopped; the slot count is the backstop for a
+		// pause, where the clock does not advance and no time bound can trip.
+		if ((t - st.cur.tLast) * 1000.0 <= KTPAim::RELEASE_MS
+		    && st.cur.pendCount < KTPAim::GAP_SLOTS)
 		{
 			st.cur.pendT[st.cur.pendCount] = t;
 			st.cur.pendP[st.cur.pendCount] = pitch;

@@ -945,7 +945,10 @@ native dodx_test_scan_gamerules();
  *                    [0] windows recorded
  *                    [1] windows retained for readout (see dodx_get_aim_window)
  *                    [2] COMPLETED ground contacts (counted at exit, so this and the
- *                        value below always describe the same set)
+ *                        value below always describe the same set). A contact the
+ *                        player was still standing in when he died is never completed
+ *                        and never counted -- a small under-count correlated with
+ *                        deaths, in the safe direction.
  *                    [3] shortest completed ground contact in MILLISECONDS, -1 if none
  *
  * @return  1 on success, 0 if the player is not in game
@@ -956,11 +959,20 @@ native dodx_get_aim_stats(id, stats[4]);
  * Read one retained fire window's geometry. Windows are retained by LONGEST
  * duration, so slot order is not chronological.
  *
- * A window is one CONTINUOUS burst: it is closed when more than a short interval
- * passes between samples, so a duration can never span a pause, a packet-loss
- * stall or a server-side usercmd drop. Without that a held trigger across a
- * .tech pause would report one window minutes long -- and since retention keeps
- * the longest, artefacts like that would crowd out every genuine burst.
+ * A window is one CONTINUOUS burst: it closes when sampling lapses, so a duration
+ * can never span a pause, a packet-loss stall or a server-side usercmd drop.
+ * Without that a held trigger across a .tech pause would report one window minutes
+ * long -- and since retention keeps the longest, artefacts like that would crowd
+ * out every genuine burst.
+ *
+ * Three things a consumer cannot infer and has to be told:
+ *  - A burst interrupted by a delivery gap is reported as SEVERAL windows, and the
+ *    pieces cannot be reassembled -- nothing marks them as one burst. So both
+ *    `dur` and the window count carry some connection quality.
+ *  - `dur` is trigger-HELD time, not firing time. IN_ATTACK is key state: holding
+ *    through a reload, an empty magazine or a weapon switch extends the window.
+ *  - Windows are capped in length. A player idling with fire held is closed and
+ *    scored rather than accumulating one window for the whole map.
  *
  * Values are scaled integers, not floats: these cross into Pawn and then into
  * JSON, and a float round-trip through both is where a comparison silently
