@@ -33,14 +33,14 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `83fb2124c0f68436a208d03349556aed`** (built 2026-08-10 from `d0d3a132`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `f7cbb58bcb3497abfb5681643c4d154f`** (built 2026-08-10 from `58001e2e`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
 
 > **Core source is unchanged, but the core BINARY is not identical** — `product.version` feeds
 > `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
-> `8e7643145cc7c713bee25f8b578c1ff2`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
+> `bb3669af0c16274f6aedf59b86fdbc5b`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
 > 2.7.23 and 2.7.26 DODX-only cuts.
 
 ### Added
@@ -149,6 +149,27 @@ md5 and you would stage a binary nobody reviewed. Verify by this md5, never by t
 - **Ground touches are counted at contact END**, so a touch and its duration always land in the same
   flush interval. Counting at start split them whenever a contact straddled a flush, and any per-touch
   figure a consumer derived was silently combining two populations.
+
+### Fourth review pass (`ktp-code-review`, 2026-08-10)
+- **The continuity bound was doing two jobs and was wrong for the second.** 20 ms is a generous
+  trigger release; it is also two frames at 100 fps. Sample spacing is the client's **frame** time
+  (`SV_RunCmd` advances `svtimebase` by `ucmd->msec`, one run per client frame), not its `cl_cmdrate`,
+  and `KTPCvarChecker` permits `fps_max` down to **60** — a 16.7 ms frame, 3.3 ms from tripping on
+  ordinary jitter. Identical sprays fragmented for the lower-fps player, and since retention keeps the
+  longest window the confound landed on the retention key itself; below ~50 fps a player never reached
+  `MIN_FRAMES` at all. Introduced by the previous commit, which moved the time test onto the attacking
+  path where frame pacing could reach it. Now two constants: `RELEASE_MS` 20 and `CONTINUITY_MS` 150.
+- **Corrected this project's own claim that a `.tech` pause gates `SV_RunCmd`.** It does not — the
+  engine zeroes `msec` and `buttons` and runs the command anyway. `msec = 0` freezes `svtimebase`, so
+  **no elapsed-time guard can trip during a pause** and every command lands in the bridge, which makes
+  `GAP_SLOTS` the only thing that closes a window there. It had been commented as margin over
+  `cl_cmdrate`, i.e. as removable. It is load-bearing.
+- **`MAX_WINDOW_S` bounds a window nothing else closes.** A player idling with fire held while alive
+  accumulated one window for the entire map — which also overflows the fixed-width `dur_ms`/`n` fields
+  the consumer renders, malforming the batch silently.
+- Documented three contracts a consumer cannot infer: a burst split by a delivery gap is reported as
+  several unreassemblable windows; `dur` is trigger-**held** time, not firing time; and a ground
+  contact interrupted by death is never completed and never counted.
 
 ## [2.7.26] - 2026-08-08
 
