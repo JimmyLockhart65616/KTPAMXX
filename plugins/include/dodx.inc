@@ -972,7 +972,15 @@ native dodx_get_aim_stats(id, stats[4]);
  *  - `dur` is trigger-HELD time, not firing time. IN_ATTACK is key state: holding
  *    through a reload, an empty magazine or a weapon switch extends the window.
  *  - Windows are capped in length. A player idling with fire held is closed and
- *    scored rather than accumulating one window for the whole map.
+ *    scored rather than accumulating one window for the whole map. A `dur` of
+ *    exactly 30000 ms is that clamp, and is filterable as such.
+ *  - Two quantities are irreducibly client-influenced and must be read with that
+ *    in mind. The release tolerance is evaluated only AT SAMPLE TIMES, so its real
+ *    resolution is the client's frame interval -- an identical trigger release can
+ *    split one player's burst and bridge another's, by about one frame. And the
+ *    time axis itself is client-declared within a packet (`svtimebase` advances by
+ *    the client's own `msec`, re-anchored server-side each packet), while `n` is
+ *    simply frames delivered. Compare `n` across players only as `n/dur`.
  *
  * Values are scaled integers, not floats: these cross into Pawn and then into
  * JSON, and a float round-trip through both is where a comparison silently

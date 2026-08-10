@@ -36,11 +36,18 @@ namespace KTPAim
 	// landed squarely on the retention key. 150ms clears any legal frame time with room
 	// while staying three orders of magnitude below a pause.
 	const double CONTINUITY_MS = 150.0;
-	// No real burst runs this long. Its job is to bound the payload: dur_ms and n are
-	// rendered as fixed-width fields by the consumer, and an unbounded window (a player
-	// idling with +attack held, which nothing else closes while he is alive) would
-	// overflow those and silently malform the batch.
-	const double MAX_WINDOW_S  = 30.0;
+	// No real burst runs this long -- a belt is a few seconds -- so crossing this always
+	// means the trigger was held through non-firing. Its job is to bound the payload:
+	// dur_ms and n are rendered as fixed-width fields by the consumer, and an unbounded
+	// window (a player idling with +attack held, which nothing else closes while alive)
+	// would overflow those and silently malform the batch.
+	//
+	// ⚠️ COUPLED TO THE CONSUMER'S FLUSH INTERVAL, and neither file used to mention the
+	// other. Because a flush clears keptCount, a trigger-holder can produce at most ONE
+	// clamped window per interval while these are equal -- so he burns 1 of KEEP_WINDOWS
+	// slots and the rest stay available for genuine bursts. Shorten this, or lengthen the
+	// flush, and a trigger-holder starts crowding the retained set.
+	const double MAX_WINDOW_S  = 30.0;   // == KTPMatchHandler WEAPON_FLUSH_INTERVAL
 	// Sample slots held while bridging.
 	//
 	// ⚠️ NOT margin, and NOT removable: this is the ONLY thing that closes a window
