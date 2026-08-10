@@ -1051,11 +1051,23 @@ static void DODX_OnSetClientKeyValue(IVoidHookChain<int, char *, const char *, c
 static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 {
 	KTPAimStats &st = pPlayer->ktpAim;
+
+	// Only a live player in play. Dead players and spectators keep sending usercmds,
+	// and in DoD +attack is the spectator "next player" bind -- so a spectator panning
+	// smoothly produces the straightest aim trace on the server, from someone who is
+	// not shooting at anything. IsAlive() covers both (deadflag + health).
+	if (!pPlayer->IsAlive())
+	{
+		st.CloseWindow();          // scores whatever was genuinely in flight, then stops
+		st.onGroundPrev = false;
+		return;
+	}
+
 	const double t = gpGlobals->time;
 
 	// v_angle is the resolved view angle for THIS usercmd, which is what the reference
-	// detector scored. Fold to (-180,180]: GoldSrc pitch can arrive as 0..360 and a
-	// wrap mid-window would read as an enormous slope on an otherwise clean burst.
+	// detector scored. GoldSrc pitch arrives in (-180,180] here, so the fold is a guard
+	// against an out-of-range value rather than an expected wrap.
 	double pitch = pEntity->v.v_angle.x;
 	if (pitch > 180.0) pitch -= 360.0;
 
@@ -1089,29 +1101,22 @@ static void KTPSampleAim(CPlayer *pPlayer, edict_t *pEntity)
 		}
 	}
 
-	// Ground contact, measured in usercmds rather than seconds so it does not move
-	// with tickrate. Recorded only -- what a short contact means is not decided here.
+	// Ground contact in TIME, not usercmd counts -- a count is a function of the
+	// client's own cl_cmdrate, so a legal cvar change would move the signal.
 	const bool onGround = (pEntity->v.flags & FL_ONGROUND) != 0;
-	if (onGround)
+	if (onGround && !st.onGroundPrev)
 	{
-		if (st.usercmdsOnGround == 0) st.groundTouches++;
-		st.usercmdsOnGround++;
+		st.groundTouches++;
+		st.groundEnterTime = t;
 	}
-	else
+	else if (!onGround && st.onGroundPrev)
 	{
-		if (st.usercmdsOnGround > 0 && st.usercmdsOnGround <= 2)
-		{
-			st.shortGroundContacts++;
-			st.consecutiveShort++;
-			if (st.consecutiveShort > st.maxConsecutiveShort)
-				st.maxConsecutiveShort = st.consecutiveShort;
-		}
-		else if (st.usercmdsOnGround > 2)
-		{
-			st.consecutiveShort = 0;
-		}
-		st.usercmdsOnGround = 0;
+		int ms = (int)((t - st.groundEnterTime) * 1000.0 + 0.5);
+		if (ms < 0) ms = 0;
+		if (st.shortestGroundMs < 0 || ms < st.shortestGroundMs)
+			st.shortestGroundMs = ms;
 	}
+	st.onGroundPrev = onGround;
 }
 
 // KTP: PlayerPreThink hook handler - replaces FN_PlayerPreThink_Post

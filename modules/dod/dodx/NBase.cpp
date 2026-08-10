@@ -1993,8 +1993,7 @@ static cell AMX_NATIVE_CALL dodx_test_scan_gamerules(AMX *amx, cell *params)
 // The window still in progress is deliberately NOT folded in: it has no final duration,
 // and including it would report the same burst twice once it closes.
 //
-// out[] = { windowsScored, keptCount, groundTouches, shortGroundContacts,
-//           maxConsecutiveShortContacts }
+// out[] = { windowsScored, keptCount, groundTouches, shortestGroundMs }
 static cell AMX_NATIVE_CALL dodx_get_aim_stats(AMX *amx, cell *params)
 {
 	int index = params[1];
@@ -2010,8 +2009,7 @@ static cell AMX_NATIVE_CALL dodx_get_aim_stats(AMX *amx, cell *params)
 	out[0] = st.windowsScored;
 	out[1] = st.keptCount;
 	out[2] = st.groundTouches;
-	out[3] = st.shortGroundContacts;
-	out[4] = st.maxConsecutiveShortContacts();
+	out[3] = st.shortestGroundMs;
 
 	return 1;
 }
@@ -2020,9 +2018,9 @@ static cell AMX_NATIVE_CALL dodx_get_aim_stats(AMX *amx, cell *params)
 // out[] = { dur_ms, slope_milli_deg_per_s, rms_micro_deg, samples }
 //
 // Scaled integers rather than floats: these cross into Pawn and then into JSON, and a
-// float round-trip through both is where a threshold comparison silently shifts. Micro-
-// degrees for the residual because the interesting values are ~0.02-0.08 deg, which
-// milli-degrees would quantise to one or two significant figures.
+// float round-trip through both is where a comparison silently shifts. The residual is
+// in micro-degrees so that sub-milli-degree values keep several significant figures --
+// a coarser unit would quantise small residuals into a handful of distinct buckets.
 static cell AMX_NATIVE_CALL dodx_get_aim_window(AMX *amx, cell *params)
 {
 	int index = params[1];
@@ -2055,7 +2053,9 @@ static cell AMX_NATIVE_CALL dodx_reset_aim_stats(AMX *amx, cell *params)
 	int index = params[1];
 	CHECK_PLAYER(index);
 
-	GET_PLAYER_POINTER_I(index)->ktpAim.Reset();
+	// ResetCounters, not Reset: the read natives exclude the in-progress window because
+	// it will be reported once it closes, and wiping it here would make that false.
+	GET_PLAYER_POINTER_I(index)->ktpAim.ResetCounters();
 	return 1;
 }
 

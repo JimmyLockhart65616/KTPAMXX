@@ -33,7 +33,7 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `1d45a7bcb5f0f0335238917f838ac882`** (built 2026-08-10 from `b6fa5313`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `9f7734b92f6f3c17ed4aae6dbb382e36`** (built 2026-08-10 from `b6fa5313`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
@@ -77,6 +77,32 @@ md5 and you would stage a binary nobody reviewed. Verify by this md5, never by t
   Sampling runs *before* the `isModuleActive()` gate: those pauses are round-freeze and
   `dodstats_pause`, and truncating a burst at one would score it as a short window rather than no
   window.
+
+### Review fixes (`ktp-code-review`, 2026-08-10 — this cut was NOT-APPROVED on first pass)
+- **Sampling is now gated on the player being alive and in play.** Dead players and spectators keep
+  sending usercmds, and in DoD `+attack` is the spectator *"next player"* bind — so a spectator
+  panning smoothly produced the straightest aim trace on the server, from someone not shooting at
+  anything. Combined with the old retain-by-smallest-residual rule, those artifacts systematically
+  evicted real bursts.
+- **Windows are retained by LONGEST DURATION, not smallest residual.** Duration carries no detection
+  meaning, so it cannot be gamed toward, and it removes two real biases: the minimum residual is an
+  extreme-value statistic that runs lower for a player who simply fires more, and any smooth
+  non-combat pan could take every slot.
+- **Ground contact is measured in milliseconds, not usercmds.** A usercmd count is a function of the
+  client's own `cl_cmdrate` — two commands is 20 ms at rate 100 and 4 ms at rate 500 — so a fully
+  cvar-compliant player could move the signal with a legal setting. The old comment claimed the count
+  made it tickrate-independent; it did the opposite.
+- **Recording bounds relaxed to structural minimums** (`MIN_FRAMES` 10→3, `MIN_DUR` 0.40→0.05). The
+  previous values were a published invisibility floor a reader could sit under. What remains is the
+  algebraic requirement for a residual to exist at all; the real gate belongs to the consumer.
+- **A calibrated residual band was named in a comment and has been removed.** This repository is
+  public, and this cut's own message says a threshold here is a published threshold — the constants
+  were pulled out but the number survived in prose.
+- **`dodx_reset_aim_stats` preserves the in-progress window.** Both the native and the include justify
+  excluding it on the grounds that it will be reported when it closes; the reset was discarding it,
+  making that promise false and losing every burst straddling a flush.
+- Window time is accumulated relative to the window's first sample, keeping the sums in the range
+  where the float cast of `svtimebase` is still exact as map uptime grows.
 
 ## [2.7.26] - 2026-08-08
 

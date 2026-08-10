@@ -1,10 +1,13 @@
 // KTP: per-usercmd aim/movement sampling, fed from SV_PlayerRunPreThink.
 //
-// THIS IS A SENSOR, NOT A DETECTOR, and the split is deliberate rather than tidiness:
-// it measures the geometry of sustained-fire aim motion and reports it. It holds no
-// thresholds and reaches no conclusion -- whatever consumes these numbers decides what
-// they mean. Keep it that way. A judgement compiled in here would also be published
-// here, and a threshold a reader can see is a threshold they can sit just outside.
+// THIS IS A SENSOR, NOT A DETECTOR. It measures the geometry of sustained-fire aim
+// motion and reports it. It holds no detection threshold and reaches no conclusion --
+// whatever consumes these numbers decides what they mean. Keep it that way: this
+// repository is public, so a bound written here is a bound a reader can sit outside.
+//
+// The bounds that remain are STRUCTURAL, not selective: a least-squares line needs at
+// least three points to have a residual at all. They are deliberately far below
+// anything a consumer would gate on, so they cannot function as an invisibility floor.
 //
 // WHY STREAMING. The offline reference buffers every frame of a window and fits at the
 // end. That is fine offline and wrong here: this runs in the game frame on a live fleet
@@ -17,15 +20,16 @@
 
 namespace KTPAim
 {
-	// Recording bounds, not detection bounds: a window this short cannot support a
-	// meaningful line fit at all, so reporting it would be noise rather than evidence.
 	const int    GAP_BRIDGE = 2;      // non-attack usercmds tolerated inside one burst
-	const int    MIN_FRAMES = 10;
-	const double MIN_DUR    = 0.40;   // seconds
+	const int    MIN_FRAMES = 3;      // algebraic floor: below this a residual is undefined
+	const double MIN_DUR    = 0.05;   // seconds; guards a zero time-span fit, nothing more
 
-	// How many windows to keep per player between flushes. Retained by SMALLEST residual,
-	// because that is the tail any consumer cares about and it bounds memory at a fixed
-	// cost regardless of how long a player stays connected.
+	// Windows retained per player between flushes. Retained by LONGEST DURATION, not by
+	// smallest residual: duration carries no detection meaning, so it cannot be gamed
+	// toward, and it avoids two real biases. Selecting the minimum residual would make
+	// the retained set an extreme-value sample -- systematically lower for a player who
+	// fires more -- and would let any smooth non-combat pan outcompete real bursts for
+	// every slot.
 	const int    KEEP_WINDOWS = 8;
 }
 
@@ -62,13 +66,18 @@ struct KTPFireWindow
 		gap = 0; pendCount = 0; open = false;
 	}
 
+	// Time is accumulated RELATIVE to the window's first sample. gpGlobals->time at
+	// PreThink is a float cast of svtimebase, so its absolute magnitude grows with map
+	// uptime and its ULP grows with it; keeping the origin at zero holds the sums in
+	// the range where that cast is still exact.
 	void Add(double t, double p)
 	{
-		if (n == 0) tFirst = t;
+		if (n == 0) { tFirst = t; }
+		double rel = t - tFirst;
 		n++;
-		sT += t; sTT += t * t;
-		sP += p; sPP += p * p;
-		sTP += t * p;
+		sT += rel; sTT += rel * rel;
+		sP += p;   sPP += p * p;
+		sTP += rel * p;
 	}
 
 	bool Finish(KTPWindowStat *out) const
@@ -91,6 +100,8 @@ struct KTPFireWindow
 
 		out->dur   = dur;
 		out->slope = sxy / sxx;
+		// Divisor is n, not n-2: this is a reported measurement rather than an unbiased
+		// variance estimate, and n ships alongside so a consumer can re-derive either.
 		out->rms   = sqrt(ssRes / dn);
 		out->n     = n;
 		return true;
@@ -101,28 +112,37 @@ struct KTPAimStats
 {
 	KTPFireWindow cur;
 
-	int           windowsScored;               // windows meeting the recording bounds
-	KTPWindowStat kept[KTPAim::KEEP_WINDOWS];  // the KEEP_WINDOWS lowest-residual ones
+	int           windowsScored;               // windows meeting the structural bounds
+	KTPWindowStat kept[KTPAim::KEEP_WINDOWS];  // the KEEP_WINDOWS longest ones
 	int           keptCount;
 
-	// Movement. Ground contact is counted in usercmds rather than seconds so it does
-	// not move with tickrate; what it means is not decided here.
-	int groundTouches;
-	int shortGroundContacts;      // landings left within 2 usercmds
-	int consecutiveShort;
-	int maxConsecutiveShort;
-	int usercmdsOnGround;
-
-	int maxConsecutiveShortContacts() const { return maxConsecutiveShort; }
+	// Ground contact, measured in MILLISECONDS. It used to be counted in usercmds,
+	// which silently made it a function of the client's own cl_cmdrate -- two commands
+	// is 20ms at rate 100 and 4ms at rate 500, so a fully cvar-compliant player could
+	// move the signal by changing a legal setting. Time is the same for everyone.
+	int    groundTouches;
+	int    shortestGroundMs;      // -1 until a landing has been left
+	double groundEnterTime;
+	bool   onGroundPrev;
 
 	void Reset()
 	{
 		cur.Reset();
+		ResetCounters();
+	}
+
+	// Clears what a flush has just shipped WITHOUT discarding the window still in
+	// progress. The read natives exclude the open window precisely because it will be
+	// reported once it closes; wiping it here would make that promise false and lose
+	// every burst that straddles a flush.
+	void ResetCounters()
+	{
 		windowsScored = 0;
 		keptCount = 0;
-		groundTouches = shortGroundContacts = 0;
-		consecutiveShort = maxConsecutiveShort = 0;
-		usercmdsOnGround = 0;
+		groundTouches = 0;
+		shortestGroundMs = -1;
+		groundEnterTime = 0.0;
+		onGroundPrev = false;
 	}
 
 	void CloseWindow()
@@ -138,8 +158,8 @@ struct KTPAimStats
 		cur.Reset();
 	}
 
-	// Insertion into a fixed slot set, smallest residual retained. Linear over
-	// KEEP_WINDOWS and only on window close, so it never touches the per-usercmd path.
+	// Insertion into a fixed slot set, longest retained. Linear over KEEP_WINDOWS and
+	// only on window close, so it never touches the per-usercmd path.
 	void Keep(const KTPWindowStat &w)
 	{
 		if (keptCount < KTPAim::KEEP_WINDOWS)
@@ -147,10 +167,10 @@ struct KTPAimStats
 			kept[keptCount++] = w;
 			return;
 		}
-		int worst = 0;
+		int shortest = 0;
 		for (int i = 1; i < keptCount; i++)
-			if (kept[i].rms > kept[worst].rms) worst = i;
-		if (w.rms < kept[worst].rms) kept[worst] = w;
+			if (kept[i].dur < kept[shortest].dur) shortest = i;
+		if (w.dur > kept[shortest].dur) kept[shortest] = w;
 	}
 };
 

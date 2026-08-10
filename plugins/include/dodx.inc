@@ -945,22 +945,23 @@ native dodx_test_scan_gamerules();
  *                    [0] windows recorded
  *                    [1] windows retained for readout (see dodx_get_aim_window)
  *                    [2] ground touches
- *                    [3] ground contacts left within 2 usercmds
- *                    [4] longest consecutive run of those short contacts
+ *                    [3] shortest ground contact in MILLISECONDS, -1 if none yet
  *
  * @return  1 on success, 0 if the player is not in game
  */
-native dodx_get_aim_stats(id, stats[5]);
+native dodx_get_aim_stats(id, stats[4]);
 
 /**
- * Read one retained fire window's geometry. Windows are retained by SMALLEST
- * residual, so slot order is not chronological.
+ * Read one retained fire window's geometry. Windows are retained by LONGEST
+ * duration, so slot order is not chronological.
  *
  * Values are scaled integers, not floats: these cross into Pawn and then into
  * JSON, and a float round-trip through both is where a comparison silently
- * shifts. The residual is in MICRO-degrees because the interesting range is
- * fractions of a degree, which milli-degrees would flatten to one or two
- * significant figures.
+ * shifts. The residual is in MICRO-degrees so small values keep several
+ * significant figures; a coarser unit would quantise them into a few buckets.
+ *
+ * The residual's divisor is n, not n-2 -- a reported measurement rather than an
+ * unbiased variance estimate. n ships alongside, so either can be re-derived.
  *
  * @param id        Player index
  * @param slot      0 .. stats[1]-1 as returned by dodx_get_aim_stats
@@ -975,7 +976,8 @@ native dodx_get_aim_stats(id, stats[5]);
 native dodx_get_aim_window(id, slot, window[4]);
 
 /**
- * Clear a player's aim/movement counters.
+ * Clear a player's shipped counters. The fire window still in progress is PRESERVED,
+ * so a burst straddling a flush is still reported when it closes.
  *
  * Separate from the read so a failed flush does not silently discard the window
  * that justified it: read, ship, and only then reset.
