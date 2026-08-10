@@ -33,10 +33,15 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `PENDING_BUILD`** (built 2026-08-10 from `PENDING_SHA`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `1d45a7bcb5f0f0335238917f838ac882`** (built 2026-08-10 from `b6fa5313`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
+
+> **Core source is unchanged, but the core BINARY is not identical** — `product.version` feeds
+> `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
+> `11ff647207c1f8c45c1bf1f7dfdebc59`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
+> 2.7.23 and 2.7.26 DODX-only cuts.
 
 ### Added
 - **Per-usercmd aim and ground-contact sampling, with natives to read it** (`dodx_get_aim_stats`,
