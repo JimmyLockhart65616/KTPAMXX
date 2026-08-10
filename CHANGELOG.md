@@ -33,14 +33,14 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `c16824adf4a20dc3a043300a52e41270`** (built 2026-08-10 from `fc7b4a96`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `83fb2124c0f68436a208d03349556aed`** (built 2026-08-10 from `d0d3a132`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
 
 > **Core source is unchanged, but the core BINARY is not identical** — `product.version` feeds
 > `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
-> `ca8a5ec32f459ed7883a6cce02253ee6`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
+> `8e7643145cc7c713bee25f8b578c1ff2`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
 > 2.7.23 and 2.7.26 DODX-only cuts.
 
 ### Added
@@ -132,6 +132,23 @@ md5 and you would stage a binary nobody reviewed. Verify by this md5, never by t
 - **Corrected a comment that claimed a precision problem was solved.** Accumulating time relative to
   the window start improves conditioning only; the float cast happens upstream in the engine, so the
   lost mantissa bits are gone before this code sees them.
+
+### Third review pass (`ktp-code-review`, 2026-08-10)
+- **A fire window could span a delivery gap, and retention had started selecting for it.** The bridge
+  was only evaluated when a non-attacking sample arrived; the attacking path was unconditional, so if
+  usercmds stopped and the next to arrive still had `+attack`, the window absorbed the outage. A
+  `.tech` pause gates `SV_RunCmd` entirely — 300 s of budget per team — so a held trigger across one
+  produced a single window minutes long, and packet loss did the same over shorter spans. Latent
+  before; **selective** once retention moved to longest duration, because the artefact is carried by
+  the retention key itself, so those windows displaced genuine bursts and the retained set began
+  describing connection quality rather than trigger discipline. Continuity is now decided once,
+  before both branches.
+- **The continuity guard has a lower bound.** `svtimebase` is re-anchored per packet, so the delta can
+  step backward — and an unguarded `delta <= BRIDGE_MS` is satisfied by *every* negative value however
+  large.
+- **Ground touches are counted at contact END**, so a touch and its duration always land in the same
+  flush interval. Counting at start split them whenever a contact straddled a flush, and any per-touch
+  figure a consumer derived was silently combining two populations.
 
 ## [2.7.26] - 2026-08-08
 
