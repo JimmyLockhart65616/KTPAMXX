@@ -33,14 +33,14 @@ DODX-only delta over 2.7.26. **The `.inc` DID change** (three natives added), un
 only, so existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt
 against this include set.
 
-**Shipping artifact — `dodx_ktp_i386.so` md5 `f7cbb58bcb3497abfb5681643c4d154f`** (built 2026-08-10 from `58001e2e`,
+**Shipping artifact — `dodx_ktp_i386.so` md5 `2574fdbf17aec899599bf188c9230137`** (built 2026-08-10 from `784628f6`,
 `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04).
 ⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
 md5 and you would stage a binary nobody reviewed. Verify by this md5, never by the banner.
 
 > **Core source is unchanged, but the core BINARY is not identical** — `product.version` feeds
 > `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
-> `bb3669af0c16274f6aedf59b86fdbc5b`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
+> `d177f473af7f41d9a54eba7309eac41e`). Only the DODX artifact is meant to ship here; the core is a byproduct, exactly as in the
 > 2.7.23 and 2.7.26 DODX-only cuts.
 
 ### Added
@@ -170,6 +170,30 @@ md5 and you would stage a binary nobody reviewed. Verify by this md5, never by t
 - Documented three contracts a consumer cannot infer: a burst split by a delivery gap is reported as
   several unreassemblable windows; `dur` is trigger-**held** time, not firing time; and a ground
   contact interrupted by death is never completed and never counted.
+
+### Fifth review pass — ✅ APPROVED (`ktp-code-review`, 2026-08-10)
+Verdict: clean, stage it. `CONTINUITY_MS 150` was confirmed to have a **provable 3× margin**, and for
+a better reason than the one it was chosen for: `SV_RunCmd` recursively halves any `msec > 50`, so
+**every** terminal call advances `svtimebase` by at most 50 ms regardless of how badly a client
+hitched. A 200 ms stall arrives as four ~50 ms samples, not one 200 ms gap — so no *legal* inter-sample
+spacing can approach the bound, and `fps_max` is irrelevant to the ceiling.
+
+Two couplings recorded rather than changed, both previously invisible:
+- **`MAX_WINDOW_S` equals the consumer's `WEAPON_FLUSH_INTERVAL`, and that is load-bearing.** A flush
+  clears `keptCount`, so while they are equal a trigger-holder yields at most one clamped window per
+  interval — 1 of 16 slots — instead of crowding the retained set. Move either independently and that
+  ratio changes.
+- **Two quantities are irreducibly client-influenced.** The release tolerance is evaluated only at
+  sample times, so its real resolution is the client's frame interval: an identical trigger release can
+  split one player's burst and bridge another's, by about a frame. It runs *opposite* to the frame-rate
+  defect fixed above, so the two partially cancel rather than compound. And the time axis is
+  client-declared within a packet while `n` is frames delivered — `n` is comparable across players only
+  as `n/dur`. Both are now stated in `dodx.inc` so a reader stops hunting for a fix that does not exist
+  at this layer.
+
+`MAX_WINDOW_S` also retroactively closed the previous round's latent digit-width warning: `dur_ms` ≤
+30000 and `n` ≤ 15000 at `sv_maxcmdrate 500` are both inside the consumer's field assumptions, which
+are now enforced rather than assumed.
 
 ## [2.7.26] - 2026-08-08
 
