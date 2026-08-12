@@ -352,6 +352,23 @@ flags now read their real owner.
 `> 0`, since the ownership seed must run on a single-CP map too. Same number of read sites, one
 slightly wider condition, and it runs at map load rather than in the frame loop.
 
+- **Positions on the assist and cap-break lines** (`ktp_stats_capture.inc`).
+  DoD has never recorded positional data -- `pos_x/y/z` is NULL on every DoD
+  event row. `dodx_get_user_origin` is now read at emit time and attached as the
+  `assister_position`/`victim_position` (assists) and `position` (breaks)
+  properties.
+
+  **No daemon change needed**: `doEvent_PlayerAction` and
+  `doEvent_PlayerPlayerAction` already parse exactly those property names into
+  the event row's `pos_*`/`vpos_*` columns -- the capability was there the whole
+  time with nothing emitting it. Rounded to integers, and the property is
+  omitted entirely (rather than written as `0 0 0`) if the origin read fails, so
+  a failure can't masquerade as the map origin.
+
+  This is also what makes the break rows useful later: the `(flag "...")` name
+  is discarded by the daemon, so position is how the query layer will work out
+  which point a break happened on.
+
 - **Cap-break capture for HLStatsX** (`ktp_stats_capture.inc`). A break --
   killing an enemy standing on a point their team is capturing -- is the only
   way to stop capture progress in DoD, and has never been recorded outside the
