@@ -1,8 +1,7 @@
 // KTP Stats Capture -- extra per-match stats logged for KTPHLStatsX.
 //
-// Scope today: assists, cap breaks, assist/break positions, and frag context
-// (prone/scope/ammo/headshot at kill). The per-hit damage ledger lands here
-// in a later phase.
+// Scope today: assists, cap breaks, assist/break positions, frag context
+// (prone/scope/ammo/headshot at kill), and the per-hit damage ledger.
 //
 // SELF-CONTAINED BY DESIGN. Everything below declares its own state and reads
 // nothing from stats_logging.sma's globals -- deliberately unlike
@@ -37,6 +36,16 @@
 // last spawn, to be credited an assist when they die.
 #define KSC_ASSIST_DAMAGE_MIN 50
 
+// A player's HP pool is 0-100; DoD's raw per-hit damage value is the nominal
+// weapon value with multipliers applied (headshot, wallbang) and is NOT
+// clamped to what a body could actually lose -- a single hit can log 400+.
+// Un-capped, that number measures "how strong this weapon+hitzone combo is
+// on paper", not "how much this hit mattered", which is the wrong quantity
+// for a per-player stat. Same convention CS2 uses. The raw value is still
+// captured alongside this -- see ksc_emit_damage -- so nothing is lost, but
+// any KTPR-facing consumer should read the capped value, not the raw one.
+#define KSC_DAMAGE_CAP 100
+
 // DoD team ids, as reported by get_user_team() and by the CA_* area reads
 // (dodx.inc documents m_nCapturingTeam as 1=allies, 2=axis, 0=none).
 #define KSC_TEAM_ALLIES 1
@@ -47,7 +56,14 @@
 #define KSC_BREAK_QUEUE_MAX 6   // concurrent pending killers per flag
 #define KSC_BREAK_WINDOW    5   // polls a candidate stays live (~2.5s)
 
-#define KSC_BUF_MAX_ENTRIES 48
+// Bumped 48 -> 128 for the damage ledger: ~1,100-1,500 hits/match (measured
+// on a prior live audit) dwarfs the ~150-400 kills/match that sized this
+// buffer before. Client_damage can fire many times per second in a heavy
+// fight, all sharing this one buffer with assists/breaks/frag_context, so
+// headroom matters more here than line length does. Validate empirically via
+// a Lane B run -- watch for `[KTP-STATS] dropped` lines -- rather than trust
+// this number; the same rule the line-length budget below already follows.
+#define KSC_BUF_MAX_ENTRIES 128
 // Sized for the longest line we emit: frag_context, with two full player
 // strings (32-char name + userid + steamid + team each, ~70 apiece) plus nine
 // properties (headshot, k/v_prone, k/v_scope, k/v_clip, k/v_ammo), which
@@ -230,10 +246,6 @@ public dod_client_scope(id, value) {
 // LAN deployments. AMXX dispatches the forward to every plugin implementing it,
 // so the two coexist without interfering.
 public client_damage(attacker, victim, damage, wpnindex, hitplace, TA) {
-	// Signature is fixed by the forward; weapon and hitbox aren't needed for
-	// assist attribution (the damage ledger phase will use them).
-	#pragma unused wpnindex, hitplace
-
 	if (!ksc_enabled())
 		return
 
@@ -242,7 +254,15 @@ public client_damage(attacker, victim, damage, wpnindex, hitplace, TA) {
 	if (victim < 1 || victim > MAX_PLAYERS)
 		return
 
-	// Enemy damage only -- self-damage and team hits earn nothing.
+	// Ledger every hit -- self-damage and team hits included, unlike assist
+	// attribution below. A ledger that silently dropped those couldn't answer
+	// "how much friendly fire happened" or "how much self-damage from own
+	// grenades", and the query layer can filter enemy-only when that's what a
+	// consumer wants. attacker == victim is real (a player's own grenade).
+	ksc_emit_damage(attacker, victim, damage, wpnindex, hitplace)
+
+	// Enemy damage only from here down -- self-damage and team hits earn no
+	// assist credit.
 	if (attacker == victim || TA)
 		return
 
@@ -479,6 +499,42 @@ stock ksc_weapon_state(id, &clip, &ammo) {
 
 	if (id >= 1 && id <= MAX_PLAYERS && is_user_connected(id))
 		dod_get_user_weapon(id, clip, ammo)
+}
+
+// Per-hit damage ledger. Fires from client_damage for every hit -- enemy,
+// team, and self alike; see that forward's comment for why. Buffered like
+// everything else here, NOT queued through the daemon's generic recordEvent
+// machinery (that's built around hlstats_Events_* tables with a config-driven
+// column set); this is a standalone table with its own direct-INSERT handler
+// on the daemon side, matching how KTP_MATCH_* and frag_context are handled
+// rather than the stock event tables. If per-event INSERT volume ever proves
+// to be a real cost at fleet scale it can be batched later -- flagged, not
+// silently assumed fine, same as the buffer sizing above.
+//
+// `game_time` stands in for "tick" from the original phase spec: DoD/AMXX
+// exposes no raw network tick counter to Pawn, only get_gametime() (seconds
+// since map start, a float). It serves the same ordering/correlation
+// purpose -- which hits happened near each other in time -- so this
+// substitutes it rather than claiming a tick count that was never captured.
+stock ksc_emit_damage(attacker, victim, damage, wpnindex, hitplace) {
+	if (!is_user_connected(attacker) || !is_user_connected(victim))
+		return
+
+	new attacker_str[96], victim_str[96], weapon[32]
+	ksc_player_str(attacker, attacker_str, charsmax(attacker_str))
+	ksc_player_str(victim, victim_str, charsmax(victim_str))
+	xmod_get_wpnlogname(wpnindex, weapon, charsmax(weapon))
+
+	new damage_capped = (damage > KSC_DAMAGE_CAP) ? KSC_DAMAGE_CAP : damage
+	new Float:gt = get_gametime()
+
+	new line[KSC_BUF_LINE_LEN]
+	formatex(line, charsmax(line),
+		"^"%s^" triggered ^"damage^" against ^"%s^" with ^"%s^" (damage ^"%d^") (damage_capped ^"%d^") (hitplace ^"%d^") (game_time ^"%.2f^")",
+		attacker_str, victim_str, weapon,
+		damage, damage_capped, hitplace, gt)
+
+	ksc_buffer(line)
 }
 
 // frag_context: fired on every kill (not just headshots), carrying the state

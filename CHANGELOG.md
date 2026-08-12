@@ -8,6 +8,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Per-hit damage ledger for HLStatsX** (`ktp_stats_capture.inc`). Every
+  `client_damage` hit — enemy, team, and self alike — now emits a `damage`
+  marker: attacker, victim, weapon, raw damage, a **capped** damage value,
+  hitplace, and `game_time`. No new hook; extends the `client_damage`
+  forward already hooked here for assist attribution, which is why
+  `wpnindex`/`hitplace` are no longer `#pragma unused`.
+
+  **Damage is capped at 100** (`KSC_DAMAGE_CAP`) in a second column alongside
+  the raw value. DoD's raw per-hit damage is the nominal weapon value with
+  multipliers applied (headshot, wallbang) and is not clamped to a player's
+  actual 0-100 HP pool — a single hit can log 400+. Un-capped, that number
+  says "how strong this weapon+hitzone combo is on paper," not "how much
+  this hit mattered," which is the wrong quantity for a per-player stat.
+  Same convention CS2 uses. Raw is kept alongside it — nothing is discarded —
+  but any KTPR-facing consumer should read the capped column.
+
+  `game_time` (`get_gametime()`, seconds since map start) stands in for
+  "tick" from the original phase spec — AMXX exposes no raw network tick
+  counter to Pawn. Documented as a substitution, not claimed as something it
+  isn't.
+
+  **`KSC_BUF_MAX_ENTRIES` raised 48 -> 128.** ~1,100-1,500 hits/match (a
+  prior live audit) dwarfs the ~150-400 kills/match that sized the shared
+  capture buffer before frag_context and this landed on the same buffer.
+  Needs the same empirical drop-line check the line-length budget got in the
+  prior unit — see `KTPR_DEPLOYMENT_PLAN.md` Unit 6 for the run.
+
+  Needs a matching daemon table and handler, shipped alongside in
+  KTPHLStatsX. **Not** queued through the daemon's generic `recordEvent`
+  batching (that machinery is built around `hlstats_Events_*` tables with a
+  config-driven column set) — this is a standalone table with a direct
+  per-event `INSERT`, matching how the `KTP_MATCH_*` markers and
+  `frag_context` are already handled rather than the stock event tables. If
+  per-event `INSERT` volume ever proves a real cost at fleet scale, it can be
+  batched later — flagged as a known simplification, not assumed fine.
+
 - **Frag context for HLStatsX** (`ktp_stats_capture.inc`, `stats_logging.sma`
   1.12.0 -> 1.13.0). Every kill now carries killer/victim prone state
   (`dod_get_pronestate`), scope state (tracked live from the `dod_client_scope`
