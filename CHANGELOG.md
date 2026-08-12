@@ -23,12 +23,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exclusion, matching the marker it replaces, which fired on any headshot
   regardless of TK.
 
-  Clip/ammo land as `-1 -1` when a read fails or a weapon has no
-  clip/ammo concept (melee, grenades) — a sentinel, not a fabricated empty
-  magazine, matching the pattern positions already established of omitting
-  rather than fabricating a reading. Prone state is stored raw (0 standing, 1
-  going prone/MG teardown, 2 setting up an MG while down), not collapsed to a
-  bool.
+  Clip/ammo reflect the participant's **current** weapon at the moment of the
+  kill line, not necessarily the weapon that scored it (that's `wpnindex`,
+  read separately) — verified live: a grenade kill's `k_clip`/`k_ammo` showed
+  real rifle values because the killer had already switched back by the time
+  `client_death` fired. Land as `-1 -1` only if the read fails (in practice, a
+  narrow disconnect race), matching the pattern positions already established
+  of omitting rather than fabricating a reading. **Not** a melee/grenade
+  indicator — a knife kill returns real `0 0` from the engine, confirmed live,
+  which is a different thing from `-1 -1` and must not be conflated with it.
+  Prone state is stored raw (0 standing, 1 going prone/MG teardown, 2 setting
+  up an MG while down), not collapsed to a bool.
 
   Needs matching `hlstats_Events_Frags` columns and a daemon handler for the
   new `frag_context` line, shipped alongside in KTPHLStatsX. The old

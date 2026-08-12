@@ -460,11 +460,19 @@ public controlpoints_init() {
 	}
 }
 
-// Reads one player's current clip/ammo via dod_get_user_weapon. Leaves both
-// at -1 (the caller's default) if the player is not in-game -- a sentinel,
-// not a fabricated empty magazine, since melee and grenades have no
-// clip/ammo concept and a consumer needs to tell "no ammo" from "not
-// applicable".
+// Reads one player's CURRENT weapon's clip/ammo via dod_get_user_weapon --
+// not necessarily the weapon that scored the kill (that's wpnindex, read
+// separately). A player who threw a grenade and switched back to their rifle
+// before the kill line lands shows the rifle's clip here, not the grenade's;
+// verified live -- a grenade kill's k_clip/k_ammo showed real rifle values,
+// not a melee/grenade sentinel.
+//
+// Leaves both at -1 (the caller's default) only if the player is not
+// in-game, which in practice means "disconnected between the kill and this
+// read" -- a narrow race, not the common case. Melee weapons DO return
+// through this native: clip=0, ammo=0 is a real engine reading for a knife,
+// confirmed live, not this sentinel. -1 therefore means "could not read",
+// never "this weapon has no clip" -- do not treat it as a weapon-type signal.
 stock ksc_weapon_state(id, &clip, &ammo) {
 	clip = -1
 	ammo = -1
