@@ -8,6 +8,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Frag context for HLStatsX** (`ktp_stats_capture.inc`, `stats_logging.sma`
+  1.12.0 -> 1.13.0). Every kill now carries killer/victim prone state
+  (`dod_get_pronestate`), scope state (tracked live from the `dod_client_scope`
+  forward — DODX has no getter), and clip/ammo (`dod_get_user_weapon`) for
+  both participants, plus headshot.
+
+  This **retires** `stats_logging.sma`'s old dedicated `headshot_kill` marker
+  (headshot-only, its own log line) in favour of a single `frag_context`
+  marker fired on every kill. Both use the identical technique — buffer a
+  marker after the kill, daemon flushes and UPDATEs the just-inserted Frags
+  row by `(killerId, victimId, weapon)` — so this is one queued line and one
+  daemon UPDATE per kill instead of two, not a parallel mechanism. No TK
+  exclusion, matching the marker it replaces, which fired on any headshot
+  regardless of TK.
+
+  Clip/ammo land as `-1 -1` when a read fails or a weapon has no
+  clip/ammo concept (melee, grenades) — a sentinel, not a fabricated empty
+  magazine, matching the pattern positions already established of omitting
+  rather than fabricating a reading. Prone state is stored raw (0 standing, 1
+  going prone/MG teardown, 2 setting up an MG while down), not collapsed to a
+  bool.
+
+  Needs matching `hlstats_Events_Frags` columns and a daemon handler for the
+  new `frag_context` line, shipped alongside in KTPHLStatsX. The old
+  `headshot_kill` daemon branch is left in place as dead code (harmless) —
+  nothing emits that line anymore, but nothing needs it removed either.
+
+  **Upstream-file edit**, flagged per the fork-delta rule: `stats_logging.sma`'s
+  `client_death` now does nothing but dispatch into `ksc_on_death`. Behaviour
+  for assists and cap-break candidate queuing is unchanged; the removed code
+  is exactly the old headshot-only block, folded into the new marker.
+
 - **`dodx_get_score_tick_time()` / `dodx_get_score_tick_period()` — the territorial scoring clock.**
   DoD awards periodic team points for holding control points from the map's single
   `dod_control_point_master`, on that entity's own clock. **The DoD client shows this nowhere** —

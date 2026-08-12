@@ -15,12 +15,13 @@
 #include <amxmodx>
 #include <dodx>
 
-// KTP: extra per-match stat capture for HLStatsX (assists today; cap breaks,
-// positions and the per-hit damage ledger in later phases). Self-contained --
-// it shares no state with this file. See its header for why.
+// KTP: extra per-match stat capture for HLStatsX (assists, cap breaks,
+// positions and frag context today; the per-hit damage ledger in a later
+// phase). Self-contained -- it shares no state with this file. See its
+// header for why.
 #include "ktp_stats_capture"
 
-#define PLUGIN_VERSION "1.12.0"
+#define PLUGIN_VERSION "1.13.0"
 
 // KTP: Buffered logging to avoid synchronous file I/O during postthink.
 // client_death fires inside SV_RunCmd postthink phase — a single log_message()
@@ -141,52 +142,18 @@ stock log_player_stats(id) {
   }
 }
 
-// KTP: Log headshot kills for HLStatsX per-frag headshot tracking.
-// The engine logs "killed with weapon" but without (headshot) properties.
-// We log a separate "headshot_kill" triggered event so HLStatsX can mark
-// the corresponding frag entry as a headshot without double-counting kills.
+// KTP: client_death dispatches into ktp_stats_capture.inc for everything
+// this fork adds on top of the stock plugin: assists, cap-break candidate
+// queuing, and frag_context (headshot/prone/scope/ammo on every kill).
+//
+// frag_context replaced a dedicated "headshot_kill" marker that used to live
+// here directly (headshot-only, its own buffered log line). Both use the same
+// technique -- log a marker after the kill, daemon flushes and UPDATEs the
+// just-inserted Frags row by killerId/victimId/weapon -- so folding headshot
+// into frag_context as one more property means one queued line and one
+// daemon UPDATE per kill instead of two. See ktp_stats_capture.inc's header.
 public client_death(killer, victim, wpnindex, hitplace, TK) {
-  // KTP: assists are credited on EVERY death, so this has to run ahead of the
-  // headshot-only early return below.
-  ksc_on_death(killer, victim, TK)
-
-  if (hitplace != HIT_HEAD)
-    return PLUGIN_CONTINUE
-
-  if (!killer || killer == victim || !is_user_connected(killer) || !is_user_connected(victim))
-    return PLUGIN_CONTINUE
-
-  new szKillerName[MAX_NAME_LENGTH], szKillerAuthid[32], szKillerTeam[16]
-  new szVictimName[MAX_NAME_LENGTH], szVictimAuthid[32], szVictimTeam[16]
-  new szWeapon[16]
-
-  get_user_name(killer, szKillerName, charsmax(szKillerName))
-  get_user_authid(killer, szKillerAuthid, charsmax(szKillerAuthid))
-  get_user_info(killer, "team", szKillerTeam, charsmax(szKillerTeam))
-  if (szKillerTeam[0])
-    szKillerTeam[0] -= 32
-
-  get_user_name(victim, szVictimName, charsmax(szVictimName))
-  get_user_authid(victim, szVictimAuthid, charsmax(szVictimAuthid))
-  get_user_info(victim, "team", szVictimTeam, charsmax(szVictimTeam))
-  if (szVictimTeam[0])
-    szVictimTeam[0] -= 32
-
-  xmod_get_wpnlogname(wpnindex, szWeapon, charsmax(szWeapon))
-
-  new iKillerUserid = get_user_userid(killer)
-  new iVictimUserid = get_user_userid(victim)
-
-  // KTP: Buffer headshot_kill log instead of writing to disk synchronously.
-  // client_death fires inside SV_RunCmd postthink — synchronous I/O here
-  // stalls the entire frame 26-122ms. Buffer and flush later.
-  new szLine[LOG_BUFFER_LINE_LEN]
-  formatex(szLine, charsmax(szLine),
-    "^"%s<%d><%s><%s>^" triggered ^"headshot_kill^" against ^"%s<%d><%s><%s>^" with ^"%s^"",
-    szKillerName, iKillerUserid, szKillerAuthid, szKillerTeam,
-    szVictimName, iVictimUserid, szVictimAuthid, szVictimTeam,
-    szWeapon)
-  buffer_log(szLine)
+  ksc_on_death(killer, victim, wpnindex, hitplace, TK)
 
   return PLUGIN_CONTINUE
 }

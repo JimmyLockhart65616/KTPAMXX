@@ -1,7 +1,8 @@
 // KTP Stats Capture -- extra per-match stats logged for KTPHLStatsX.
 //
-// Scope today: assists and cap breaks. Kill/flag positions and the per-hit
-// damage ledger land here in later phases.
+// Scope today: assists, cap breaks, assist/break positions, and frag context
+// (prone/scope/ammo/headshot at kill). The per-hit damage ledger lands here
+// in a later phase.
 //
 // SELF-CONTAINED BY DESIGN. Everything below declares its own state and reads
 // nothing from stats_logging.sma's globals -- deliberately unlike
@@ -11,9 +12,16 @@
 //
 // Frame safety: client_damage and client_death run inside SV_RunCmd postthink,
 // where synchronous log I/O stalls the whole frame (26-122ms measured on this
-// stack). Everything here buffers and flushes from a task -- the same shape
-// stats_logging.sma uses for its headshot markers, but with its OWN buffer, so
-// a burst of capture traffic can never force a mid-frame flush of that one.
+// stack). Everything here buffers and flushes from a task with its OWN buffer,
+// so a burst of capture traffic can never force a mid-frame flush of the stock
+// plugin's own buffered logging.
+//
+// The "frag_context" line (below) retired stats_logging.sma's old dedicated
+// headshot_kill marker: both used the identical technique -- buffer a marker
+// after the kill line, then have the daemon flush and UPDATE the just-inserted
+// Frags row by (killerId, victimId, weapon) ORDER BY id DESC LIMIT 1 -- so
+// firing it unconditionally with headshot as one more property is one queued
+// line and one daemon UPDATE per kill instead of two.
 //
 // No match id is stamped on these lines, on purpose. hlstats.pl's recordEvent()
 // injects match_id server-side for every event it writes and gates it on
@@ -40,11 +48,12 @@
 #define KSC_BREAK_WINDOW    5   // polls a candidate stays live (~2.5s)
 
 #define KSC_BUF_MAX_ENTRIES 48
-// Sized for the longest line we emit: an assist carrying two player strings
-// (32-char name + userid + steamid + team each) plus both position properties,
-// which measures ~256. Headroom kept deliberately -- a truncated line does not
-// fail loudly, it just silently stops matching the daemon's regex.
-#define KSC_BUF_LINE_LEN    384
+// Sized for the longest line we emit: frag_context, with two full player
+// strings (32-char name + userid + steamid + team each, ~70 apiece) plus nine
+// properties (headshot, k/v_prone, k/v_scope, k/v_clip, k/v_ammo), which
+// measures ~350. Headroom kept deliberately -- a truncated line does not fail
+// loudly, it just silently stops matching the daemon's regex.
+#define KSC_BUF_LINE_LEN    512
 #define KSC_BUF_FLUSH_SECS  5.0
 
 // Distinct from stats_logging.sma's own flush task, which registers with the
@@ -58,6 +67,12 @@ new g_kscDropped = 0
 
 // [victim][attacker] -- enemy damage dealt to victim since their last spawn.
 new g_kscDmgTaken[MAX_PLAYERS + 1][MAX_PLAYERS + 1]
+
+// Live scope state per player, tracked from the dod_client_scope forward
+// (DODX has no getter -- the forward is the only way to know). 0/1, matching
+// the forward's own "value" parameter (1 = scope up, 0 = scope down); starts
+// at 0, which is correct for anyone who has never scoped this life.
+new g_kscScoped[MAX_PLAYERS + 1]
 
 new g_kscCvarEnabled
 
@@ -195,6 +210,16 @@ stock ksc_clear_player(id) {
 		g_kscDmgTaken[id][i] = 0
 		g_kscDmgTaken[i][id] = 0
 	}
+
+	g_kscScoped[id] = 0
+}
+
+// DODX forward. The only source for live scope state; there is no getter.
+public dod_client_scope(id, value) {
+	if (id < 1 || id > MAX_PLAYERS)
+		return
+
+	g_kscScoped[id] = value
 }
 
 // DODX forward. Feeds the enemy-damage matrix that ksc_on_death reads.
@@ -435,15 +460,75 @@ public controlpoints_init() {
 	}
 }
 
-// Called from stats_logging.sma's client_death, ahead of its headshot-only
-// early return, so assists are credited on every death rather than only
-// headshot ones.
+// Reads one player's current clip/ammo via dod_get_user_weapon. Leaves both
+// at -1 (the caller's default) if the player is not in-game -- a sentinel,
+// not a fabricated empty magazine, since melee and grenades have no
+// clip/ammo concept and a consumer needs to tell "no ammo" from "not
+// applicable".
+stock ksc_weapon_state(id, &clip, &ammo) {
+	clip = -1
+	ammo = -1
+
+	if (id >= 1 && id <= MAX_PLAYERS && is_user_connected(id))
+		dod_get_user_weapon(id, clip, ammo)
+}
+
+// frag_context: fired on every kill (not just headshots), carrying the state
+// that makes a kill legible after the fact -- was the victim prone, scoped,
+// out of ammo. Retires stats_logging.sma's old headshot-only marker; see the
+// file header for why one line replaces two.
+//
+// Same guard shape the old headshot marker used: skip suicides, skip a
+// disconnected participant. dod_get_pronestate returns 0 standing, 1 going
+// prone / MG teardown, 2 setting up an MG while down -- stored raw, not
+// collapsed to a bool, since the daemon column can hold the real value.
+stock ksc_emit_frag_context(killer, victim, wpnindex, hitplace) {
+	if (killer < 1 || killer > MAX_PLAYERS || killer == victim)
+		return
+	if (victim < 1 || victim > MAX_PLAYERS)
+		return
+	if (!is_user_connected(killer) || !is_user_connected(victim))
+		return
+
+	new killer_str[96], victim_str[96], weapon[32]
+	ksc_player_str(killer, killer_str, charsmax(killer_str))
+	ksc_player_str(victim, victim_str, charsmax(victim_str))
+	xmod_get_wpnlogname(wpnindex, weapon, charsmax(weapon))
+
+	new k_clip, k_ammo, v_clip, v_ammo
+	ksc_weapon_state(killer, k_clip, k_ammo)
+	ksc_weapon_state(victim, v_clip, v_ammo)
+
+	new k_prone = dod_get_pronestate(killer)
+	new v_prone = dod_get_pronestate(victim)
+	new headshot = (hitplace == HIT_HEAD) ? 1 : 0
+
+	new line[KSC_BUF_LINE_LEN]
+	formatex(line, charsmax(line),
+		"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^")",
+		killer_str, victim_str, weapon,
+		headshot, k_prone, v_prone,
+		g_kscScoped[killer], g_kscScoped[victim],
+		k_clip, k_ammo, v_clip, v_ammo)
+
+	ksc_buffer(line)
+}
+
+// Called from stats_logging.sma's client_death, ahead of its old headshot-only
+// early return, so assists (and now frag context) are credited on every
+// death rather than only headshot ones.
 //
 // The row is cleared whether or not capture is enabled: leaving a populated row
 // behind while the cvar is off would let stale damage credit an assist on some
 // much later death once it is switched back on.
-stock ksc_on_death(killer, victim, TK) {
+stock ksc_on_death(killer, victim, wpnindex, hitplace, TK) {
 	ksc_queue_break_candidate(killer, victim, TK)
+
+	// No TK exclusion, matching the old headshot-only marker it replaces --
+	// that fired on any headshot kill regardless of TK, so this stays a
+	// superset rather than a narrower replacement.
+	if (ksc_enabled())
+		ksc_emit_frag_context(killer, victim, wpnindex, hitplace)
 
 	if (victim < 1 || victim > MAX_PLAYERS)
 		return
