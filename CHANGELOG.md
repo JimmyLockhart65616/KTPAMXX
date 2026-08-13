@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Periodic roster-position broadcast** (`ktp_stats_capture.inc`,
+  `stats_logging.sma` 1.14.0 -> 1.15.0). Every `KSC_POSITION_BROADCAST_SECS`
+  (30s, a reasoned-not-measured starting value — see the constant's own
+  comment), one `position_sample` marker per connected, alive player:
+  team, `(x, y, z)`, and `game_time`. Raw facts only, on purpose — no
+  "is this player holding forward territory" or "is this a solo cap"
+  judgment happens here; that classification belongs entirely in the query
+  layer, reading this data plus `ktp_flag_positions`. Same data feeds two
+  deliberately-deferred consumers: positional/"holding" stats and (later)
+  ninja-cap detection — see KTPInfrastructure's
+  `tests/e2e_stats/NEXT_PHASES.md`.
+  - Flat and unconditional, not event-triggered, so it can't bias toward
+    moments something else already judged interesting — same principle the
+    ninja-cap deferral was parked on.
+  - Dead players are skipped — no meaningful map position between death and
+    respawn.
+  - Live-verified via a short Lane B run (2026-08-13): 129 real samples
+    landed with correct team/position/game_time and correct `match_id`/
+    `half` gating (`NULL`/0 during warmup and halftime, tagged during live
+    play) — matching `ktp_damage_events`'s established gating exactly.
+  - **Bug caught by that same live run, not by compilation**: the task
+    callback was declared `stock` instead of `public`. It compiled clean
+    (`stock` doesn't error) and registered via `set_task` without error, but
+    silently never fired — `set_task`'s name-based dispatch only reaches
+    `public` functions, matching `ksc_flush_task`/`ksc_zone_poll_task`.
+    Zero samples in a full 4-minute run was the tell; fixed and re-verified
+    before this was considered done.
+
 - **Break context, flag positions, and last-flag-defense for HLStatsX**
   (`ktp_stats_capture.inc`, `stats_logging.sma` 1.13.0 -> 1.14.0).
   - `flag_position` — static per-flag `(x, y)` from `CP_origin_x`/`CP_origin_y`,

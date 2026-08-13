@@ -3,7 +3,9 @@
 // Scope today: assists, cap breaks, assist/break positions, frag context
 // (prone/scope/ammo/headshot at kill), the per-hit damage ledger, static
 // flag positions, break context (contester count/time remaining/capout),
-// and last-flag-defense (kill-position-based, not break-queue-based).
+// last-flag-defense (kill-position-based, not break-queue-based), and a
+// periodic roster-position broadcast for positional/"holding" stats and
+// (later) ninja-cap detection.
 //
 // SELF-CONTAINED BY DESIGN. Everything below declares its own state and reads
 // nothing from stats_logging.sma's globals -- deliberately unlike
@@ -58,6 +60,22 @@
 #define KSC_BREAK_QUEUE_MAX 6   // concurrent pending killers per flag
 #define KSC_BREAK_WINDOW    5   // polls a candidate stays live (~2.5s)
 
+// Roster-position broadcast for positional/"holding" stats (map presence
+// beyond a discrete capture event) and, later, ninja-cap detection -- both
+// deferred items that need the exact same underlying data (see
+// tests/e2e_stats/NEXT_PHASES.md "Ninja-cap detection" in KTPInfrastructure).
+//
+// 30s is a REASONED starting value, not a live-EPS-profiled one: 2026-08-13's
+// real match-1 data measured ~20 combined damage+frag rows/min at full
+// ~17-player rosters. At 30s and a full roster, this adds ~34 rows/min --
+// same order of magnitude as existing capture, not a new dominant volume
+// source. That is arithmetic from already-measured production volume, not a
+// guess, but it is still NOT the same as watching real EPS impact on a live
+// Lane B run at a few candidate intervals, which is what
+// KSC_LAST_FLAG_RADIUS's own unmeasured-constant precedent calls for.
+// Validate the same way before trusting this in production.
+#define KSC_POSITION_BROADCAST_SECS 30.0
+
 // Bumped 48 -> 128 for the damage ledger: ~1,100-1,500 hits/match (measured
 // on a prior live audit) dwarfs the ~150-400 kills/match that sized this
 // buffer before. Client_damage can fire many times per second in a heavy
@@ -76,8 +94,9 @@
 
 // Distinct from stats_logging.sma's own flush task, which registers with the
 // default id -- sharing an id would make one remove_task() cancel both.
-#define KSC_TASK_FLUSH 88010
-#define KSC_TASK_ZONES 88011
+#define KSC_TASK_FLUSH     88010
+#define KSC_TASK_ZONES     88011
+#define KSC_TASK_POSITIONS 88012
 
 new g_kscBuffer[KSC_BUF_MAX_ENTRIES][KSC_BUF_LINE_LEN]
 new g_kscBufferCount = 0
@@ -122,6 +141,7 @@ stock ksc_cfg() {
 	// register. Same reason the stock buffer's task is registered there.
 	set_task(KSC_BUF_FLUSH_SECS, "ksc_flush_task", KSC_TASK_FLUSH, .flags="b")
 	set_task(KSC_ZONE_POLL_SECS, "ksc_zone_poll_task", KSC_TASK_ZONES, .flags="b")
+	set_task(KSC_POSITION_BROADCAST_SECS, "ksc_position_broadcast_task", KSC_TASK_POSITIONS, .flags="b")
 }
 
 stock bool:ksc_enabled() {
@@ -546,6 +566,46 @@ stock ksc_emit_flag_position(f) {
 
 	log_message("KTP_FLAG_POSITION (map ^"%s^") (flag_index ^"%d^") (flag_name ^"%s^") (x ^"%d^") (y ^"%d^")",
 		mapname, f, g_kscFlagName[f], x, y)
+}
+
+// Periodic roster-position sample -- raw facts only, on purpose. Per the
+// operator's direction on ninja-cap detection (the other consumer of this
+// same data), classification ("is this player holding forward territory",
+// "is this a solo cap") belongs entirely in the query layer, not here. This
+// emits one marker per connected, alive player every
+// KSC_POSITION_BROADCAST_SECS -- flat and unconditional, not triggered by
+// any in-game event, so it can't bias toward moments something else already
+// judged interesting.
+//
+// Dead players are skipped: they have no meaningful map position between
+// death and respawn, and dodx_get_user_origin on a dead player is not
+// something any other caller in this file relies on either.
+public ksc_position_broadcast_task() {
+	if (!ksc_enabled())
+		return
+
+	for (new id = 1; id <= MAX_PLAYERS; id++) {
+		if (!is_user_connected(id))
+			continue
+		if (!is_user_alive(id))
+			continue
+
+		new pos[64]
+		if (!ksc_origin_str(id, pos, charsmax(pos)))
+			continue
+
+		new pstr[96]
+		ksc_player_str(id, pstr, charsmax(pstr))
+
+		new team = get_user_team(id)
+		new Float:gt = get_gametime()
+
+		new line[KSC_BUF_LINE_LEN]
+		formatex(line, charsmax(line),
+			"^"%s^" triggered ^"position_sample^" (team ^"%d^") (position ^"%s^") (game_time ^"%.2f^")",
+			pstr, team, pos, gt)
+		ksc_buffer(line)
+	}
 }
 
 // Reads one player's CURRENT weapon's clip/ammo via dod_get_user_weapon --
