@@ -7,11 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Position broadcast interval, 30s -> 5s** (`ktp_stats_capture.inc`,
+  `stats_logging.sma` 1.15.0 -> 1.15.1). Operator call: at 30+ deaths/half
+  over a 20-minute half, 30s left too few samples per life for
+  positional/"holding" analysis to be useful. Still a reasoned-not-measured
+  value — at a full ~17-player roster this adds ~204 rows/min, under the
+  damage ledger's existing 1,100-1,500 rows/match direct-INSERT volume, so
+  not a new dominant source, but real EPS impact (specifically the
+  `KSC_BUF_MAX_ENTRIES` buffer's `[KTP-STATS] dropped` counter) still needs
+  validating on a live Lane B run before this is trusted in production —
+  same as `KSC_LAST_FLAG_RADIUS`'s own precedent. Game-thread cost of the
+  task itself is not a concern at any of these intervals: it only reads
+  cheap native state for connected/alive players and buffers, with no
+  synchronous I/O in the task itself (that's deferred to the existing 5s
+  flush task).
+
 ### Added
 - **Periodic roster-position broadcast** (`ktp_stats_capture.inc`,
   `stats_logging.sma` 1.14.0 -> 1.15.0). Every `KSC_POSITION_BROADCAST_SECS`
-  (30s, a reasoned-not-measured starting value — see the constant's own
-  comment), one `position_sample` marker per connected, alive player:
+  (originally 30s, since raised to 5s — see the constant's own comment),
+  one `position_sample` marker per connected, alive player:
   team, `(x, y, z)`, and `game_time`. Raw facts only, on purpose — no
   "is this player holding forward territory" or "is this a solo cap"
   judgment happens here; that classification belongs entirely in the query

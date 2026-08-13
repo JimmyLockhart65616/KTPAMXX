@@ -65,16 +65,20 @@
 // deferred items that need the exact same underlying data (see
 // tests/e2e_stats/NEXT_PHASES.md "Ninja-cap detection" in KTPInfrastructure).
 //
-// 30s is a REASONED starting value, not a live-EPS-profiled one: 2026-08-13's
-// real match-1 data measured ~20 combined damage+frag rows/min at full
-// ~17-player rosters. At 30s and a full roster, this adds ~34 rows/min --
-// same order of magnitude as existing capture, not a new dominant volume
-// source. That is arithmetic from already-measured production volume, not a
-// guess, but it is still NOT the same as watching real EPS impact on a live
-// Lane B run at a few candidate intervals, which is what
-// KSC_LAST_FLAG_RADIUS's own unmeasured-constant precedent calls for.
+// Raised from an initial 30s per the operator's call: at 30+ deaths/half over
+// a 20-minute half, 30s left too few samples per life to be useful for
+// holding/positional analysis. 5s is still a REASONED value, not a
+// live-EPS-profiled one: 2026-08-13's real match-1 data measured ~20 combined
+// damage+frag rows/min at full ~17-player rosters, and the damage ledger
+// alone already runs at 1,100-1,500 direct-INSERT rows/match -- at 5s and a
+// full roster this adds ~204 rows/min, well under that existing per-hit
+// volume, so it is not a new dominant source. That is arithmetic from
+// already-measured production volume, not a guess, but it is still NOT the
+// same as watching real EPS impact -- and specifically the KSC_BUF_MAX_ENTRIES
+// buffer's "[KTP-STATS] dropped" counter -- on a live Lane B run, which is
+// what KSC_LAST_FLAG_RADIUS's own unmeasured-constant precedent calls for.
 // Validate the same way before trusting this in production.
-#define KSC_POSITION_BROADCAST_SECS 30.0
+#define KSC_POSITION_BROADCAST_SECS 5.0
 
 // Bumped 48 -> 128 for the damage ledger: ~1,100-1,500 hits/match (measured
 // on a prior live audit) dwarfs the ~150-400 kills/match that sized this
