@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Break context, flag positions, and last-flag-defense for HLStatsX**
+  (`ktp_stats_capture.inc`, `stats_logging.sma` 1.13.0 -> 1.14.0).
+  - `flag_position` — static per-flag `(x, y)` from `CP_origin_x`/`CP_origin_y`,
+    fired once per `controlpoints_init()` (every map load, including
+    warmup/halftime reloads — harmless, the daemon side upserts on
+    `(server, map, flag_index)`). Unbuffered, matching `KTP_MATCH_*`'s shape
+    rather than the ring buffer — rare events, nothing to batch.
+  - `break_context` — a follow-up marker on every `cap_break`, same
+    buffer-then-daemon-UPDATE technique `frag_context` uses: `contester_count`
+    (the capping team's in-zone count just before the break — how big the
+    push being repelled was), `time_remaining` (`CA_time_remaining` at break
+    time — lower is more "clutch"), `is_capout` (did this break save the
+    defending team from dropping to zero flags — they own exactly one, this
+    one, right now).
+  - `frag_context` gains `k_position`/`v_position` (killer/victim position at
+    the kill, previously not captured on ordinary frags — only on
+    assists/breaks) and `is_last_flag_defense`. **Deliberately keys off KILL
+    POSITION relative to the defended flag, not the break queue** — a
+    defender who kills a would-be ninja before they start capping is
+    defending just as much, and the break queue structurally cannot see a
+    kill that never touched a capture zone. `KSC_LAST_FLAG_RADIUS` (1000
+    units, 2D) is a starting estimate, not a measured one — validate with
+    staged defense kills at known distances before trusting it.
+  - Shares the `ksc_team_flag_count()` test between `is_capout` (on breaks)
+    and `is_last_flag_defense` (on kills) — both are really the same
+    question ("does this team own exactly one flag right now") asked at two
+    different event types, per the operator's correction that a defense kill
+    is not only visible through a completed break.
+  - Needs matching `hlstats.pl` handlers and three new/extended tables,
+    shipped alongside in KTPHLStatsX.
+
 - **Per-hit damage ledger for HLStatsX** (`ktp_stats_capture.inc`). Every
   `client_damage` hit — enemy, team, and self alike — now emits a `damage`
   marker: attacker, victim, weapon, raw damage, a **capped** damage value,

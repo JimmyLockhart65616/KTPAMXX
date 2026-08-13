@@ -1,7 +1,9 @@
 // KTP Stats Capture -- extra per-match stats logged for KTPHLStatsX.
 //
 // Scope today: assists, cap breaks, assist/break positions, frag context
-// (prone/scope/ammo/headshot at kill), and the per-hit damage ledger.
+// (prone/scope/ammo/headshot at kill), the per-hit damage ledger, static
+// flag positions, break context (contester count/time remaining/capout),
+// and last-flag-defense (kill-position-based, not break-queue-based).
 //
 // SELF-CONTAINED BY DESIGN. Everything below declares its own state and reads
 // nothing from stats_logging.sma's globals -- deliberately unlike
@@ -314,7 +316,20 @@ stock ksc_break_shift(f) {
 		g_kscBreakTeam[f] = 0
 }
 
-stock ksc_emit_break(f, breaker) {
+// How many flags team `team` currently owns, from the same g_kscOwner[]
+// state the completed-capture detector already maintains. A team reading 1
+// here is one break/loss away from a capout -- the shared test behind both
+// is_capout (on breaks) and is_last_flag_defense (on kills, further down).
+stock ksc_team_flag_count(team) {
+	new n = 0
+	for (new f = 0; f < g_kscFlagCount; f++) {
+		if (g_kscOwner[f] == team)
+			n++
+	}
+	return n
+}
+
+stock ksc_emit_break(f, breaker, contester_count) {
 	if (breaker < 1 || breaker > MAX_PLAYERS)
 		return
 	if (!is_user_connected(breaker))
@@ -330,14 +345,24 @@ stock ksc_emit_break(f, breaker) {
 	new pos[40]
 	new bool:have_pos = ksc_origin_str(breaker, pos, charsmax(pos))
 
+	// Break-context phase: was the capping team's push big (contester_count,
+	// the in-zone count just before this break), how close to completing was
+	// it (time_remaining -- lower is more "clutch"), and did this break save
+	// the defending team from a capout (they'd be down to 0 flags had the cap
+	// finished, i.e. they own exactly 1 right now: this one).
+	new Float:time_remaining = Float:dodx_area_get_data(f, CA_time_remaining)
+	new defending_team = (g_kscBreakTeam[f] == KSC_TEAM_ALLIES) ? KSC_TEAM_AXIS : KSC_TEAM_ALLIES
+	new is_capout = (ksc_team_flag_count(defending_team) == 1) ? 1 : 0
+
 	// Single-player action shape. Requires an hlstats_Actions row for
 	// game='dod', code='cap_break' with for_PlayerActions='1'.
 	//
 	// The (flag "...") property is log-only for now: doEvent_PlayerAction
 	// stores playerId/actionId/reward/position and drops unrecognised
-	// properties, so which point was broken is not persisted yet. It is
-	// emitted anyway because it makes a raw log readable while verifying, and
-	// the later break-context phase is what teaches the daemon to read it.
+	// properties, so which point was broken is not persisted through THIS
+	// line. contester_count/time_remaining/is_capout land instead via a
+	// follow-up break_context marker (ksc_emit_break_context, below), same
+	// buffer-then-daemon-UPDATE technique frag_context uses on Frags.
 	if (have_pos)
 		formatex(line, charsmax(line),
 			"^"%s^" triggered ^"cap_break^" (flag ^"%s^") (position ^"%s^")",
@@ -346,6 +371,22 @@ stock ksc_emit_break(f, breaker) {
 		formatex(line, charsmax(line),
 			"^"%s^" triggered ^"cap_break^" (flag ^"%s^")",
 			breaker_str, g_kscFlagName[f])
+
+	ksc_buffer(line)
+	ksc_emit_break_context(breaker, contester_count, time_remaining, is_capout)
+}
+
+// Follow-up marker for the cap_break line just buffered above. Same
+// technique as frag_context/headshot_kill: the daemon flushes PlayerActions,
+// then UPDATEs the most recent matching row by (playerId, actionId) rather
+// than this being a second independent event.
+stock ksc_emit_break_context(breaker, contester_count, Float:time_remaining, is_capout) {
+	new breaker_str[96], line[KSC_BUF_LINE_LEN]
+	ksc_player_str(breaker, breaker_str, charsmax(breaker_str))
+
+	formatex(line, charsmax(line),
+		"^"%s^" triggered ^"break_context^" (contester_count ^"%d^") (time_remaining ^"%.1f^") (is_capout ^"%d^")",
+		breaker_str, contester_count, time_remaining, is_capout)
 
 	ksc_buffer(line)
 }
@@ -435,9 +476,13 @@ public ksc_zone_poll_task() {
 				g_kscBreakBase[f] = now_count
 			} else if (now_count < g_kscBreakBase[f]) {
 				new drops = g_kscBreakBase[f] - now_count
+				// Captured before the loop below starts shifting g_kscBreakBase[f]
+				// down -- the capping team's in-zone count just before this break,
+				// i.e. how big the push being repelled was.
+				new contester_count = g_kscBreakBase[f]
 
 				while (drops > 0 && g_kscBreakCount[f] > 0) {
-					ksc_emit_break(f, g_kscBreakQ[f][0])
+					ksc_emit_break(f, g_kscBreakQ[f][0], contester_count)
 					ksc_break_shift(f)
 					drops--
 				}
@@ -477,7 +522,30 @@ public controlpoints_init() {
 		g_kscPrevAllies[f] = 0
 		g_kscPrevAxis[f]   = 0
 		ksc_break_clear(f)
+
+		ksc_emit_flag_position(f)
 	}
+}
+
+// Static per-map fact, fired once per map load (this fires on every map
+// load including warmup/halftime reloads, not once per server lifetime --
+// harmless, since the daemon side keys on (server, map, flag_index) and
+// idempotently upserts). Unbuffered/direct log_message, matching the
+// KTP_MATCH_* markers' shape (a bare marker word, no player string) rather
+// than ksc_buffer -- these are rare (a handful per map load), not
+// per-kill-volume, so there is nothing to batch.
+//
+// CP_origin_x/CP_origin_y only -- dodx.inc exposes no CP_origin_z, so flag
+// position is 2D. That is what last-flag-defense's proximity check (below)
+// compares against too, for consistency.
+stock ksc_emit_flag_position(f) {
+	new x = dodx_objective_get_data(f, CP_origin_x)
+	new y = dodx_objective_get_data(f, CP_origin_y)
+	new mapname[32]
+	get_mapname(mapname, charsmax(mapname))
+
+	log_message("KTP_FLAG_POSITION (map ^"%s^") (flag_index ^"%d^") (flag_name ^"%s^") (x ^"%d^") (y ^"%d^")",
+		mapname, f, g_kscFlagName[f], x, y)
 }
 
 // Reads one player's CURRENT weapon's clip/ammo via dod_get_user_weapon --
@@ -537,6 +605,47 @@ stock ksc_emit_damage(attacker, victim, damage, wpnindex, hitplace) {
 	ksc_buffer(line)
 }
 
+// Radius (2D, world units) within which a kill counts as "near" a defended
+// flag for last-flag-defense purposes. A starting estimate, not a measured
+// one -- validate via a Lane B run with staged defense kills at known
+// distances, the same way KSC_BUF_MAX_ENTRIES was sized empirically rather
+// than trusted on paper.
+#define KSC_LAST_FLAG_RADIUS 1000.0
+
+// Is `team` down to exactly one flag, and was `killer` within
+// KSC_LAST_FLAG_RADIUS of it when they got this kill? Per the operator's
+// correction: last-flag-defense keys off KILL POSITION relative to the
+// defended flag, not off the break queue -- a defender who kills a would-be
+// ninja before they start capping is defending just as much, and the break
+// queue structurally cannot see a kill that never touched a capture zone.
+// 2D only: dodx.inc exposes no CP_origin_z, matching ksc_emit_flag_position.
+stock bool:ksc_is_last_flag_defense(killer, killer_team) {
+	if (ksc_team_flag_count(killer_team) != 1)
+		return false
+
+	new last_flag = -1
+	for (new f = 0; f < g_kscFlagCount; f++) {
+		if (g_kscOwner[f] == killer_team) {
+			last_flag = f
+			break
+		}
+	}
+	if (last_flag == -1)
+		return false
+
+	new Float:origin[3]
+	if (!dodx_get_user_origin(killer, origin))
+		return false
+
+	new Float:fx = float(dodx_objective_get_data(last_flag, CP_origin_x))
+	new Float:fy = float(dodx_objective_get_data(last_flag, CP_origin_y))
+	new Float:dx = origin[0] - fx
+	new Float:dy = origin[1] - fy
+	new Float:dist2 = (dx * dx) + (dy * dy)
+
+	return dist2 <= (KSC_LAST_FLAG_RADIUS * KSC_LAST_FLAG_RADIUS)
+}
+
 // frag_context: fired on every kill (not just headshots), carrying the state
 // that makes a kill legible after the fact -- was the victim prone, scoped,
 // out of ammo. Retires stats_logging.sma's old headshot-only marker; see the
@@ -567,13 +676,32 @@ stock ksc_emit_frag_context(killer, victim, wpnindex, hitplace) {
 	new v_prone = dod_get_pronestate(victim)
 	new headshot = (hitplace == HIT_HEAD) ? 1 : 0
 
+	new k_pos[40], v_pos[40]
+	new bool:have_k_pos = ksc_origin_str(killer, k_pos, charsmax(k_pos))
+	new bool:have_v_pos = ksc_origin_str(victim, v_pos, charsmax(v_pos))
+	if (!have_k_pos) k_pos[0] = 0
+	if (!have_v_pos) v_pos[0] = 0
+
+	new killer_team = get_user_team(killer)
+	new is_last_flag_defense = ksc_is_last_flag_defense(killer, killer_team) ? 1 : 0
+
 	new line[KSC_BUF_LINE_LEN]
-	formatex(line, charsmax(line),
-		"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^")",
-		killer_str, victim_str, weapon,
-		headshot, k_prone, v_prone,
-		g_kscScoped[killer], g_kscScoped[victim],
-		k_clip, k_ammo, v_clip, v_ammo)
+	if (have_k_pos && have_v_pos)
+		formatex(line, charsmax(line),
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (k_position ^"%s^") (v_position ^"%s^") (is_last_flag_defense ^"%d^")",
+			killer_str, victim_str, weapon,
+			headshot, k_prone, v_prone,
+			g_kscScoped[killer], g_kscScoped[victim],
+			k_clip, k_ammo, v_clip, v_ammo,
+			k_pos, v_pos, is_last_flag_defense)
+	else
+		formatex(line, charsmax(line),
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (is_last_flag_defense ^"%d^")",
+			killer_str, victim_str, weapon,
+			headshot, k_prone, v_prone,
+			g_kscScoped[killer], g_kscScoped[victim],
+			k_clip, k_ammo, v_clip, v_ammo,
+			is_last_flag_defense)
 
 	ksc_buffer(line)
 }
