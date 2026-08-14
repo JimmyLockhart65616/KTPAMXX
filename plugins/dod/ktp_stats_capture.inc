@@ -98,9 +98,10 @@
 
 // Distinct from stats_logging.sma's own flush task, which registers with the
 // default id -- sharing an id would make one remove_task() cancel both.
-#define KSC_TASK_FLUSH     88010
-#define KSC_TASK_ZONES     88011
-#define KSC_TASK_POSITIONS 88012
+#define KSC_TASK_FLUSH          88010
+#define KSC_TASK_ZONES          88011
+#define KSC_TASK_POSITIONS      88012
+#define KSC_TASK_FLAG_POSITIONS 88013
 
 new g_kscBuffer[KSC_BUF_MAX_ENTRIES][KSC_BUF_LINE_LEN]
 new g_kscBufferCount = 0
@@ -531,6 +532,14 @@ public ksc_zone_poll_task() {
 public controlpoints_init() {
 	g_kscFlagCount = dodx_objectives_get_num()
 
+	// Permanent, low-noise: controlpoints_init's own doc contract is "called
+	// AFTER map control point data is initialized", but dodx_objectives_get_num()
+	// documents "0 if not yet initialized" as a real return value, not just a
+	// theoretical one -- so a silent 0 here is a genuinely different failure
+	// than the forward never firing at all, and this is the cheap way to tell
+	// them apart if flag positions ever go missing again.
+	log_amx("[KTP-STATS] controlpoints_init fired, dodx_objectives_get_num()=%d", g_kscFlagCount)
+
 	if (g_kscFlagCount > KSC_MAX_FLAGS)
 		g_kscFlagCount = KSC_MAX_FLAGS
 	if (g_kscFlagCount < 0)
@@ -546,9 +555,30 @@ public controlpoints_init() {
 		g_kscPrevAllies[f] = 0
 		g_kscPrevAxis[f]   = 0
 		ksc_break_clear(f)
-
-		ksc_emit_flag_position(f)
 	}
+
+	// Deferred, not emitted here -- found live, with a diagnostic build, not
+	// guessed: controlpoints_init fires with correct data (right flag count,
+	// right names, right owners, right x/y -- all confirmed by instrumenting
+	// every step) and log_message() returns normally, but nothing it writes
+	// ever reaches the game log at this exact point in map load. log_amx()
+	// calls made in the SAME forward, at the SAME moment, land fine, so this
+	// isn't a dead plugin or a dead forward -- just log_message()'s specific
+	// path being unready this early under ReHLDS extension mode, the same
+	// class of early-init unreliability stats_logging.sma's own plugin_cfg
+	// comment already documents for set_task (~10% failure rate calling it
+	// from plugin_init instead of plugin_cfg). Same fix shape: don't call
+	// the unreliable-this-early thing synchronously from this forward: queue
+	// a one-shot task and call it slightly later instead, by which point
+	// every other early-init marker in this codebase is already reliable.
+	// The data being emitted (g_kscFlagName/g_kscFlagCount) is cached above
+	// already, so the delayed task has nothing left to look up.
+	set_task(1.0, "ksc_flag_positions_task", KSC_TASK_FLAG_POSITIONS)
+}
+
+public ksc_flag_positions_task() {
+	for (new f = 0; f < g_kscFlagCount; f++)
+		ksc_emit_flag_position(f)
 }
 
 // Static per-map fact, fired once per map load (this fires on every map

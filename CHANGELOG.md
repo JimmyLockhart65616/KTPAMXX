@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Flag positions (`KTP_FLAG_POSITION`) never reached the game log**
+  (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.1 -> 1.15.2). Every
+  Lane B run since the feature was added produced zero
+  `ktp_flag_positions` rows, silently — no error anywhere. Root-caused
+  with a diagnostic build (log_amx() calls before/after every step of
+  `controlpoints_init()` and inside `ksc_emit_flag_position()`), not
+  guessed: the forward fires with entirely correct data (right flag
+  count, right names, right owners, right x/y — all confirmed live) and
+  `log_message()` returns normally, but nothing it writes ever reaches
+  the game log at that exact point in map load, while `log_amx()` calls
+  made in the same forward at the same moment land fine. Same class of
+  early-init unreliability under ReHLDS extension mode that
+  `stats_logging.sma`'s own `plugin_cfg`-not-`plugin_init` comment
+  documents for `set_task` (~10% failure rate) — `log_message()` just
+  happens to be the thing that's unready this time instead.
+  Fixed the same way: don't call the unreliable-this-early thing
+  synchronously from `controlpoints_init()` at all. Flag data
+  (name/owner/count) is still gathered there — those reads were never
+  the problem — but the actual `ksc_emit_flag_position()` calls are now
+  queued via a one-shot `set_task(1.0, ...)` and run from a new
+  `ksc_flag_positions_task()` slightly later, by which point every other
+  early-init marker in this codebase is already reliable.
+
 ### Changed
 - **Position broadcast interval, 30s -> 5s** (`ktp_stats_capture.inc`,
   `stats_logging.sma` 1.15.0 -> 1.15.1). Operator call: at 30+ deaths/half
