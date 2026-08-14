@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Projectile killers could be credited with assisting their own kill**
+  (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.2 -> 1.15.3). DODX can
+  deliver a missing or degraded `client_death` killer for projectile kills
+  even though the preceding `client_damage` forward identified the final
+  attacker correctly. Assist attribution now tracks that most recent enemy
+  attacker per victim and excludes it alongside the death callback's killer.
+  The state is cleared on spawn, death, and slot reuse so it cannot leak
+  between lives or players.
+
 - **Flag positions (`KTP_FLAG_POSITION`) never reached the game log**
   (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.1 -> 1.15.2). Every
   Lane B run since the feature was added produced zero

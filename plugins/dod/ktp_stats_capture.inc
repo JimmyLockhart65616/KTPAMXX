@@ -110,6 +110,11 @@ new g_kscDropped = 0
 // [victim][attacker] -- enemy damage dealt to victim since their last spawn.
 new g_kscDmgTaken[MAX_PLAYERS + 1][MAX_PLAYERS + 1]
 
+// Most recent enemy attacker for each victim. DODX's client_death killer can
+// be missing or degraded for projectile kills, while client_damage still has
+// the authoritative final attacker. Keep that attacker out of the assist set.
+new g_kscLastEnemyAttacker[MAX_PLAYERS + 1]
+
 // Live scope state per player, tracked from the dod_client_scope forward
 // (DODX has no getter -- the forward is the only way to know). 0/1, matching
 // the forward's own "value" parameter (1 = scope up, 0 = scope down); starts
@@ -241,6 +246,8 @@ stock bool:ksc_origin_str(id, out[], len) {
 stock ksc_clear_damage_row(victim) {
 	for (new a = 0; a <= MAX_PLAYERS; a++)
 		g_kscDmgTaken[victim][a] = 0
+
+	g_kscLastEnemyAttacker[victim] = 0
 }
 
 // Slots get recycled. A player inheriting a disconnected one's index must not
@@ -252,8 +259,12 @@ stock ksc_clear_player(id) {
 	for (new i = 0; i <= MAX_PLAYERS; i++) {
 		g_kscDmgTaken[id][i] = 0
 		g_kscDmgTaken[i][id] = 0
+
+		if (g_kscLastEnemyAttacker[i] == id)
+			g_kscLastEnemyAttacker[i] = 0
 	}
 
+	g_kscLastEnemyAttacker[id] = 0
 	g_kscScoped[id] = 0
 }
 
@@ -294,6 +305,7 @@ public client_damage(attacker, victim, damage, wpnindex, hitplace, TA) {
 		return
 
 	g_kscDmgTaken[victim][attacker] += damage
+	g_kscLastEnemyAttacker[victim] = attacker
 }
 
 // DODX forward. "Since their last spawn" -- a fresh life starts from a clean
@@ -821,12 +833,13 @@ stock ksc_on_death(killer, victim, wpnindex, hitplace, TK) {
 
 	if (ksc_enabled()) {
 		new victim_team = get_user_team(victim)
+		new final_attacker = g_kscLastEnemyAttacker[victim]
 		new victim_str[96], victim_pos[40]
 		new bool:built_victim_str = false
 		new bool:have_victim_pos = false
 
 		for (new a = 1; a <= MAX_PLAYERS; a++) {
-			if (a == killer || a == victim)
+			if (a == killer || a == final_attacker || a == victim)
 				continue
 			if (g_kscDmgTaken[victim][a] < KSC_ASSIST_DAMAGE_MIN)
 				continue
