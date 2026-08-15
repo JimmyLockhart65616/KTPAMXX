@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **The compile-only Lane B core now tracks DODX weapon counters for bots.**
+  `KTP_LANE_B_FAKECLIENTS` both registers fake clients as AMXX players and
+  enables DODX's bot counter path in extension mode. Without the second half,
+  `ignoreBots()` discarded every bot shot and `get_user_wstats()` returned no
+  weapons even though the match produced kills. Ordinary builds do not define
+  the flag and retain the existing production bot exclusion.
+
 - **Lane B can cover StatsMe weapon statistics with its all-bot roster**
   (`stats_logging.sma` 1.15.3 -> 1.15.4). A build carrying the compile-time
   `KTP_LANE_B_BOT_WEAPONSTATS` flag permits bots through `dod_stats_flush`,
