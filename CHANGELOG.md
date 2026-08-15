@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Lane B can cover StatsMe weapon statistics with its all-bot roster**
+  (`stats_logging.sma` 1.15.3 -> 1.15.4). A build carrying the compile-time
+  `KTP_LANE_B_BOT_WEAPONSTATS` flag permits bots through `dod_stats_flush`,
+  but only while both `sv_lan 1` and `ktp_testmatch_enabled 1` are active.
+  Normal production builds do not define the flag and retain the existing bot
+  exclusion. This lets the ephemeral match exercise the real DODX counters,
+  `weaponstats`/`weaponstats2` log format, HLStatsX parser, and
+  `hlstats_Events_Statsme` writes without weakening fleet behavior.
+
 ### Fixed
 - **Projectile killers could be credited with assisting their own kill**
   (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.2 -> 1.15.3). DODX can
