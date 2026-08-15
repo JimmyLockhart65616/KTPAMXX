@@ -21,7 +21,7 @@
 // header for why.
 #include "ktp_stats_capture"
 
-#define PLUGIN_VERSION "1.15.3"
+#define PLUGIN_VERSION "1.15.4"
 
 // KTP: Buffered logging to avoid synchronous file I/O during postthink.
 // client_death fires inside SV_RunCmd postthink phase — a single log_message()
@@ -96,8 +96,21 @@ stock flush_log_buffer() {
 // Called by dodx_flush_all_stats() native to log pending stats for a player
 // This allows flushing warmup stats before match starts
 public dod_stats_flush(id) {
-  if ( is_user_bot(id) || !is_user_connected(id) || !isDSMActive() )
+  if ( !is_user_connected(id) || !isDSMActive() )
     return PLUGIN_CONTINUE
+
+  // Production has always excluded bots from StatsMe weapon summaries. Lane B
+  // needs to exercise that ingestion path with its all-bot roster, so its
+  // separately compiled artifact may opt in. Keep two runtime containment
+  // gates as defence if a test binary is ever copied outside the harness.
+  if ( is_user_bot(id) ) {
+#if defined KTP_LANE_B_BOT_WEAPONSTATS
+    if ( get_cvar_num("sv_lan") != 1 || get_cvar_num("ktp_testmatch_enabled") != 1 )
+      return PLUGIN_CONTINUE
+#else
+    return PLUGIN_CONTINUE
+#endif
+  }
 
   // KTP: Get current match ID for HLStatsX integration
   dodx_get_match_id(g_matchId, charsmax(g_matchId))
