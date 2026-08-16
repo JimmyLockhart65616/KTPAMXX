@@ -59,6 +59,7 @@
 #define KSC_ZONE_POLL_SECS  0.5
 #define KSC_BREAK_QUEUE_MAX 6   // concurrent pending killers per flag
 #define KSC_BREAK_WINDOW    5   // polls a candidate stays live (~2.5s)
+#define KSC_BREAK_RADIUS    512.0
 
 // Roster-position broadcast for positional/"holding" stats (map presence
 // beyond a discrete capture event) and, later, ninja-cap detection -- both
@@ -428,6 +429,34 @@ stock ksc_emit_break_context(breaker, contester_count, Float:time_remaining, is_
 	ksc_buffer(line)
 }
 
+// The area API exposes aggregate team counts, not per-player membership.
+// Select the closest active point and reject distant deaths so an unrelated
+// off-point kill cannot consume a later in-zone count drop.
+stock ksc_break_flag_for_victim(victim, victim_team) {
+	new Float:origin[3]
+	if (!dodx_get_user_origin(victim, origin))
+		return -1
+
+	new best_flag = -1
+	new Float:best_dist2 = KSC_BREAK_RADIUS * KSC_BREAK_RADIUS
+
+	for (new f = 0; f < g_kscFlagCount; f++) {
+		if (g_kscCapTeam[f] != victim_team)
+			continue
+
+		new Float:dx = origin[0] - float(dodx_objective_get_data(f, CP_origin_x))
+		new Float:dy = origin[1] - float(dodx_objective_get_data(f, CP_origin_y))
+		new Float:dist2 = (dx * dx) + (dy * dy)
+
+		if (dist2 <= best_dist2) {
+			best_dist2 = dist2
+			best_flag = f
+		}
+	}
+
+	return best_flag
+}
+
 // Called from ksc_on_death. A kill only becomes a break if the victim's team
 // was mid-capture somewhere and their in-zone count then drops.
 stock ksc_queue_break_candidate(killer, victim, TK) {
@@ -444,37 +473,34 @@ stock ksc_queue_break_candidate(killer, victim, TK) {
 	if (vt != KSC_TEAM_ALLIES && vt != KSC_TEAM_AXIS)
 		return
 
-	for (new f = 0; f < g_kscFlagCount; f++) {
-		if (g_kscCapTeam[f] != vt)
-			continue
+	new f = ksc_break_flag_for_victim(victim, vt)
+	if (f < 0)
+		return
 
-		if (g_kscBreakCount[f] > 0 && g_kscBreakTeam[f] != vt) {
-			// Capping team flipped while the previous team's queue was still
-			// draining. The flip means that cap already stopped, so those
-			// candidates are stale -- re-latch rather than drop the fresh one.
-			ksc_break_clear(f)
-		}
+	if (g_kscBreakCount[f] > 0 && g_kscBreakTeam[f] != vt) {
+		// Capping team flipped while the previous team's queue was still
+		// draining. The flip means that cap already stopped, so those
+		// candidates are stale -- re-latch rather than drop the fresh one.
+		ksc_break_clear(f)
+	}
 
-		if (g_kscBreakCount[f] == 0) {
-			// Baseline is min(live read, last poll's cache). The live read can
-			// already include an earlier victim's late decrement; the cache can
-			// miss a sub-poll voluntary walk-off. The lower never over-credits.
-			new fresh = dodx_area_get_data(f,
-				(vt == KSC_TEAM_ALLIES) ? CA_num_allies : CA_num_axis)
-			new cached = (vt == KSC_TEAM_ALLIES) ? g_kscPrevAllies[f] : g_kscPrevAxis[f]
+	if (g_kscBreakCount[f] == 0) {
+		// Baseline is min(live read, last poll's cache). The live read can
+		// already include an earlier victim's late decrement; the cache can
+		// miss a sub-poll voluntary walk-off. The lower never over-credits.
+		new fresh = dodx_area_get_data(f,
+			(vt == KSC_TEAM_ALLIES) ? CA_num_allies : CA_num_axis)
+		new cached = (vt == KSC_TEAM_ALLIES) ? g_kscPrevAllies[f] : g_kscPrevAxis[f]
 
-			g_kscBreakTeam[f] = vt
-			g_kscBreakBase[f] = (fresh < cached) ? fresh : cached
-		}
+		g_kscBreakTeam[f] = vt
+		g_kscBreakBase[f] = (fresh < cached) ? fresh : cached
+	}
 
-		if (g_kscBreakCount[f] < KSC_BREAK_QUEUE_MAX) {
-			new q = g_kscBreakCount[f]
-			g_kscBreakQ[f][q]   = killer
-			g_kscBreakTtl[f][q] = KSC_BREAK_WINDOW
-			g_kscBreakCount[f]++
-		}
-
-		break   // attribute at most one flag per kill
+	if (g_kscBreakCount[f] < KSC_BREAK_QUEUE_MAX) {
+		new q = g_kscBreakCount[f]
+		g_kscBreakQ[f][q]   = killer
+		g_kscBreakTtl[f][q] = KSC_BREAK_WINDOW
+		g_kscBreakCount[f]++
 	}
 }
 

@@ -77,6 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `hlstats_Events_Statsme` writes without weakening fleet behavior.
 
 ### Fixed
+- **An off-point kill can no longer steal a later cap break**
+  (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.4 -> 1.15.5). A victim
+  must now be within 512 horizontal units of the closest point their team is
+  actively capturing before the killer enters that point's break queue. The
+  area API exposes only aggregate team counts, so proximity is the available
+  per-player discriminator. Lane B validates 300-unit on-point and 900-unit
+  off-point cases on `dod_anzio`; revalidate this provisional radius when bot
+  waypoints make additional match maps testable.
+
 - **Projectile killers could be credited with assisting their own kill**
   (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.2 -> 1.15.3). DODX can
   deliver a missing or degraded `client_death` killer for projectile kills
