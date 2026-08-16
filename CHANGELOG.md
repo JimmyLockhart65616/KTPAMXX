@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`pd_dcp` was one `int` short on Linux/Apple, so every control-point pdata read returned its
+  NEIGHBOUR.** The Linux `CControlPoint` layout carries FIVE extra ints before `owner`, not four.
+  With four, every field from `owner` down sat 4 bytes early:
+
+  | field | struct (was) | gamedata | actually returned |
+  |---|---|---|---|
+  | `owner` | 372 | `m_iTeam` 376 | the int below it — **0 for every CP, on every map** |
+  | `default_owner` | 384 | `m_iDefaultOwner` 388 | — |
+  | `flag_id` | 388 | `m_iIndex` 392 | **`m_iDefaultOwner`** (0/1/2, not an index) |
+  | `pointvalue` | 392 | `m_iPointValue` 396 | **`m_iIndex`** |
+  | `points_for_player` | 396 | `m_iCapPoints` 400 | — |
+  | `points_for_team` | 400 | `m_iTeamPoints` 404 | — |
+
+  Windows was already byte-perfect, which is why this only ever surfaced in production.
+  One added `int` aligns all six against the shipped
+  `entities.games/dod/offsets-ccontrolpoint.txt`.
+
+  **Derived twice, independently.** From the published offsets above; and empirically from 65
+  recorded prod matches, where `flag_id` was predicted exactly by each BSP's
+  `point_default_owner` sequence on two maps — i.e. it was returning default ownership, not an
+  index (`DoD-hud-observer/docs/dodx-cp-index-space-findings.md`).
+
+  **Verified live in extension mode** on two maps chosen to disagree, via
+  `dodx_objective_get_data`:
+
+  ```
+  dod_anzio   (all-neutral defaults)
+    index=1..5  owner=0,0,0,0,0  default=0,0,0,0,0
+  dod_flash    (default-owned)
+    index=1..5  owner=1,1,0,2,2  default=1,1,0,2,2   <- the map's real layout
+  ```
+
+  Before the fix `CP_owner` read `0` for every CP on both, and `CP_index` returned the
+  default-owner value — on anzio that is `0` for all five, so every CP claimed to be index 0.
+  `m_iIndex` is 1-based, consistent with `SetObj` sending `cp_index = point_index - 1`.
+
+  **What this fixes for consumers:** `CP_index` becomes the DLL's real index rather than an
+  owner value, `CP_owner`/`CP_default_owner` become real at map load instead of neutral-for-all,
+  and `points_for_player`/`points_for_team` stop being read off-by-one. This is the exact
+  identity drift behind issues #5 and #8 — CP names attaching to the wrong flags on maps with no
+  usable `point_index` (`dod_donner`, `dod_saints2_*`, `dod_merderet`).
+
+  **Note for anyone chasing the territorial award:** `m_iPointValue` reads **0 on every CP** on
+  both maps tested, so the recurring award is NOT stored there — the correction makes the field
+  readable, not useful. `m_iCapPoints`/`m_iTeamPoints` do carry per-flag values (anzio 1,2,1,2,1;
+  flash all 1). Deliberately not chased here.
+
+  No gamedata change. `mObjects` seeding is left exactly as-is: the BSP `point_default_owner`
+  pass still overwrites `owner`/`default_owner` after the scan, so this narrows the blast radius
+  to making the pdata fallback correct rather than re-plumbing CP init.
+
 ### Added
 - **`dodx_get_score_tick_time()` / `dodx_get_score_tick_period()` — the territorial scoring clock.**
   DoD awards periodic team points for holding control points from the map's single
