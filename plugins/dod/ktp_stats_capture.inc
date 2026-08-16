@@ -441,7 +441,11 @@ stock ksc_break_flag_for_victim(victim, victim_team) {
 	new Float:best_dist2 = KSC_BREAK_RADIUS * KSC_BREAK_RADIUS
 
 	for (new f = 0; f < g_kscFlagCount; f++) {
-		if (g_kscCapTeam[f] != victim_team)
+		// A capture can begin between the 0.2-second zone poll and this death.
+		// Candidate selection must use the engine's current area state; the
+		// delayed poll still requires a real count drop before crediting it.
+		if (!dodx_area_get_data(f, CA_is_capturing) ||
+			dodx_area_get_data(f, CA_capturing_team) != victim_team)
 			continue
 
 		new Float:dx = origin[0] - float(dodx_objective_get_data(f, CP_origin_x))

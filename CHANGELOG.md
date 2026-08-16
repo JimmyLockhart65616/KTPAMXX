@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **A newly started capture can no longer be missed by cap-break candidate
+  selection** (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.5 ->
+  1.15.6). Selection previously read the last 0.2-second cached capping team,
+  so a kill between capture start and the next poll queued nothing even when
+  the victim was on the active point. It now reads the live area state; the
+  delayed poll still requires the capping team's in-zone count to fall before
+  emitting a break.
+
 - **`pd_dcp` was one `int` short on Linux/Apple, so every control-point pdata read returned its
   NEIGHBOUR.** The Linux `CControlPoint` layout carries FIVE extra ints before `owner`, not four.
   With four, every field from `owner` down sat 4 bytes early:
