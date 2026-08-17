@@ -370,6 +370,15 @@ stock ksc_team_flag_count(team) {
 	return n
 }
 
+stock ksc_normalize_owner(owner) {
+	// DODX can expose an authored/unowned point as -1 during initialization.
+	// The persisted contract uses the stable KTP team convention: 0=neutral,
+	// 1=Allies, 2=Axis. Treat every non-team engine sentinel as neutral.
+	if (owner == KSC_TEAM_ALLIES || owner == KSC_TEAM_AXIS)
+		return owner
+	return 0
+}
+
 // Compact ownership timeline. One baseline row per flag when a KTP match
 // context first becomes available, then one row only when the owner changes.
 // This makes hold intervals reconstructable without polling ownership into
@@ -414,7 +423,8 @@ stock ksc_ensure_ownership_baseline() {
 		// Refresh immediately before the baseline. If a round reset happened
 		// between polls, emitting the cached pre-reset owner followed by a
 		// same-tick correction would create a false zero-length interval.
-		g_kscOwner[f] = dodx_area_get_data(f, CA_owning_team)
+		g_kscOwner[f] = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
 		ksc_emit_flag_state(f, g_kscOwner[f], 1)
 	}
 
@@ -580,7 +590,8 @@ public ksc_zone_poll_task() {
 		// succeeded, so the cappers leaving afterwards must not be credited to
 		// whoever last got a kill there. Also covers the round-restart cascade,
 		// which flips every point back to its default owner.
-		new owner = dodx_area_get_data(f, CA_owning_team)
+		new owner = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
 		if (owner != g_kscOwner[f]) {
 			g_kscOwner[f] = owner
 			ksc_break_clear(f)
@@ -651,7 +662,8 @@ public controlpoints_init() {
 		if (!g_kscFlagName[f][0])
 			formatex(g_kscFlagName[f], charsmax(g_kscFlagName[]), "flag_%d", f)
 
-		g_kscOwner[f]      = dodx_area_get_data(f, CA_owning_team)
+		g_kscOwner[f]      = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
 		g_kscCapTeam[f]    = 0
 		g_kscPrevAllies[f] = 0
 		g_kscPrevAxis[f]   = 0
