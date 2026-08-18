@@ -2,7 +2,8 @@
 //
 // Scope today: assists, cap breaks, assist/break positions, frag context
 // (prone/scope/ammo/headshot at kill), the per-hit damage ledger, static
-// flag positions, break context (contester count/time remaining/capout),
+// flag positions, flag-ownership changes, break context
+// (contester count/time remaining/capout),
 // last-flag-defense (kill-position-based, not break-queue-based), and a
 // periodic roster-position broadcast for positional/"holding" stats and
 // (later) ninja-cap detection.
@@ -130,6 +131,8 @@ new g_kscFlagName[KSC_MAX_FLAGS][32]
 
 new g_kscCapTeam[KSC_MAX_FLAGS]     // team currently capturing this point, 0 = none
 new g_kscOwner[KSC_MAX_FLAGS]       // last seen CA_owning_team, to spot a completed cap
+new bool:g_kscOwnershipBaselinePending = true
+new g_kscOwnershipMatchId[64]
 new g_kscPrevAllies[KSC_MAX_FLAGS]  // in-zone counts as of the previous poll
 new g_kscPrevAxis[KSC_MAX_FLAGS]
 
@@ -367,6 +370,67 @@ stock ksc_team_flag_count(team) {
 	return n
 }
 
+stock ksc_normalize_owner(owner) {
+	// DODX can expose an authored/unowned point as -1 during initialization.
+	// The persisted contract uses the stable KTP team convention: 0=neutral,
+	// 1=Allies, 2=Axis. Treat every non-team engine sentinel as neutral.
+	if (owner == KSC_TEAM_ALLIES || owner == KSC_TEAM_AXIS)
+		return owner
+	return 0
+}
+
+// Compact ownership timeline. One baseline row per flag when a KTP match
+// context first becomes available, then one row only when the owner changes.
+// This makes hold intervals reconstructable without polling ownership into
+// the database every five seconds. Positions remain the independently sampled
+// stream that is joined to these intervals in the analytics layer.
+stock ksc_emit_flag_state(f, owner, is_initial) {
+	new matchid[64]
+	dodx_get_match_id(matchid, charsmax(matchid))
+	if (!matchid[0])
+		return
+
+	new mapname[32]
+	get_mapname(mapname, charsmax(mapname))
+
+	// Direct from the repeating zone task, not a player postthink callback.
+	// These lines are rare and their ordering relative to KTP_MATCH_START /
+	// KTP_ROUND_FREEZE matters, so do not hold them in the five-second buffer.
+	log_message("KTP_FLAG_STATE (map ^"%s^") (flag_index ^"%d^") (flag_name ^"%s^") (owner ^"%d^") (initial ^"%d^") (game_time ^"%.2f^")",
+		mapname, f, g_kscFlagName[f], owner, is_initial, get_gametime())
+}
+
+stock ksc_ensure_ownership_baseline() {
+	new matchid[64]
+	dodx_get_match_id(matchid, charsmax(matchid))
+
+	if (!matchid[0]) {
+		// Detect a later empty -> populated transition even if the next half
+		// reuses the same match id.
+		g_kscOwnershipMatchId[0] = 0
+		g_kscOwnershipBaselinePending = true
+		return
+	}
+
+	if (!equal(matchid, g_kscOwnershipMatchId))
+		g_kscOwnershipBaselinePending = true
+
+	if (!g_kscOwnershipBaselinePending)
+		return
+
+	copy(g_kscOwnershipMatchId, charsmax(g_kscOwnershipMatchId), matchid)
+	for (new f = 0; f < g_kscFlagCount; f++) {
+		// Refresh immediately before the baseline. If a round reset happened
+		// between polls, emitting the cached pre-reset owner followed by a
+		// same-tick correction would create a false zero-length interval.
+		g_kscOwner[f] = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
+		ksc_emit_flag_state(f, g_kscOwner[f], 1)
+	}
+
+	g_kscOwnershipBaselinePending = false
+}
+
 stock ksc_emit_break(f, breaker, contester_count) {
 	if (breaker < 1 || breaker > MAX_PLAYERS)
 		return
@@ -514,6 +578,8 @@ public ksc_zone_poll_task() {
 	if (g_kscFlagCount <= 0)
 		return
 
+	ksc_ensure_ownership_baseline()
+
 	for (new f = 0; f < g_kscFlagCount; f++) {
 		new ac = dodx_area_get_data(f, CA_num_allies)
 		new xc = dodx_area_get_data(f, CA_num_axis)
@@ -524,10 +590,12 @@ public ksc_zone_poll_task() {
 		// succeeded, so the cappers leaving afterwards must not be credited to
 		// whoever last got a kill there. Also covers the round-restart cascade,
 		// which flips every point back to its default owner.
-		new owner = dodx_area_get_data(f, CA_owning_team)
+		new owner = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
 		if (owner != g_kscOwner[f]) {
 			g_kscOwner[f] = owner
 			ksc_break_clear(f)
+			ksc_emit_flag_state(f, owner, 0)
 		}
 
 		new is_capping = dodx_area_get_data(f, CA_is_capturing)
@@ -573,6 +641,8 @@ public ksc_zone_poll_task() {
 
 public controlpoints_init() {
 	g_kscFlagCount = dodx_objectives_get_num()
+	g_kscOwnershipBaselinePending = true
+	g_kscOwnershipMatchId[0] = 0
 
 	// Permanent, low-noise: controlpoints_init's own doc contract is "called
 	// AFTER map control point data is initialized", but dodx_objectives_get_num()
@@ -592,7 +662,8 @@ public controlpoints_init() {
 		if (!g_kscFlagName[f][0])
 			formatex(g_kscFlagName[f], charsmax(g_kscFlagName[]), "flag_%d", f)
 
-		g_kscOwner[f]      = dodx_area_get_data(f, CA_owning_team)
+		g_kscOwner[f]      = ksc_normalize_owner(
+			dodx_area_get_data(f, CA_owning_team))
 		g_kscCapTeam[f]    = 0
 		g_kscPrevAllies[f] = 0
 		g_kscPrevAxis[f]   = 0
