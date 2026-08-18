@@ -1,6 +1,6 @@
 # KTP AMX
 
-**Version 2.7.27** | Modified AMX Mod X with ReHLDS extension mode, real-time client cvar detection, and async game-thread-safe logging
+**Version 2.7.31** | Modified AMX Mod X with ReHLDS extension mode, real-time client cvar detection, and async game-thread-safe logging
 
 A major fork of [AMX Mod X](https://github.com/alliedmodders/amxmodx) featuring standalone ReHLDS extension support (no Metamod required) and the `client_cvar_changed` forward for instant detection of client-side console variable changes. Designed for competitive Day of Defeat servers requiring strict anti-cheat enforcement.
 
@@ -68,11 +68,15 @@ The DODX stats module includes extensive KTP-specific natives:
 
 **Score Management:** `dodx_set_team_score`, `dodx_get_team_score`, `dodx_broadcast_team_score`, `dodx_set_scoreboard_team_name`, `dodx_has_gamerules`, `dodx_get_round_time`
 
+**Match Clocks:** `dodx_get_score_tick_time`, `dodx_get_score_tick_period` — the territorial scoring clock read off `dod_control_point_master`. `dodx_get_score_tick_period` is the **nominal** delay, not a phase.
+
+**Aim Geometry (measure-only):** `dodx_get_shot_geom`, `dodx_get_aim_vis_stats`, `dodx_reset_aim_vis_stats`
+
 **Score Persistence:** `dodx_set_user_deaths`, `dodx_get_user_deaths`, `dodx_set_user_score`, `dodx_get_user_score`, `dodx_get_observed_deaths`, `dodx_broadcast_scoreboard`
 
 **HLStatsX Integration:** `dodx_flush_all_stats`, `dodx_reset_all_stats`, `dodx_set_match_id`, `dodx_get_match_id`, `dodx_set_stats_paused`, `dodx_set_pl_teamname`
 
-**Grenade Manipulation:** `dodx_set_grenade_ammo`, `dodx_get_grenade_ammo`, `dodx_send_ammox`, `dodx_give_grenade`, `dodx_strip_grenade`
+**Grenade Manipulation:** `dodx_set_grenade_ammo`, `dodx_get_grenade_ammo`, `dodx_get_grenade_ammo_index`, `dodx_send_ammox`, `dodx_give_grenade`, `dodx_strip_grenade`
 
 **Player Manipulation:** `dodx_set_user_noclip`, `dodx_set_user_class`, `dodx_set_user_team`, `dodx_get/set_user_origin`, `dodx_get/set_user_angles`
 
@@ -215,10 +219,10 @@ AMXX log lines (`log_amx`, error logs) are written by a dedicated writer thread 
 
 ## Version Information
 
-- **Current Version**: 2.7.27 (2026-08)
+- **Current Version**: 2.7.31 (2026-08) — DODX-only cut; the fleet core binary is still 2.7.27
 - **Based on**: AMX Mod X 1.10.0 (upstream)
 - **Platform**: GCC 7.3+ / Visual Studio 2019+
-- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+. Extension-mode teardown (`KTP_ExtensionShutdown`) needs ReHLDS .928+, and the 2.7.24 `client_infochanged` ordering fix only becomes reachable on .929+ — below those those fixes are inert. 2.7.25 adds no new engine-version floor, and neither do 2.7.26/2.7.27.
+- **Compatible with**: KTP-ReHLDS 3.22.0.904+, KTP-ReAPI 5.29.0.362-ktp+. Extension-mode teardown (`KTP_ExtensionShutdown`) needs ReHLDS .928+, and the 2.7.24 `client_infochanged` ordering fix only becomes reachable on .929+ — below those those fixes are inert. 2.7.25 adds no new engine-version floor, and neither do 2.7.26 through 2.7.31.
 
 **2.7.25 behavior notes for plugin authors** — three extension-mode parity gaps closed, all of which
 change what working code sees:
