@@ -5,7 +5,42 @@ All notable changes to KTP AMX will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.32] - unreleased
+
+**A RE-CUT of 2.7.31, not a rebuild of it.** 2.7.31 and `main` were developed in
+parallel and neither contained the other:
+
+- 2.7.31 carries the tier-2 sensors (`dodx_get_shot_geom` and friends) and the
+  per-map ammo registry. `main` has none of it -- `main`'s `product.version` was
+  still **2.7.27**, a full release behind the fleet's live 2.7.28.
+- `main` carries the `pd_dcp` fix: the Linux/Apple `CControlPoint` layout is one
+  `int` short, so every control-point pdata read returned its neighbour. 2.7.31
+  does not have it.
+
+Merging them touches `dodx.h` and `moduleconfig.cpp`, so the compiled module
+changes and **2.7.31's pinned `ac8d4e393e5fcca3679a6d63fa28bdaa` no longer
+describes this tree.** A pin that survives a base change is a pin that lies, so
+the version moves rather than the md5 being silently reused.
+
+⚠️ **No md5 is pinned here yet.** The shipping artifact is whichever build is
+actually reviewed and staged; pinning one from a verification build would create
+a second binary wearing the same version number, which is the trap 2.7.29 and
+2.7.30 already fell into.
+
+⚠️ **Activation order still applies:** the module must activate no later than any
+plugin rebuilt against it. `KTPMatchHandler` 0.10.166 calls `dodx_get_shot_geom`
+unconditionally and natives resolve at load, so a plugin ahead of the module is a
+load failure, not a degraded mode.
+
+Merge conflict resolution: one hunk in this file, both sides kept. `dodx.h` and
+`moduleconfig.cpp` merged cleanly.
+
 ## [Unreleased]
+
+**These entries are now part of the 2.7.32 re-cut below-the-line, not of 2.7.31.**
+The `main` fixes and the 2.7.31 cut were developed in parallel and neither shipped
+with the other; merging them changes the compiled module, so 2.7.31's pinned md5
+no longer describes this tree. See the 2.7.32 note.
 
 ### Fixed
 - **A newly started capture can no longer be missed by cap-break candidate
@@ -66,6 +101,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   No gamedata change. `mObjects` seeding is left exactly as-is: the BSP `point_default_owner`
   pass still overwrites `owner`/`default_owner` after the scan, so this narrows the blast radius
   to making the pdata fallback correct rather than re-plumbing CP init.
+
+## [2.7.31] - 2026-08-16
+
+**DODX only. The core module is NOT part of this cut** — it stays 2.7.27
+(`8b06d8a24eef8313034ec5283f63fbcb`). Bumping `product.version` rebuilds the core binary as a
+byproduct; that binary is not a release and must not be staged.
+
+**Base: a merge, not a rebase.** `tier2/weapon-fire-aim-error` (`16464b57`, which carries the live
+fleet base `ef6e9fa5` plus Jimmy's PR #16 scoring clock and the tier-2 shot-geometry sensors) merged
+with `fix/dodx-runtime-ammo-index` (`4c48f60a`, nine commits resolving the grenade ammo slot per
+map). The two branches **diverged from master, neither lagged the other**, and **neither is
+shippable alone**:
+
+- The ammo branch has no `dodx_get_shot_geom`. Live `KTPMatchHandler` calls it unconditionally, and
+  natives resolve at load — a cut without it is a plugin **load failure**, not a degraded mode.
+- The tier-2 branch has none of the ammo work, which is what `KTPGrenadeLoadout` and
+  `KTPPracticeMode` are blocked behind.
+
+Post-merge check on a number that moves if a conflict was resolved wrong: `base_Natives` is **81** =
+master's 74 + tier-2's 6 + the ammo branch's 1, no duplicate entries; `cp_Natives` 6 and
+`stats_Natives` 16 unchanged.
+
+🔻 **2.7.30 (`9e549d84010ba058a080092a86c77dcd`) is RETIRED — built, never shipped, do not deploy
+it.** It was cut from `tier2/weapon-fire-aim-error` alone, so it is functionally identical to the
+fleet's live 2.7.28: the only files that changed between the two are `build_linux.sh` and a two-line
+doc-block opener in `plugins/include/dodx.inc`, with **zero** C++ under `modules/`. A new md5
+carrying no change. This cut is numbered **2.7.31** rather than reusing 2.7.30 because a version
+number that names two differently-based binaries is exactly the trap that 2.7.29 already fell into.
+
+⚠️ **Activation order: the module must activate no later than any plugin rebuilt against this
+include set.** A plugin calling `dodx_get_grenade_ammo_index` fails to load against the fleet's live
+dodx, and natives resolve at load.
+
+**Shipping artifact — `dodx_ktp_i386.so` md5 `ac8d4e393e5fcca3679a6d63fa28bdaa`** (built 2026-08-16 from
+`8ce853c1`, `build_linux.sh` with `KTP_NO_STAGE=1`, GLIBC 2.35 / Ubuntu 22.04; the module self-reports `2.7.31.5620`).
+⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
+md5. Verify by this md5, never by the banner.
+
+> Core source is unchanged, but the core BINARY is not identical — `product.version` feeds
+> `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
+> `56bb05906aed3bf0310aa59dfef1b3a6`). It is a byproduct. **Only the DODX artifact ships**; the fleet core stays
+> 2.7.27 (`8b06d8a24eef8313034ec5283f63fbcb`).
+
+⚠️ **Pair this with `KTPGrenadeLoadout` 1.0.12 in the SAME 03:00 swap.** The fleet-live 1.0.11
+gates its `dodx_give_grenade` call on `currentCount == 0`, and this cut changes
+`dodx_get_grenade_ammo`'s failure return from 0 to **-1** — so on any path where the getter
+cannot read (notably a first spawn before that player's first PreThink sets `ingame`), 1.0.11
+skips the give and then writes ammo to a player with no grenade entity. 1.0.12 gates on
+`<= 0`. `KTPPracticeMode` does not call the getter and can follow separately.
 
 ### Added
 - **The compile-only Lane B core now tracks DODX weapon counters for bots.**
@@ -330,6 +414,199 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `wip/dodx-cp-init-issue5` branch, which could no longer be merged — PR #9 renamed
   `DODX_ReadBSPPointIndices` to `DODX_ReadBSPControlPoints`, and a textually clean merge produced a
   loop iterating an array nothing populated.
+
+## [2.7.29] - 2026-08-15
+
+DODX-only delta over 2.7.27. **The `.inc` changed** — one native added
+(`dodx_get_grenade_ammo_index`) and `dodx_get_grenade_ammo`'s failure return changed from 0 to -1
+for a bad argument, so a plugin that wants either must be rebuilt against this include set.
+Numbered 2.7.29 rather than 2.7.28 because 2.7.28 is already claimed by the
+`tier2/weapon-fire-aim-error` cut, which was already live on the fleet by then; reusing it would put
+two different binaries behind one version.
+
+⚠️ **Ordering: the module must activate no later than any plugin recompiled against this include
+set.** A plugin calling `dodx_get_grenade_ammo_index` fails to load against the fleet's live dodx
+2.7.28 (`fca6648909887e6298e1b81e8679002f`) — natives are resolved at load, and a missing one is a
+load failure, not a degraded mode.
+Both are `.new`-swapped at the same 03:00 restart, so this is orderable; it just has to be deliberate.
+
+🔻 **RETIRED — do not deploy `863f81f79380225afd83b6bd82a1438e`.** It was built 2026-08-15 from
+`de4579c9`, this branch alone, so it carries no `dodx_get_shot_geom`. Live KTPMatchHandler calls
+that native unconditionally and natives resolve at load, so the artifact is a plugin **load
+failure** on 24/24. The work in this section ships in **2.7.31** instead, on a base that has both
+halves.
+⚠️ **Do not rebuild to re-verify** — AMXX bakes a per-minute build timestamp, so a rebuild churns this
+md5. Verify by this md5, never by the banner.
+
+> Core source is unchanged, but the core BINARY is not identical — `product.version` feeds
+> `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so` (this build:
+> `0863fd7922af17ce01fe6c950a4ae23d`). Only the DODX artifact is meant to ship here.
+>
+> The `DODX_DEBUG_CP_INIT` diagnostic still under [Unreleased] rides along in source only — it is
+> compile-time-gated and absent from this build.
+
+### Fixed
+- **The grenade natives were addressing the wrong memory, and the reason was the array base, not the
+  ammo index.** `dodx_set_grenade_ammo`, `dodx_get_grenade_ammo` and `dodx_strip_grenade` each
+  touched three int-offsets per grenade. Read against the shipped `dod_i386.so`
+  (md5 `4f4727b2390d3a0ed6f5ad862dd6d4be`, confirmed identical on **24/24** fleet instances):
+
+  - `CBasePlayer::AmmoInventory` indexes `m_rgAmmo` at byte `0x474` = **int 285** = 280 + 5, and
+    `SendAmmoUpdate` pairs it with `m_rgAmmoLast` at `0x4F4` = int 317. The old code's base was
+    `280 + g_iLinuxPdataOffsetAdjust` with the adjust **defaulting to 4** — one int low, so a write
+    meant for grenade slot 9 landed on slot **8** and a write meant for 11 landed on **10**. That
+    single off-by-one is the fleet-wide grenade failure. The base is now a measured constant;
+    `dodx.ini pdata_offset` survives as an override for a future DoD build.
+  - The **third** offset (base 59/61) has no ammo-indexed array anywhere near it in that DLL, so the
+    getter had been reading an unrelated field on *every* map. It is no longer written or read.
+  - `m_rgAmmoLast` is no longer written either. `SendAmmoUpdate` diffs the pair every frame and emits
+    the client's `AmmoX` from the difference, so writing both was suppressing the DLL's own HUD
+    update — which is why a manual `dodx_send_ammox` was needed at all.
+
+  🔻 **The premise this work was scoped on — [issue #15](https://github.com/afraznein/KTPAMXX/issues/15),
+  "the ammo index is map-dependent" — is FALSE for DoD, and it matters that it is written down.** The
+  general GoldSrc mechanism is real (`AddAmmoNameToAmmoRegistry` numbers ammo types in precache
+  order), but DoD's `W_Precache()` is straight-line: it `memset`s `AmmoInfoArray`, zeroes
+  `giAmmoIndex`, then makes **31 unconditional** `UTIL_PrecacheOtherWeapon` calls covering every
+  nationality regardless of map, with its only branch far downstream on a non-weapon entity. So the
+  registry is invariant by construction. Measured, not argued: `AmmoInfoArray` read out of six
+  freshly-launched servers — `dod_anzio` (US allies) and `dod_harrington` (British allies) among them,
+  map identity confirmed by console `status`, not assumed — gives `ammo_agrens` = **9**,
+  `ammo_ggrens` = **11**, `giAmmoIndex` = 13 on all six. The hardcoded 9 and 11 were right all along.
+  ⚠️ The differential "anzio 62 / harrington 64" reading that founded #15 came from
+  `dodx_debug_dump_ammo`, which scanned ints **0-175** — a window that cannot reach `m_rgAmmo` at 285.
+  It was matching unrelated fields that happened to hold 1-10.
+
+  **The index is still resolved at runtime, deliberately.** Nothing now depends on the constant being
+  right: DODX reads the live slot from the DLL's own `WeaponList` (field 0 is `GetAmmoIndex(pszAmmo1)`,
+  field 6 the weapon id) and, independently, from the slot a successful `dodx_give_grenade` pickup
+  credits. The registry is cleared on every `SV_ActivateServer`, `ServerDeactivate` and on the
+  PreThink last-resort recovery path, and falls back to the fixed-order default until a reading
+  arrives, so an unresolved slot can never gate the natives off. A reading that contradicts the
+  default logs once per map — the tripwire the constants never had.
+
+- **`dodx_give_grenade(DODW_MILLS_BOMB)` could never succeed.** It asked `CREATE_NAMED_ENTITY` for
+  `weapon_mills_bomb`, which the DLL does not link — the Mills bomb is `weapon_handgrenade` with a
+  British model. Every give on a British-allies map failed at the first branch and returned 0.
+
+- **`dodx.ini score_deaths_offset` was unreachable once `pdata_offset` was set.** Both overrides sat
+  inside a guard keyed on the pdata one. The config read is now latched on its own.
+
+- **`Client_WeaponList` cannot be desynchronised by a map change.** `DODX_OnMsgBegin` bails without
+  resetting `mState` while the server is inactive, and the core runs the per-field handlers anyway,
+  so the new handler checks `g_bServerActive` itself rather than trusting the field counter.
+
+### Removed
+- **The `pdata_offset` auto-detector** (`DODX_DetectPdataOffset`, `DODX_PdataWriteBoth`). It chose
+  between base +4 and +5 by scoring which one held a value between 1 and 10 **at a hardcoded ammo
+  index** — so it could confirm either answer, and its write-to-both phase corrupted whichever base
+  was wrong. Nothing replaces it: the base is measured.
+
+### Added
+- **`dodx_get_grenade_ammo_index(grenade_type)`** — the ammo slot in use for that grenade, so callers
+  sending their own `AmmoX` take it from the game DLL instead of repeating a literal.
+  `KTPGrenadeLoadout` (`AMMOSLOT_HANDGRENADE`/`AMMOSLOT_STICKGRENADE`) and `KTPPracticeMode` both
+  still pass literals and should move onto this native in their own cuts — with the DLL now emitting
+  its own correct `AmmoX`, a plugin's extra one is a client-side desync on whatever ammo type owns
+  that slot, and it will not self-correct until that type genuinely changes.
+
+### Changed
+- **`dodx_debug_dump_ammo` now dumps the resolved grenade slots and the player's non-zero `m_rgAmmo`
+  entries.** It used to scan ints 0-175 for any value between 1 and 10 — see above for what that
+  cost.
+- `dodx_get_grenade_ammo` returns **-1** rather than 0 on a bad argument, so an empty player is
+  distinguishable from a failed call.
+
+## [2.7.28] - 2026-08-11
+
+DODX-only delta over 2.7.27. **The `.inc` DID change** (three natives added) — additive only, so
+existing plugins compile unchanged, but a plugin wanting the new natives must be rebuilt against this
+include set. **This cut also registers a new engine hookchain**, `SV_CreatePacketEntities` — the first
+addition to DODX's hook list since `SV_ActivateServer`.
+
+**Shipping artifact — `dodx_ktp_i386.so` md5 `181e1ad1c387196191dc50bc90507810`** (built 2026-08-11
+from `d76104f7`, `build_linux.sh`, GLIBC 2.35 / Ubuntu 22.04). Natives verified present in the
+binary rather than inferred from "build succeeded", with `dodx_get_aim_stats` as a positive
+control and both `dodx_get_trigger_stats` (2.5, header-only by design) and a nonsense name as
+negative controls — a probe answering the same way for everything is broken, not informative.
+⚠️ **Do not rebuild to re-verify** — a rebuild churns the md5 and you would stage a binary nobody
+reviewed. Verify by md5, never by the banner.
+
+🔻 **THE FLEET DOES NOT RUN `181e1ad1…` — corrected 2026-08-16.** That build is on **0 of 24**
+instances. The 2.7.28 artifact that actually shipped is **`fca6648909887e6298e1b81e8679002f`**, built
+from **`ef6e9fa5`** — four commits past the `d76104f7` pinned above, the delta being Jimmy's PR #16
+(`dodx_get_score_tick_time`, two commits) plus a `KTP_NO_STAGE` honour in `build_linux.sh` and the
+changelog pin itself. Established by ancestry — `git merge-base --is-ancestor d76104f7 ef6e9fa5`
+succeeds while the reverse fails, so the probe discriminates — and by fleet md5 on 24/24. The pin
+above is a superseded pre-merge build: **do not deploy it, and do not "correct" the live hash to
+match this section.**
+
+> **Core source is unchanged, but the core BINARY is not identical** — `product.version` feeds
+> `support/generate_headers.py`, so the version bump alone changes `ktpamx_i386.so`. Only the DODX
+> artifact is meant to ship here; the core is a byproduct, exactly as in the 2.7.23, 2.7.26 and
+> 2.7.27 DODX-only cuts.
+
+⚠️ **A consumer plugin calling the new natives is hard-coupled to this module and must ship in the
+same restart.** An unresolved native sets `ps_bad_load` (`amxmodx/CPlugin.cpp:407-420`) unless the
+plugin installs a native filter — so a plugin built against this include set, landing on a server
+still running 2.7.27, does not degrade: it fails to load **entirely**.
+
+### Added
+- **Per-shot aim geometry** (`dodx_get_shot_geom`) — blind audit tier 2.3. Captures the geometry of a
+  shot at the bullet's own `TraceLine`, inside the lag-compensation window, and reports angular error
+  to target centre, range, target bearing rate, the averaging gap, hitgroup, and the ray's start
+  offset from the eye.
+
+  **Sensor, not detector** — no threshold, no ratio, no conclusion. This repository is public, so a
+  threshold compiled in here is a published one. Range and bearing rate ship as covariates rather
+  than folded into a scalar, because reducing them in this layer would bake a judgement into a public
+  file.
+
+  **The capture point is forced.** The bullet trace runs inside `SV_SetupMove`/`SV_RestoreMove`, so
+  enemy origins are the positions the shooter actually saw. `dod_client_weapon_fire` fires *outside*
+  that window, off the CurWeapon clip-decrement path, by which time the world is restored and the
+  geometry is gone. So the trace captures and the forward only reads.
+
+  **The pairing guard is a per-player usercmd ordinal, not a gametime compare.** Equality on
+  `gpGlobals->time` fails in both directions: it rejects every real shot (trace time and read time are
+  one usercmd apart), and any tolerance wide enough to fix that re-admits the aliasing it exists to
+  prevent. On top of the ordinal the read is destructive, capture is first-wins within a cmd, and the
+  reader must present a matching weapon id. Every guard failure returns 0 meaning record-NULL — never
+  a substitute value, because a stale sample here is fabricated evidence against a real person.
+
+  ⚠️ **Residual, stated rather than implied:** a shooter-owned player-hitting trace issued by the game
+  DLL between the PreThink hook body and PostThink (player Think, or a touch handler under
+  `SV_Impact`) can **displace** the bullet's own capture, and in a cmd where the bullet hit nobody it
+  can fill the gap. `dod.so` is closed source so the class cannot be enumerated; vanilla HLSDK has
+  none on these paths. The real fix is an `SV_PlayerRunPostThink` hookchain in KTP-ReHLDS. Until a
+  consumer has correlated these samples against the independent `client_damage` hit stream, treat
+  `err_udeg` as possibly describing a non-bullet ray.
+
+- **Aim-vs-transmission counters** (`dodx_get_aim_vis_stats`, `dodx_reset_aim_vis_stats`) — tier 2.7.
+  When a player's own aim trace lands on a live enemy, one sample per usercmd asks whether that enemy
+  was in **any** entity pack the server sent that player within a window of the engine's default
+  interpolation depth plus the player's measured ping.
+
+  Fed by a new `SV_CreatePacketEntities` hook — one step downstream of the game DLL's `AddToFullPack`
+  verdicts, so "recorded here" and "transmitted to that client" are the same statement. A
+  last-packed-time table keeps the query O(1), so high ping does not become a stricter check. Reading
+  `client_t::frames` directly was rejected: `engine_strucs.h` pins `NET_MAX_PAYLOAD` at 3990 while this
+  fork builds `netchan_t` with 65536, so every `client_t` field after `netchan` sits at the wrong
+  offset through that mirror.
+
+  **One direction only.** "Not packed" means the client had nothing to render. "Packed" means nothing
+  about visibility — PVS is leaf-based and generous, and entities stay packed while fully occluded. A
+  consumer reading packed-within-window as "legitimately seen" is measuring map topology.
+
+  **Unknown is a third state, not a default.** Fresh map, fresh connect, dead recorder or a clock
+  boundary all count as unknown rather than folding into either side; the recorder's live flag ships
+  with the counters so a consumer can tell "nothing suspicious" from "nothing recorded". Bot shooters
+  are excluded entirely — they receive no entity packets, so every such sample would be fabricated by
+  construction.
+
+  Both sensors reset on connect, disconnect and map change. The disconnect path also clears every
+  *other* player's sighting baseline and pack row pointing at the leaving slot, so the next occupant
+  cannot inherit a bearing rate computed between two different people.
 
 ## [2.7.27] - 2026-08-10
 
