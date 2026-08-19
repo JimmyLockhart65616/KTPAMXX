@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.32] - unreleased
 
+### Changed — ReHLDS API version gate
+
+- **`REHLDS_API_VERSION_MINOR` 6 → 16 in `public/resdk/engine/rehlds_api.h`,
+  matching KTP-ReHLDS.** This copy declared **6** while its vtable already carried
+  the KTP entries, so the guard in `mod_rehlds_api.cpp:38`
+  (`majorVersion != 3 || minorVersion < 6`) accepted *any* engine from ReHLDS 3.6
+  onward — including a stock upstream engine whose `IRehldsHookchains` has 56 slots
+  against this header's 67, and whose slot 42 is `SV_ShouldSendConsistencyList`
+  rather than KTP's inserted `SV_UpdatePausedHUD`.
+
+  This is not symbol resolution. The class is pure-virtual and every call is
+  `vtable[N]` with `N` fixed at compile time; the only dynamic lookup
+  (`VREHLDS_HLDS_API_VERSION001`) succeeds regardless. A mismatch is therefore a
+  **silent wrong-virtual-call** on every slot past 41, not a load failure.
+
+  This header stays a deliberate **67-entry prefix** of the engine's 69 — safe,
+  because nothing in the core or DODX calls the last two slots (`SV_Rcon`,
+  `Host_Changelevel_f`). Only the version number moved; no virtual was added,
+  removed or reordered, so the layout is unchanged.
+
+- **A rejected API no longer fails silently in extension mode.**
+  `GiveFnptrsToDll`'s `if (RehldsApi_Init())` had **no else branch** — a failed gate
+  skipped every extension hook registration (`SV_ActivateServer`, `PF_RegUserMsg_I`,
+  `SV_ClientCommand`, `SV_InactivateClients`, `AlertMessage`, …) and the server ran
+  on with no forwards and no match handling, printing nothing. It now prints a FATAL
+  line naming the required version.
+
+- **DODX now asserts the version itself.** `moduleconfig.cpp` dereferences hookchain
+  slots up to 67 but had no gate of its own — it relied entirely on the core leaving
+  `RehldsHookchains` null, which is transitive protection, not a check. It now reads
+  the version through `MF_GetRehldsApi` and refuses to register hooks on a mismatch.
+  `GetMajorVersion`/`GetMinorVersion` are the first two slots of `IRehldsApi` and have
+  never moved, so they are safe to call on precisely the engine this guards against.
+
+⚠️ **This makes the next activation a coordinated, all-four-in-one-swap wave.**
+Engine + core + reapi + DODX must stage together and swap at the same nightly
+restart. The guard is one-directional — it fires only when the *engine* is behind —
+so **modules-first is the sanctioned order**: a module ahead of the engine now
+refuses loudly, while an engine ahead of the modules still loads silently and
+corrupts. Do not stage the engine alone.
+
 **A RE-CUT of 2.7.31, not a rebuild of it.** 2.7.31 and `main` were developed in
 parallel and neither contained the other:
 
