@@ -6,6 +6,25 @@
 
 set -e  # Exit on error
 
+# A failed build must be VISIBLE, not merely non-zero. Callers pipe this script
+# (`| tail`, `| tee`), and the shell then reports the PIPE's status -- so a failed
+# build reads as exit 0 unless the log itself says so. Gate on the banners below,
+# never on the exit code.
+_ktp_build_exit() {
+    local rc=$?
+    [ -n "${BUILD_STAMP:-}" ] && rm -f "$BUILD_STAMP"
+    if [ "$rc" -ne 0 ]; then
+        echo ""
+        echo "========================================"
+        echo "[KTP-BUILD] FAILED: KTPAMXX build_linux.sh exited $rc"
+        echo "========================================"
+        echo "Nothing has been staged."
+    fi
+    exit "$rc"
+}
+trap _ktp_build_exit EXIT
+
+
 echo "========================================"
 echo "KTP AMX Linux Build Script"
 echo "========================================"
@@ -112,16 +131,27 @@ rm -rf obj-linux 2>/dev/null || true
 
 # Reference mtime: an artifact older than this is not from this run.
 BUILD_STAMP="$(mktemp)"
-trap 'rm -f "$BUILD_STAMP"' EXIT
 
 # Configure build
 # --no-plugins: Skip plugin compilation (plugins are platform-independent, compile on Windows instead)
 echo "Configuring build..."
+set +e
 python3 configure.py --enable-optimize --no-mysql --no-plugins
+CONFIGURE_RC=$?
+set -e
+if [ "$CONFIGURE_RC" -ne 0 ]; then
+    echo ""
+    echo "========================================"
+    echo "BUILD FAILED! (configure.py exit $CONFIGURE_RC)"
+    echo "========================================"
+    echo "Nothing has been staged."
+    exit 1
+fi
 
 # Resolve ambuild up front -- an empty $(which ambuild) makes `python3` read stdin
-# and exit 0 without building anything.
-AMBUILD="$(which ambuild)"
+# and exit 0 without building anything. `|| true` keeps `set -e` from killing the
+# script here, which is what made the check below dead code.
+AMBUILD="$(command -v ambuild || true)"
 if [ -z "$AMBUILD" ]; then
     echo "ERROR: ambuild not found on PATH after activating $VENV_DIR"
     exit 1
@@ -190,12 +220,19 @@ if [ -f "$BINARY_PATH" ] && [ "$BINARY_PATH" -nt "$BUILD_STAMP" ]; then
                 echo "  !! SKIPPED dodx_ktp_i386.so -- predates this run, not staging a stale module."
             fi
 
-            # Deploy stats_logging plugin if it exists
+            # configure.py runs --no-plugins, so stats_logging.amxx is NEVER built
+            # here -- an unfreshened copy is whatever the checkout happened to
+            # carry, and it used to overwrite the staged artifact unconditionally.
             STATS_LOGGING_PATH="plugins/dod/stats_logging.amxx"
-            if [ -f "$STATS_LOGGING_PATH" ]; then
+            if [ -f "$STATS_LOGGING_PATH" ] && [ "$STATS_LOGGING_PATH" -nt "$BUILD_STAMP" ]; then
                 mkdir -p "$DEPLOY_DIR/dod/addons/ktpamx/plugins"
-                cp "$STATS_LOGGING_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/plugins/"
+                if ! cp "$STATS_LOGGING_PATH" "$DEPLOY_DIR/dod/addons/ktpamx/plugins/"; then
+                    echo "ERROR: failed to copy $STATS_LOGGING_PATH into the staging tree."
+                    exit 1
+                fi
                 echo "  -> Copied stats_logging.amxx"
+            elif [ -f "$STATS_LOGGING_PATH" ]; then
+                echo "  !! SKIPPED stats_logging.amxx -- predates this run, not staging a stale plugin."
             fi
 
             echo ""
@@ -220,3 +257,7 @@ else
     echo "Nothing has been staged."
     exit 1
 fi
+
+# Success sentinel, last line on the only path that reaches here. A caller checks
+# for this rather than for `$?`, which a pipe launders.
+echo "[KTP-BUILD] OK: KTPAMXX build_linux.sh"
