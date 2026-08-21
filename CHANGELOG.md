@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.32] - unreleased
 
+### Changed — ReHLDS API version gate
+
+- **`REHLDS_API_VERSION_MINOR` 6 → 16 in `public/resdk/engine/rehlds_api.h`,
+  matching KTP-ReHLDS.** This copy declared **6** while its vtable already carried
+  the KTP entries, so the guard in `mod_rehlds_api.cpp:38`
+  (`majorVersion != 3 || minorVersion < 6`) accepted *any* engine from ReHLDS 3.6
+  onward — including a stock upstream engine whose `IRehldsHookchains` has 56 slots
+  against this header's 67, and whose slot 42 is `SV_ShouldSendConsistencyList`
+  rather than KTP's inserted `SV_UpdatePausedHUD`.
+
+  This is not symbol resolution. The class is pure-virtual and every call is
+  `vtable[N]` with `N` fixed at compile time; the only dynamic lookup
+  (`VREHLDS_HLDS_API_VERSION001`) succeeds regardless. A mismatch is therefore a
+  **silent wrong-virtual-call** on every slot past 41, not a load failure.
+
+  This header stays a deliberate **67-entry prefix** of the engine's 69 — safe,
+  because nothing in the core or DODX calls the last two slots (`SV_Rcon`,
+  `Host_Changelevel_f`). Only the version number moved; no virtual was added,
+  removed or reordered, so the layout is unchanged.
+
+- **A rejected API no longer fails silently in extension mode.**
+  `GiveFnptrsToDll`'s `if (RehldsApi_Init())` had **no else branch** — a failed gate
+  skipped every extension hook registration (`SV_ActivateServer`, `PF_RegUserMsg_I`,
+  `SV_ClientCommand`, `SV_InactivateClients`, `AlertMessage`, …) and the server ran
+  on with no forwards and no match handling, printing nothing. It now prints a FATAL
+  line naming the required version.
+
+- **DODX now asserts the version itself.** `moduleconfig.cpp` dereferences hookchain
+  slots up to 67 but had no gate of its own — it relied entirely on the core leaving
+  `RehldsHookchains` null, which is transitive protection, not a check. It now reads
+  the version through `MF_GetRehldsApi` and refuses to register hooks on a mismatch.
+  `GetMajorVersion`/`GetMinorVersion` are the first two slots of `IRehldsApi` and have
+  never moved, so they are safe to call on precisely the engine this guards against.
+
+⚠️ **This makes the next activation a coordinated, all-four-in-one-swap wave.**
+Engine + core + reapi + DODX must stage together and swap at the same nightly
+restart. The guard is one-directional — it fires only when the *engine* is behind —
+so **modules-first is the sanctioned order**: a module ahead of the engine now
+refuses loudly, while an engine ahead of the modules still loads silently and
+corrupts. Do not stage the engine alone.
+
 **A RE-CUT of 2.7.31, not a rebuild of it.** 2.7.31 and `main` were developed in
 parallel and neither contained the other:
 
@@ -43,6 +84,40 @@ with the other; merging them changes the compiled module, so 2.7.31's pinned md5
 no longer describes this tree. See the 2.7.32 note.
 
 ### Fixed
+- **CP ownership went stale for the rest of the map after a round restart, because
+  the reorder latch also swallowed ownership refreshes** (`usermsg.cpp`, issue #10).
+  `Client_InitObj` skipped the whole message on `g_cpOrderingFinalized || newCount !=
+  mObjects.count`, conflating two jobs: *don't reorder again* and *don't update
+  ownership again*. Only the first needs to latch. The DLL resets flags to their
+  defaults on `sv_restartround`, so from round 2 on, every consumer of `CP_owner` —
+  and the KTP HUD overlay downstream — reported pre-restart ownership on maps whose
+  flags start owned (`dod_donner`, `dod_kalt`, `dod_flash`, `dod_saints2_*`).
+
+  Split into two conditions. A **count mismatch** still drops the message whatever the
+  ordering state — it is partial or stale and can be trusted for nothing. A
+  **count-matching message after finalize** now refreshes in place: no `mObjects.Clear()`,
+  no reorder, no re-derived `pAreaEdict` (it is not in the message and is never cleared),
+  and `g_cpOrderingFinalized` stays set so the ordering hazard the latch was added for
+  stays closed. Because ordering is already finalized, `mObjects` is in DLL order and the
+  message is too, so field index maps 1:1 and the existing per-field writes land correctly.
+
+  `iFInitCP` is deliberately **not** re-fired on a refresh: it exists so the SMA can
+  rebuild its name cache when the *order* changes, and a refresh leaves it identical.
+  The DLL re-broadcasts on a timer, so firing it would repeat for the life of the map.
+  Ownership readers are pull-based (`dodx_objective_get_data`).
+
+  🔑 **The reporter's open question — does the DLL re-broadcast InitObj at all, or only
+  `SetObj` for CPs that changed — is answered YES, from fleet evidence rather than
+  reasoning.** The live 2.7.28 module emits `InitObj: skipped (finalized=%d, ...)`, and
+  across all 24 instances that line has fired **283 times with `finalized=1`**, every one
+  of them `newCount=2, existing=2` — count-matching, i.e. exactly the case this change now
+  refreshes. So a message-path fix is possible and no explicit reset hook is required.
+  ⚠️ **What the evidence does NOT show:** every one of those 283 falls in a five-day window
+  (2026-04-24 → 04-29) on a 2-CP map, while DODX logging runs through August. So the
+  re-broadcast is proven to *exist*, but it is **not** proven to fire on `sv_restartround`
+  on the affected default-owned-flag maps. **This change is necessary and correct; whether
+  it is sufficient for #10 is unverified** and needs a live check on one of those maps.
+
 - **A newly started capture can no longer be missed by cap-break candidate
   selection** (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.5 ->
   1.15.6). Selection previously read the last 0.2-second cached capping team,

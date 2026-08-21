@@ -2149,6 +2149,21 @@ static bool DODX_SetupExtensionHooks()
 	if (!g_pRehldsHookchains)
 		return false;
 
+	// DODX dereferences slots up to 67 but has no gate of its own - it inherited the
+	// core's, which is only transitive. An engine older than this header's vtable
+	// would silently dispatch every KTP slot to the wrong registry.
+	if (MF_GetRehldsApi)
+	{
+		IRehldsApi *pApi = (IRehldsApi *)MF_GetRehldsApi();
+		if (pApi && (pApi->GetMajorVersion() != REHLDS_API_VERSION_MAJOR || pApi->GetMinorVersion() < REHLDS_API_VERSION_MINOR))
+		{
+			MF_Log("FATAL: ReHLDS API %d.%d too old (need %d.%d) - refusing to register hooks; stage engine+core+reapi+dodx together",
+				pApi->GetMajorVersion(), pApi->GetMinorVersion(), REHLDS_API_VERSION_MAJOR, REHLDS_API_VERSION_MINOR);
+			g_pRehldsHookchains = nullptr;
+			return false;
+		}
+	}
+
 	// NOTE: ClientConnected hook not needed - bot detection uses FL_FAKECLIENT, IP never used
 
 	// Register PlayerPreThink hook - main stats tracking loop
