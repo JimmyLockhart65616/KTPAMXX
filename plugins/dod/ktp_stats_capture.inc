@@ -95,7 +95,13 @@
 // properties (headshot, k/v_prone, k/v_scope, k/v_clip, k/v_ammo), which
 // measures ~350. Headroom kept deliberately -- a truncated line does not fail
 // loudly, it just silently stops matching the daemon's regex.
-#define KSC_BUF_LINE_LEN    512
+// 768, not 512. Measured 2026-08-21 on live traffic: the longest real
+// frag_context line was 385 chars, but the WORST case -- two 95-char player
+// names, a 31-char weapon, both 39-char positions -- reaches 574 before the
+// producer context below, and 719 with it. formatex truncates SILENTLY, so an
+// overflow would drop the tail fields and the daemon would reject the line as
+// malformed rather than report a cut. Ring cost is 128 x 768 = 96 KB.
+#define KSC_BUF_LINE_LEN    768
 #define KSC_BUF_FLUSH_SECS  5.0
 
 // Distinct from stats_logging.sma's own flush task, which registers with the
@@ -803,11 +809,14 @@ stock ksc_emit_damage(attacker, victim, damage, wpnindex, hitplace) {
 	new damage_capped = (damage > KSC_DAMAGE_CAP) ? KSC_DAMAGE_CAP : damage
 	new Float:gt = get_gametime()
 
+	new pctx[160]
+	ksc_producer_ctx(pctx, charsmax(pctx))
+
 	new line[KSC_BUF_LINE_LEN]
 	formatex(line, charsmax(line),
-		"^"%s^" triggered ^"damage^" against ^"%s^" with ^"%s^" (damage ^"%d^") (damage_capped ^"%d^") (hitplace ^"%d^") (game_time ^"%.2f^")",
+		"^"%s^" triggered ^"damage^" against ^"%s^" with ^"%s^" (damage ^"%d^") (damage_capped ^"%d^") (hitplace ^"%d^") (game_time ^"%.2f^")%s",
 		attacker_str, victim_str, weapon,
-		damage, damage_capped, hitplace, gt)
+		damage, damage_capped, hitplace, gt, pctx)
 
 	ksc_buffer(line)
 }
@@ -892,25 +901,64 @@ stock ksc_emit_frag_context(killer, victim, wpnindex, hitplace) {
 	new killer_team = get_user_team(killer)
 	new is_last_flag_defense = ksc_is_last_flag_defense(killer, killer_team) ? 1 : 0
 
+	new pctx[160]
+	ksc_producer_ctx(pctx, charsmax(pctx))
+
 	new line[KSC_BUF_LINE_LEN]
 	if (have_k_pos && have_v_pos)
 		formatex(line, charsmax(line),
-			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (k_position ^"%s^") (v_position ^"%s^") (is_last_flag_defense ^"%d^")",
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (k_position ^"%s^") (v_position ^"%s^") (is_last_flag_defense ^"%d^") (game_time ^"%.2f^")%s",
 			killer_str, victim_str, weapon,
 			headshot, k_prone, v_prone,
 			g_kscScoped[killer], g_kscScoped[victim],
 			k_clip, k_ammo, v_clip, v_ammo,
-			k_pos, v_pos, is_last_flag_defense)
+			k_pos, v_pos, is_last_flag_defense, get_gametime(), pctx)
 	else
 		formatex(line, charsmax(line),
-			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (is_last_flag_defense ^"%d^")",
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (is_last_flag_defense ^"%d^") (game_time ^"%.2f^")%s",
 			killer_str, victim_str, weapon,
 			headshot, k_prone, v_prone,
 			g_kscScoped[killer], g_kscScoped[victim],
 			k_clip, k_ammo, v_clip, v_ammo,
-			is_last_flag_defense)
+			is_last_flag_defense, get_gametime(), pctx)
 
 	ksc_buffer(line)
+}
+
+// Producer context for the two markers hlstats.pl joins on an EXACT SECOND:
+// frag_context -> hlstats_Events_Frags, damage -> ktp_damage_events. Without
+// these the daemon falls back to a 10-second receipt window and misses --
+// which is what the KTP_NO_ROW_MATCHED flood is, despite its message blaming
+// dropped UDP.
+//
+// `half` has no native. KTPMatchHandler persists it in localinfo `_ktp_mode`
+// ("" | "h2" | "ot1" | ...), which is server-global, so any plugin may read it.
+// The daemon validates 1-255, so "" maps to 1 and never 0.
+//
+// Returns 0 and an EMPTY string when no match is live. That is deliberate: the
+// daemon treats an absent matchid as "use the legacy path", which is correct
+// for pubs and scrims. Emitting a half without a matchid would switch on the
+// strict one-second join with nothing to key it against.
+stock ksc_producer_ctx(out[], maxlen) {
+	new matchid[64]
+	dodx_get_match_id(matchid, charsmax(matchid))
+	if (!matchid[0]) {
+		out[0] = 0
+		return 0
+	}
+
+	new mode[16]
+	get_localinfo("_ktp_mode", mode, charsmax(mode))
+
+	new half = 1
+	if (equal(mode, "h2"))
+		half = 2
+	else if (mode[0] == 'o' && mode[1] == 't' && mode[2] >= '1' && mode[2] <= '9')
+		half = 2 + (mode[2] - '0')   // ot1 -> 3, matching migrate_002's half>=3 = OT
+
+	formatex(out, maxlen, " (matchid ^"%s^") (half ^"%d^") (event_epoch ^"%d^")",
+		matchid, half, get_systime())
+	return 1
 }
 
 // Called from stats_logging.sma's client_death, ahead of its old headshot-only
