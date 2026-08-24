@@ -666,18 +666,17 @@ void Client_InitObj(void* mValue)
 			// reorder or refresh — and the scan never runs again, so from that
 			// point default_owner reports whoever happens to hold the flag.
 			//
-			// CP_default_owner is consumed downstream (KTPHudObserver keys both
-			// its territorial-scoring award rule and its round-restart cascade
-			// detection off it), so a corrupted default is silent and wrong
-			// rather than loud.
+			// A corrupted default_owner fails silently rather than loudly —
+			// downstream readers take it at face value and never cross-check it.
 			//
-			// A FIRST parse still seeds default_owner from it: mObjects was empty,
-			// so there is no better source yet, and at ServerActivate the live
-			// owner does equal the default. This also keeps non-extension mode
+			// A FIRST parse still seeds default_owner from it because mObjects was
+			// empty and nothing better exists yet — NOT because live equals default
+			// here, which a pdata read on jagd contradicts. Also keeps non-extension
+			// mode
 			// working, where DODX_InitCPFromEntities() returns at the
 			// g_bExtensionMode gate and never provides a seed at all.
 			mObjects.obj[num].owner = *(int*)mValue;
-			if (!s_initObjReorderMode && !s_initObjRefreshMode)
+			if (!s_initObjReorderMode)
 				mObjects.obj[num].default_owner = mObjects.obj[num].owner;
 		}
 		break;
