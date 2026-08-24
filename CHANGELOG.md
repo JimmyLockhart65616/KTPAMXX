@@ -13,6 +13,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.32] - unreleased
 
+### Fixed — cap-break attribution now tests the capture zone, not a radius
+
+- **`ktp_stats_capture.inc` picked the flag for a cap break by 2D distance from the
+  flag PROP, accepting anything within a fixed radius.** The prop is not the zone: on
+  `dod_jagd` the trigger is among the smallest in the map set yet sits ~5,555 units from
+  its own flag entity, and on 8 flags across the pool the control point is not inside the
+  zone footprint at all. So the radius was simultaneously too small on some maps and far
+  too large on others, and no single value fixes both.
+- **It now asks whether the victim was inside the capture zone**, reading the zone's
+  bounding box off its entity (`CA_edict`) at runtime. Measured on the S10 pool, 5 of 11
+  maps under-counted cap breaks under the old test, and only 40% of control points could
+  ever report one.
+- **Box-vs-box, not point-in-box.** GoldSrc decides zone membership by bbox overlap, so a
+  point test would have rejected players the engine itself counts as in-zone.
+- **The tunable constant is gone rather than retuned.** Nothing here needs a per-map value,
+  so the map pool can change without silently invalidating the test — which matters with
+  the pool being cut and swapped shortly before a season opens.
+- **A flag with no usable zone is now loud at map start** rather than discovered later as
+  missing rows: `controlpoints_init` reports how many flags resolved a usable zone, and a
+  zero-volume box is rejected instead of silently matching nothing.
+- Requires `fakemeta` in `stats_logging.sma` for `pev()`. Plugin only — no module or
+  engine change. `stats_logging` 1.15.6 → 1.15.7.
+
 ### Changed — ReHLDS API version gate
 
 - **`REHLDS_API_VERSION_MINOR` 6 → 16 in `public/resdk/engine/rehlds_api.h`,
