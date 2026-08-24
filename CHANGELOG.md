@@ -1,3 +1,9 @@
+## Reverted
+
+- `8d818deaf` (dodx: split the InitObj reorder latch from the ownership refresh) was
+  reverted. It was reviewed NOT-APPROVED for a fleet cut and reached `main` by being swept
+  into the #41 branch, not by its own PR. See the revert commit for the reasoning.
+
 # Changelog
 
 All notable changes to KTP AMX will be documented in this file.
@@ -6,6 +12,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [2.7.32] - unreleased
+
+### Fixed — cap-break attribution now tests the capture zone, not a radius
+
+- **`ktp_stats_capture.inc` picked the flag for a cap break by 2D distance from the
+  flag PROP, accepting anything within a fixed radius.** The prop is not the zone: on
+  `dod_jagd` the trigger is among the smallest in the map set yet sits ~5,555 units from
+  its own flag entity, and on 8 flags across the pool the control point is not inside the
+  zone footprint at all. So the radius was simultaneously too small on some maps and far
+  too large on others, and no single value fixes both.
+- **It now asks whether the victim was inside the capture zone**, reading the zone's
+  bounding box off its entity (`CA_edict`) at runtime. Measured on the S10 pool, 5 of 11
+  maps under-counted cap breaks under the old test, and only 40% of control points could
+  ever report one.
+- **Box-vs-box, not point-in-box.** GoldSrc decides zone membership by bbox overlap, so a
+  point test would have rejected players the engine itself counts as in-zone.
+- **The tunable constant is gone rather than retuned.** Nothing here needs a per-map value,
+  so the map pool can change without silently invalidating the test — which matters with
+  the pool being cut and swapped shortly before a season opens.
+- **A flag with no usable zone is now loud at map start** rather than discovered later as
+  missing rows: `controlpoints_init` reports how many flags resolved a usable zone, and a
+  zero-volume box is rejected instead of silently matching nothing.
+- Requires `fakemeta` in `stats_logging.sma` for `pev()`. Plugin only — no module or
+  engine change. `stats_logging` 1.15.6 → 1.15.7.
 
 ### Changed — ReHLDS API version gate
 
@@ -84,40 +113,6 @@ with the other; merging them changes the compiled module, so 2.7.31's pinned md5
 no longer describes this tree. See the 2.7.32 note.
 
 ### Fixed
-- **CP ownership went stale for the rest of the map after a round restart, because
-  the reorder latch also swallowed ownership refreshes** (`usermsg.cpp`, issue #10).
-  `Client_InitObj` skipped the whole message on `g_cpOrderingFinalized || newCount !=
-  mObjects.count`, conflating two jobs: *don't reorder again* and *don't update
-  ownership again*. Only the first needs to latch. The DLL resets flags to their
-  defaults on `sv_restartround`, so from round 2 on, every consumer of `CP_owner` —
-  and the KTP HUD overlay downstream — reported pre-restart ownership on maps whose
-  flags start owned (`dod_donner`, `dod_kalt`, `dod_flash`, `dod_saints2_*`).
-
-  Split into two conditions. A **count mismatch** still drops the message whatever the
-  ordering state — it is partial or stale and can be trusted for nothing. A
-  **count-matching message after finalize** now refreshes in place: no `mObjects.Clear()`,
-  no reorder, no re-derived `pAreaEdict` (it is not in the message and is never cleared),
-  and `g_cpOrderingFinalized` stays set so the ordering hazard the latch was added for
-  stays closed. Because ordering is already finalized, `mObjects` is in DLL order and the
-  message is too, so field index maps 1:1 and the existing per-field writes land correctly.
-
-  `iFInitCP` is deliberately **not** re-fired on a refresh: it exists so the SMA can
-  rebuild its name cache when the *order* changes, and a refresh leaves it identical.
-  The DLL re-broadcasts on a timer, so firing it would repeat for the life of the map.
-  Ownership readers are pull-based (`dodx_objective_get_data`).
-
-  🔑 **The reporter's open question — does the DLL re-broadcast InitObj at all, or only
-  `SetObj` for CPs that changed — is answered YES, from fleet evidence rather than
-  reasoning.** The live 2.7.28 module emits `InitObj: skipped (finalized=%d, ...)`, and
-  across all 24 instances that line has fired **283 times with `finalized=1`**, every one
-  of them `newCount=2, existing=2` — count-matching, i.e. exactly the case this change now
-  refreshes. So a message-path fix is possible and no explicit reset hook is required.
-  ⚠️ **What the evidence does NOT show:** every one of those 283 falls in a five-day window
-  (2026-04-24 → 04-29) on a 2-CP map, while DODX logging runs through August. So the
-  re-broadcast is proven to *exist*, but it is **not** proven to fire on `sv_restartround`
-  on the affected default-owned-flag maps. **This change is necessary and correct; whether
-  it is sufficient for #10 is unverified** and needs a live check on one of those maps.
-
 - **A newly started capture can no longer be missed by cap-break candidate
   selection** (`ktp_stats_capture.inc`, `stats_logging.sma` 1.15.5 ->
   1.15.6). Selection previously read the last 0.2-second cached capping team,

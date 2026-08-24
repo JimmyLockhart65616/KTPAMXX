@@ -580,7 +580,6 @@ void Client_Object_End(void* mValue)
 static objinfo_t s_initObjScanSnapshot[12];  // Saved entity-scan entries for area pairing
 static int s_initObjScanSnapshotCount = 0;
 static bool s_initObjReorderMode = false;    // True while consuming InitObj to reorder
-static bool s_initObjRefreshMode = false;    // True while consuming a post-finalize InitObj for ownership
 
 void Client_InitObj(void* mValue)
 {
@@ -596,7 +595,6 @@ void Client_InitObj(void* mValue)
 	case 0:
 		num = 0;
 		s_initObjReorderMode = false;
-		s_initObjRefreshMode = false;
 		{
 			int newCount = *(int*)mValue;
 #ifdef DODX_DEBUG_CP_INIT
@@ -606,24 +604,13 @@ void Client_InitObj(void* mValue)
 
 			if (mObjects.count > 0)
 			{
-				// A count mismatch means a partial or stale message; it can be
-				// trusted for nothing, so drop it whatever the ordering state.
-				if (newCount != mObjects.count)
+				// Already finalized OR partial/stale message — skip.
+				if (g_cpOrderingFinalized || newCount != mObjects.count)
 				{
 					MF_Log("[DODX] InitObj: skipped (finalized=%d, newCount=%d, existing=%d)",
 						g_cpOrderingFinalized ? 1 : 0, newCount, mObjects.count);
 					mState = 999;
 					return;
-				}
-
-				// Finalized only latches the *reorder*. The DLL re-broadcasts
-				// InitObj (measured on the fleet), and it resets flags to their
-				// defaults on sv_restartround — so refusing the whole message
-				// here left owner stale for the rest of the map.
-				if (g_cpOrderingFinalized)
-				{
-					s_initObjRefreshMode = true;
-					break;
 				}
 
 				// Snapshot entity-scan results so we can rebuild pAreaEdict
@@ -746,24 +733,13 @@ void Client_InitObj(void* mValue)
 				}
 #endif
 			}
-			else if (s_initObjRefreshMode)
-			{
-				MF_Log("[DODX] InitObj: refreshed ownership for %d CPs (order unchanged)",
-					mObjects.count);
-			}
 			else
 			{
 				MF_Log("[DODX] InitObj: parsed %d control points from message", mObjects.count);
 			}
 
-			// Not on a refresh: iFInitCP exists so the SMA can rebuild its name
-			// cache when the ORDER changes, and a refresh leaves it identical.
-			// The DLL re-broadcasts on a timer, so firing here would repeat for
-			// the life of the map. Ownership readers are pull-based.
-			if (iFInitCP >= 0 && !s_initObjRefreshMode)
+			if (iFInitCP >= 0)
 				MF_ExecuteForward(iFInitCP);
-
-			s_initObjRefreshMode = false;
 		}
 		break;
 	}

@@ -8,6 +8,9 @@
 // periodic roster-position broadcast for positional/"holding" stats and
 // (later) ninja-cap detection.
 //
+// Requires fakemeta in the including plugin: cap-break attribution reads the
+// capture zone's bounding box off its entity, which needs pev().
+//
 // SELF-CONTAINED BY DESIGN. Everything below declares its own state and reads
 // nothing from stats_logging.sma's globals -- deliberately unlike
 // ktp_matchhandler_discord.inc, whose header notes it depends on its parent's.
@@ -60,7 +63,6 @@
 #define KSC_ZONE_POLL_SECS  0.5
 #define KSC_BREAK_QUEUE_MAX 6   // concurrent pending killers per flag
 #define KSC_BREAK_WINDOW    5   // polls a candidate stays live (~2.5s)
-#define KSC_BREAK_RADIUS    512.0
 
 // Roster-position broadcast for positional/"holding" stats (map presence
 // beyond a discrete capture event) and, later, ninja-cap detection -- both
@@ -95,7 +97,13 @@
 // properties (headshot, k/v_prone, k/v_scope, k/v_clip, k/v_ammo), which
 // measures ~350. Headroom kept deliberately -- a truncated line does not fail
 // loudly, it just silently stops matching the daemon's regex.
-#define KSC_BUF_LINE_LEN    512
+// 768, not 512. Measured 2026-08-21 on live traffic: the longest real
+// frag_context line was 385 chars, but the WORST case -- two 95-char player
+// names, a 31-char weapon, both 39-char positions -- reaches 574 before the
+// producer context below, and 719 with it. formatex truncates SILENTLY, so an
+// overflow would drop the tail fields and the daemon would reject the line as
+// malformed rather than report a cut. Ring cost is 128 x 768 = 96 KB.
+#define KSC_BUF_LINE_LEN    768
 #define KSC_BUF_FLUSH_SECS  5.0
 
 // Distinct from stats_logging.sma's own flush task, which registers with the
@@ -127,6 +135,10 @@ new g_kscCvarEnabled
 
 // ---- Cap-break state, all in dodx objective/area index space ----
 new g_kscFlagCount = 0
+// Capture-zone entity per flag, resolved once at controlpoints_init. Every
+// geometric question about a zone is answered off this edict at runtime, so
+// nothing here goes stale when the map pool changes. -1 = unusable.
+new g_kscZoneEnt[KSC_MAX_FLAGS]
 new g_kscFlagName[KSC_MAX_FLAGS][32]
 
 new g_kscCapTeam[KSC_MAX_FLAGS]     // team currently capturing this point, 0 = none
@@ -493,16 +505,52 @@ stock ksc_emit_break_context(breaker, contester_count, Float:time_remaining, is_
 	ksc_buffer(line)
 }
 
-// The area API exposes aggregate team counts, not per-player membership.
-// Select the closest active point and reject distant deaths so an unrelated
-// off-point kill cannot consume a later in-zone count drop.
-stock ksc_break_flag_for_victim(victim, victim_team) {
-	new Float:origin[3]
-	if (!dodx_get_user_origin(victim, origin))
+// The capture zone's entity, cached per flag. Rejects a zero-volume box: it
+// would match nothing and read as "this flag never sees a cap break", which
+// is indistinguishable from a quiet flag.
+stock ksc_zone_entity(f) {
+	new ent = dodx_area_get_data(f, CA_edict)
+	if (ent <= 0 || !pev_valid(ent))
 		return -1
 
+	new Float:mn[3], Float:mx[3]
+	pev(ent, pev_absmin, mn)
+	pev(ent, pev_absmax, mx)
+	if (mx[0] - mn[0] <= 0.0 || mx[1] - mn[1] <= 0.0 || mx[2] - mn[2] <= 0.0)
+		return -1
+
+	return ent
+}
+
+// The area API exposes aggregate team counts, not per-player membership, so
+// the flag a death belongs to has to be inferred. Ask whether the victim was
+// INSIDE the zone rather than how near the flag prop they were: a prop can sit
+// thousands of units from its own zone, so any prop-anchored radius is wrong on
+// some map however it is tuned.
+//
+// Box-vs-box, not point-in-box -- GoldSrc decides zone membership by bbox
+// overlap, so a point test would reject players the engine counts as in-zone.
+stock ksc_break_flag_for_victim(victim, victim_team) {
+	if (!pev_valid(victim))
+		return -1
+
+	new Float:vmin[3], Float:vmax[3]
+	pev(victim, pev_absmin, vmin)
+	pev(victim, pev_absmax, vmax)
+
+	// A degenerate box means the entity is not readable at this instant. Fall
+	// back to the origin as a point rather than matching nothing -- silent
+	// under-counting is the defect this change exists to remove.
+	if (vmin[0] == vmax[0] && vmin[1] == vmax[1]) {
+		new Float:o[3]
+		if (!dodx_get_user_origin(victim, o))
+			return -1
+		vmin = o
+		vmax = o
+	}
+
 	new best_flag = -1
-	new Float:best_dist2 = KSC_BREAK_RADIUS * KSC_BREAK_RADIUS
+	new Float:best_d2 = 0.0
 
 	for (new f = 0; f < g_kscFlagCount; f++) {
 		// A capture can begin between the 0.2-second zone poll and this death.
@@ -512,12 +560,26 @@ stock ksc_break_flag_for_victim(victim, victim_team) {
 			dodx_area_get_data(f, CA_capturing_team) != victim_team)
 			continue
 
-		new Float:dx = origin[0] - float(dodx_objective_get_data(f, CP_origin_x))
-		new Float:dy = origin[1] - float(dodx_objective_get_data(f, CP_origin_y))
-		new Float:dist2 = (dx * dx) + (dy * dy)
+		new ent = g_kscZoneEnt[f]
+		if (ent <= 0)
+			continue
 
-		if (dist2 <= best_dist2) {
-			best_dist2 = dist2
+		new Float:zmin[3], Float:zmax[3]
+		pev(ent, pev_absmin, zmin)
+		pev(ent, pev_absmax, zmax)
+
+		if (vmax[0] < zmin[0] || vmin[0] > zmax[0]) continue
+		if (vmax[1] < zmin[1] || vmin[1] > zmax[1]) continue
+		if (vmax[2] < zmin[2] || vmin[2] > zmax[2]) continue
+
+		// Zones can overlap. Nearest zone centre orders the survivors; it never
+		// admits or rejects one, so it is a tie-break and not a threshold.
+		new Float:dx = ((vmin[0] + vmax[0]) - (zmin[0] + zmax[0])) * 0.5
+		new Float:dy = ((vmin[1] + vmax[1]) - (zmin[1] + zmax[1])) * 0.5
+		new Float:d2 = (dx * dx) + (dy * dy)
+
+		if (best_flag < 0 || d2 < best_d2) {
+			best_d2 = d2
 			best_flag = f
 		}
 	}
@@ -668,7 +730,16 @@ public controlpoints_init() {
 		g_kscPrevAllies[f] = 0
 		g_kscPrevAxis[f]   = 0
 		ksc_break_clear(f)
+		g_kscZoneEnt[f] = ksc_zone_entity(f)
 	}
+
+	new zones_ok = 0
+	for (new f = 0; f < g_kscFlagCount; f++)
+		if (g_kscZoneEnt[f] > 0)
+			zones_ok++
+	// Loud at map start beats finding it as missing rows a season later: a flag
+	// with no usable zone can never report a cap break.
+	log_amx("[KTP-STATS] cap-break zones usable on %d of %d flag(s)", zones_ok, g_kscFlagCount)
 
 	// Deferred, not emitted here -- found live, with a diagnostic build, not
 	// guessed: controlpoints_init fires with correct data (right flag count,
@@ -803,11 +874,14 @@ stock ksc_emit_damage(attacker, victim, damage, wpnindex, hitplace) {
 	new damage_capped = (damage > KSC_DAMAGE_CAP) ? KSC_DAMAGE_CAP : damage
 	new Float:gt = get_gametime()
 
+	new pctx[160]
+	ksc_producer_ctx(pctx, charsmax(pctx))
+
 	new line[KSC_BUF_LINE_LEN]
 	formatex(line, charsmax(line),
-		"^"%s^" triggered ^"damage^" against ^"%s^" with ^"%s^" (damage ^"%d^") (damage_capped ^"%d^") (hitplace ^"%d^") (game_time ^"%.2f^")",
+		"^"%s^" triggered ^"damage^" against ^"%s^" with ^"%s^" (damage ^"%d^") (damage_capped ^"%d^") (hitplace ^"%d^") (game_time ^"%.2f^")%s",
 		attacker_str, victim_str, weapon,
-		damage, damage_capped, hitplace, gt)
+		damage, damage_capped, hitplace, gt, pctx)
 
 	ksc_buffer(line)
 }
@@ -892,25 +966,64 @@ stock ksc_emit_frag_context(killer, victim, wpnindex, hitplace) {
 	new killer_team = get_user_team(killer)
 	new is_last_flag_defense = ksc_is_last_flag_defense(killer, killer_team) ? 1 : 0
 
+	new pctx[160]
+	ksc_producer_ctx(pctx, charsmax(pctx))
+
 	new line[KSC_BUF_LINE_LEN]
 	if (have_k_pos && have_v_pos)
 		formatex(line, charsmax(line),
-			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (k_position ^"%s^") (v_position ^"%s^") (is_last_flag_defense ^"%d^")",
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (k_position ^"%s^") (v_position ^"%s^") (is_last_flag_defense ^"%d^") (game_time ^"%.2f^")%s",
 			killer_str, victim_str, weapon,
 			headshot, k_prone, v_prone,
 			g_kscScoped[killer], g_kscScoped[victim],
 			k_clip, k_ammo, v_clip, v_ammo,
-			k_pos, v_pos, is_last_flag_defense)
+			k_pos, v_pos, is_last_flag_defense, get_gametime(), pctx)
 	else
 		formatex(line, charsmax(line),
-			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (is_last_flag_defense ^"%d^")",
+			"^"%s^" triggered ^"frag_context^" against ^"%s^" with ^"%s^" (headshot ^"%d^") (k_prone ^"%d^") (v_prone ^"%d^") (k_scope ^"%d^") (v_scope ^"%d^") (k_clip ^"%d^") (k_ammo ^"%d^") (v_clip ^"%d^") (v_ammo ^"%d^") (is_last_flag_defense ^"%d^") (game_time ^"%.2f^")%s",
 			killer_str, victim_str, weapon,
 			headshot, k_prone, v_prone,
 			g_kscScoped[killer], g_kscScoped[victim],
 			k_clip, k_ammo, v_clip, v_ammo,
-			is_last_flag_defense)
+			is_last_flag_defense, get_gametime(), pctx)
 
 	ksc_buffer(line)
+}
+
+// Producer context for the two markers hlstats.pl joins on an EXACT SECOND:
+// frag_context -> hlstats_Events_Frags, damage -> ktp_damage_events. Without
+// these the daemon falls back to a 10-second receipt window and misses --
+// which is what the KTP_NO_ROW_MATCHED flood is, despite its message blaming
+// dropped UDP.
+//
+// `half` has no native. KTPMatchHandler persists it in localinfo `_ktp_mode`
+// ("" | "h2" | "ot1" | ...), which is server-global, so any plugin may read it.
+// The daemon validates 1-255, so "" maps to 1 and never 0.
+//
+// Returns 0 and an EMPTY string when no match is live. That is deliberate: the
+// daemon treats an absent matchid as "use the legacy path", which is correct
+// for pubs and scrims. Emitting a half without a matchid would switch on the
+// strict one-second join with nothing to key it against.
+stock ksc_producer_ctx(out[], maxlen) {
+	new matchid[64]
+	dodx_get_match_id(matchid, charsmax(matchid))
+	if (!matchid[0]) {
+		out[0] = 0
+		return 0
+	}
+
+	new mode[16]
+	get_localinfo("_ktp_mode", mode, charsmax(mode))
+
+	new half = 1
+	if (equal(mode, "h2"))
+		half = 2
+	else if (mode[0] == 'o' && mode[1] == 't' && mode[2] >= '1' && mode[2] <= '9')
+		half = 2 + (mode[2] - '0')   // ot1 -> 3, matching migrate_002's half>=3 = OT
+
+	formatex(out, maxlen, " (matchid ^"%s^") (half ^"%d^") (event_epoch ^"%d^")",
+		matchid, half, get_systime())
+	return 1
 }
 
 // Called from stats_logging.sma's client_death, ahead of its old headshot-only
