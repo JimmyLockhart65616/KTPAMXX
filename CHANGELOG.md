@@ -13,6 +13,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.32] - unreleased
 
+### Fixed — the cap-break containment test could not load on this fleet
+
+- **`stats_logging.amxx` was built with `#include <fakemeta>` and would have failed to load on all
+  24 instances.** `fakemeta.inc` carries `#pragma reqlib fakemeta`; the fleet's `modules.ini` lists
+  only `amxxcurl`, `reapi` and `dodx`, and no fakemeta module ships with the stack. The compile
+  succeeded because `amxxpc` only needs the include — the module table is resolved at LOAD time.
+- Repointed at `dodx_get_user_bounds` and `dodx_area_get_bounds`. Behaviour is unchanged: still
+  box-vs-box containment, still nearest-zone-centre as a tie-break, still no tunable radius.
+- The per-flag entity cache and its resolver are gone — `dodx_area_get_bounds` takes the CP index,
+  validates it, checks the edict and rejects a zero-volume box itself. The map-start
+  “zones usable on N of M flags” line is kept, now driven by the native.
+- Verified by inflating the built artifact and reading its library table: the old build declares
+  `fakemeta`, this one declares only `dodx`. **A clean compile does not prove a plugin will load.**
+
 ### Added — capture-zone and player bounding boxes (dodx)
 
 - **`dodx_area_get_bounds(index, Float:mins[3], Float:maxs[3])`** and
