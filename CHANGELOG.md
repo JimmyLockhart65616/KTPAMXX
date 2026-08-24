@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [2.7.32] - unreleased
 
+### Added — capture-zone and player bounding boxes (dodx)
+
+- **`dodx_area_get_bounds(index, Float:mins[3], Float:maxs[3])`** and
+  **`dodx_get_user_bounds(id, Float:mins[3], Float:maxs[3])`** expose the
+  world-space `absmin`/`absmax` of a capture zone and of a player. Both read
+  `pEdict->v.*` straight from the HL SDK, so they work in **extension mode** —
+  which is the point: the only existing way to ask these questions from Pawn is
+  fakemeta's `pev(ent, pev_absmin)`, and `fakemeta.inc` carries
+  `#pragma reqlib fakemeta`. A plugin that includes it will not LOAD on the KTP
+  fleet, whose `modules.ini` lists only `reapi`, `dodx` and `amxxcurl` and whose
+  artifacts ship no fakemeta module at all.
+
+- **Motivation: cap-break attribution cannot use a radius around the control
+  point.** The flag prop and its `dod_capture_area` trigger are separate
+  entities and are not co-located — across the map pool some control points sit
+  entirely outside their own zone, and on `dod_jagd` the separation runs to
+  thousands of units. A prop-anchored radius is therefore simultaneously too
+  small on one map and far too large on another, whatever value it is given, so
+  the test has to be containment rather than distance.
+
+- **Player bounds, not just the origin, because GoldSrc decides trigger
+  membership by BBOX OVERLAP.** A point-in-box test on the origin rejects
+  players the engine itself counts as inside — under-counting in a new way while
+  looking stricter and more correct. The box also reflects stance, so a prone
+  player is measured as the flatter volume the engine actually uses.
+
+- **A zero-volume zone returns 0 rather than reporting an empty box.** Such a
+  box matches nothing, which reads downstream as "this flag never sees a
+  capture" — indistinguishable from a flag nobody contested, and exactly how
+  this class of bug survives a season unnoticed.
+
 ### Changed — ReHLDS API version gate
 
 - **`REHLDS_API_VERSION_MINOR` 6 → 16 in `public/resdk/engine/rehlds_api.h`,
